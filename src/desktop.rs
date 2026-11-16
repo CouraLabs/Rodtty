@@ -9,8 +9,11 @@ use rune::{
     row, text, text_input,
 };
 use std::{path::PathBuf, sync::Arc};
+mod actions;
+mod palette;
 mod settings;
 mod workspace;
+use actions::AppAction;
 
 const CW: f32 = 8.4;
 const CH: f32 = 21.0;
@@ -57,6 +60,9 @@ enum Pending {
 
 struct State {
     workspace: workspace::Workspace,
+    commands: Vec<actions::Command>,
+    palette: Option<palette::Palette>,
+    palette_query: TextEdit,
     handle: Option<rune::AppHandle<State>>,
     root: PathBuf,
     shell: Option<PathBuf>,
@@ -103,7 +109,12 @@ impl State {
             .map(|error| format!("Could not load Settings JSON: {error:#}"))
             .unwrap_or_default();
         let config_valid = loaded.is_ok();
+        let mut commands = Vec::new();
+        actions::register(&mut commands);
         Self {
+            commands,
+            palette: None,
+            palette_query: TextEdit::new(""),
             workspace: workspace::Workspace::default(),
             handle: None,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
@@ -491,11 +502,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
             button(
                 format!("tab-{i}"),
                 format!("{} {}", if exited { "○" } else { "●" }, i + 1),
-                move |s, _| {
-                    s.active = i;
-                    s.workspace.terminal_focus = true;
-                    s.selection = None;
-                },
+                move |s, tx| s.dispatch(AppAction::ActivateTerminal(i), tx),
             )
             .border(1.0, if i == state.active { accent() } else { panel() }),
         );
@@ -503,7 +510,9 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
     if state.preview.is_some() {
         tabs = tabs.child(text("●  1   Preview").font(LABEL).color(accent()));
     }
-    tabs = tabs.child(button("new-tab", "+  New tab", |s, _| s.new_tab()));
+    tabs = tabs.child(button("new-tab", "+  New tab", |s, tx| {
+        s.dispatch(AppAction::NewTerminal, tx)
+    }));
     let mut root = col()
         .key("root")
         .w_full()
@@ -529,27 +538,29 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                         .color(accent()),
                 )
                 .child(el().grow(1.0))
-                .child(button("files", "Files", |s, _| s.toggle_files()))
-                .child(button("toggle-terminal", "Terminal", |s, _| {
-                    s.workspace.layout.terminal = !s.workspace.layout.terminal;
+                .child(button("files", "Files", |s, tx| {
+                    s.dispatch(AppAction::ToggleExplorer, tx)
                 }))
-                .child(button("toggle-editor", "Editor", |s, _| {
-                    s.workspace.layout.editor = !s.workspace.layout.editor;
+                .child(button("toggle-terminal", "Terminal", |s, tx| {
+                    s.dispatch(AppAction::ToggleTerminal, tx)
+                }))
+                .child(button("toggle-editor", "Editor", |s, tx| {
+                    s.dispatch(AppAction::ToggleEditor, tx)
                 }))
                 .child(button("find", "Find", |s, tx| {
-                    s.search = !s.search;
-                    if s.search {
-                        tx.focus("search-query", true);
-                    }
+                    s.dispatch(AppAction::FindTerminal, tx)
                 }))
-                .child(button("settings", "Settings", |s, tx| s.open_settings(tx)))
-                .child(button("close-tab", "End session", |s, _| {
-                    if s.active().is_some() {
-                        s.pending = Some(Pending::Tab(s.active));
-                    }
+                .child(button("settings", "Settings", |s, tx| {
+                    s.dispatch(AppAction::Settings, tx)
+                }))
+                .child(button("close-tab", "End session", |s, tx| {
+                    s.dispatch(AppAction::EndTerminal, tx)
+                }))
+                .child(button("palette", "Actions", |s, tx| {
+                    s.dispatch(AppAction::CommandPalette, tx)
                 }))
                 .child(button("quit", "Quit", |s, tx| {
-                    s.request_action(workspace::Action::Quit, tx)
+                    s.dispatch(AppAction::Quit, tx)
                 })),
         )
         .child(tabs);
@@ -605,7 +616,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
             .child(el().grow(1.0))
             .child(
                 text(if state.message.is_empty() {
-                    "Ctrl+Shift+T new tab · Ctrl+Shift+F find · Ctrl+C interrupt"
+                    "Ctrl+Shift+P actions · Ctrl+Shift+T new tab · Ctrl+C interrupt"
                 } else {
                     &state.message
                 })
@@ -652,8 +663,11 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
     if let Some(dialog) = workspace::file_dialog(state) {
         root = root.child(dialog);
     }
+    if let Some(palette) = palette::view(state) {
+        root = root.child(palette);
+    }
     root.on_paste(|s: &mut State, content, _| {
-        if s.pending.is_none() && s.workspace.terminal_focus {
+        if s.pending.is_none() && s.palette.is_none() && s.workspace.terminal_focus {
             s.paste(content);
         }
     })
@@ -719,23 +733,32 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return true;
     }
+    if state.palette.is_some() {
+        return state.palette_key(event, tx);
+    }
+    if (if cfg!(target_os = "macos") {
+        event.mods.cmd
+    } else {
+        event.mods.ctrl
+    }) && event.mods.shift
+        && event.key == Key::Command('p')
+    {
+        state.dispatch(AppAction::CommandPalette, tx);
+        return true;
+    }
     let app_modifier = event.mods.cmd && (cfg!(target_os = "macos") || event.mods.shift);
     if app_modifier {
-        match event.key {
-            Key::Command('t') => state.new_tab(),
-            Key::Command('w') => state.pending = Some(Pending::Tab(state.active)),
-            Key::Command('q') => state.request_action(workspace::Action::Quit, tx),
-            Key::Command('e') => state.toggle_files(),
-            Key::Command('c') => state.copy(tx),
-            Key::Command('v') => tx.request_paste(),
-            Key::Command('f') => {
-                state.search = true;
-                tx.focus("search-query", true);
-                return true;
-            }
+        let action = match event.key {
+            Key::Command('t') => AppAction::NewTerminal,
+            Key::Command('w') => AppAction::EndTerminal,
+            Key::Command('q') => AppAction::Quit,
+            Key::Command('e') => AppAction::ToggleExplorer,
+            Key::Command('c') => AppAction::CopyTerminal,
+            Key::Command('v') => AppAction::PasteTerminal,
+            Key::Command('f') => AppAction::FindTerminal,
             _ => return false,
-        }
-        tx.blur();
+        };
+        state.dispatch(action, tx);
         return true;
     }
     if tx.focused().is_some() {
@@ -804,6 +827,11 @@ fn workspace_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, false);
 }
+fn palette_preview(state: &mut State) {
+    workspace_preview(state);
+    state.open_palette(&mut Tx::default());
+    state.palette_query.focused = true;
+}
 fn settings_preview(state: &mut State) {
     preview(state);
     state.open_settings(&mut Tx::default());
@@ -865,6 +893,7 @@ pub fn run() -> Result<()> {
             ("preview", preview),
             ("workspace", workspace_preview),
             ("diff", diff_preview),
+            ("palette", palette_preview),
             ("settings", settings_preview),
         ],
         fonts: &[include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")],
@@ -889,7 +918,7 @@ pub fn run() -> Result<()> {
                 raw.split('(').next().unwrap_or("unknown").to_owned();
         })
         .on_ime(|s, event, _| {
-            if s.pending.is_some() || !s.workspace.terminal_focus {
+            if s.pending.is_some() || s.palette.is_some() || !s.workspace.terminal_focus {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {
@@ -935,7 +964,7 @@ pub fn run() -> Result<()> {
             rune::TrayEvent::Menu(id) if id == "open" => reopen.open(),
             rune::TrayEvent::Menu(id) if id == "quit" => {
                 reopen.open();
-                reopen.update(|s, tx| s.request_action(workspace::Action::Quit, tx));
+                reopen.update(|s, tx| s.dispatch(AppAction::Quit, tx));
             }
             _ => {}
         },
@@ -1147,6 +1176,114 @@ fn wait_app(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runtime() -> rune::Runtime<State> {
+        let mut state = State::init();
+        state.workspace.layout.explorer = true;
+        runtime_for(state)
+    }
+
+    pub(super) fn runtime_for(state: State) -> rune::Runtime<State> {
+        let mut runtime =
+            rune::Runtime::new(state, view, (1200.0, 700.0), rune::Env::new(true, 1.0));
+        runtime.on_key = Some(on_key);
+        runtime.frame(0.0);
+        runtime
+    }
+
+    pub(super) fn press(runtime: &mut rune::Runtime<State>, key: Key, mods: rune::Mods) {
+        runtime.key(KeyEvent { key, mods });
+        runtime.frame(0.0);
+    }
+
+    pub(super) fn open_palette(runtime: &mut rune::Runtime<State>) {
+        press(
+            runtime,
+            Key::Command('p'),
+            rune::Mods {
+                ctrl: !cfg!(target_os = "macos"),
+                cmd: true,
+                shift: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn palette_search_executes_the_same_explorer_action_as_the_toolbar() {
+        let mut runtime = runtime();
+        assert!(runtime.find("explorer").is_some());
+        open_palette(&mut runtime);
+        assert!(runtime.find("command-palette").is_some());
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("command-query") && e.focused)
+        );
+        press(
+            &mut runtime,
+            Key::Text("toggle explorer".into()),
+            Default::default(),
+        );
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+        assert!(runtime.find("explorer").is_none());
+        let (x, y) = runtime.find("files").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_some());
+    }
+
+    #[test]
+    fn palette_shows_shortcuts_and_keeps_unavailable_commands_open() {
+        let mut runtime = runtime();
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("save file".into()),
+            Default::default(),
+        );
+        let text = runtime
+            .elements()
+            .iter()
+            .filter_map(|e| e.text.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains(if cfg!(target_os = "macos") {
+            "Cmd+S"
+        } else {
+            "Ctrl+S"
+        }));
+        assert!(text.contains("No open editor"));
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+    }
+
+    #[test]
+    fn palette_keyboard_selection_remains_visible_at_the_minimum_window_size() {
+        let mut runtime = runtime();
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.frame(0.0);
+        open_palette(&mut runtime);
+        let palette = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("command-palette"))
+            .unwrap();
+        assert!(palette.rect[0] >= 0.0 && palette.rect[0] + palette.rect[2] <= 640.0);
+        assert!(palette.rect[1] >= 0.0 && palette.rect[1] + palette.rect[3] <= 360.0);
+        press(&mut runtime, Key::Up, Default::default());
+        assert!(runtime.find("command-quit").is_some());
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("confirmation").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.find("confirmation").is_none());
+    }
+
     #[test]
     fn terminal_controls_are_distinct_from_desktop_shortcuts() {
         let event = KeyEvent {

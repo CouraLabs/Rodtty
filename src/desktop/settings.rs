@@ -91,7 +91,7 @@ pub(super) fn content(s: &State) -> El {
         .child(button(
             "open-settings-json",
             "Open Settings JSON",
-            |s, _| s.open_settings_json(),
+            |s, tx| s.dispatch(AppAction::OpenSettingsJson, tx),
         ));
     if let Some(error) = &s.settings_error {
         page = page.child(
