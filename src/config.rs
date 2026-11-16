@@ -2,9 +2,45 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Color family and brightness are independent owner preferences.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeFamily {
+    #[default]
+    Catppuccin,
+}
+impl ThemeFamily {
+    pub const ALL: &[Self] = &[Self::Catppuccin];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Catppuccin => "Catppuccin",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Appearance {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+impl Appearance {
+    pub fn dark(self, system_dark: bool) -> bool {
+        match self {
+            Self::Light => false,
+            Self::Dark => true,
+            Self::System => system_dark,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
+    pub theme_family: ThemeFamily,
+    pub appearance: Appearance,
     pub disabled: Vec<String>,
     pub scrollback: usize,
     pub history: bool,
@@ -16,6 +52,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            theme_family: ThemeFamily::default(),
+            appearance: Appearance::default(),
             disabled: Vec::new(),
             scrollback: 10_000,
             history: true,
