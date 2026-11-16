@@ -53,6 +53,7 @@ Untracked files appear as additions. **Auto** selects inline or split diffs base
 | Ctrl+Shift+W | End current session, with confirmation |
 | Ctrl+Shift+Q | Quit, with confirmation |
 | Ctrl+Shift+F | Search retained scrollback |
+| Ctrl+Shift+P / Cmd+Shift+P | Search and run workspace actions |
 | Ctrl+Shift+C / Ctrl+Shift+V | Copy selection / paste |
 | Shift+PageUp / Shift+PageDown | Scroll terminal output |
 | Ctrl+C | Interrupt foreground command |
@@ -63,6 +64,8 @@ Untracked files appear as additions. **Auto** selects inline or split diffs base
 | Ctrl/Cmd+W in the editor | Close file, with an unsaved-change prompt |
 
 On macOS, Command replaces Ctrl+Shift for application shortcuts; Control continues to send terminal control characters. The mouse wheel scrolls retained output, and dragging selects visible terminal cells. Advanced mouse-reporting protocols are not yet implemented.
+
+The Actions control also opens the command palette. Type to filter actions, use Up/Down to select, Enter to execute, and Escape or an outside click to dismiss. The palette shows current shortcuts and explains unavailable actions. Dismissing it returns focus to the previous workspace control; save, close, and quit actions retain their existing confirmation flows.
 
 ## Configuration
 
@@ -91,7 +94,7 @@ cargo test --locked --test terminal real_vim_accepts_keyboard_input_and_saves_a_
 
 The last check requires an installed `vim`. CI defines native Linux, Windows, and macOS jobs. Those jobs have not run until the workflow is published and executed.
 
-Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, and `diff` includes Git-style changes):
+Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery):
 
 ```sh
 target/debug/rodtty --scene workspace --snap target/workspace-preview.png --size 1440x860 --scale 1
