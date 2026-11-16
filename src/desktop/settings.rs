@@ -64,7 +64,7 @@ fn matches(s: &State, section: &str, name: &str) -> bool {
     format!("{section} {name}").to_lowercase().contains(&query)
 }
 
-pub(super) fn content(s: &State) -> El {
+pub(super) fn content(s: &State, a: &Appearance) -> El {
     let mut page = col()
         .key("settings-page")
         .w_full()
@@ -76,30 +76,27 @@ pub(super) fn content(s: &State) -> El {
         .child(
             text("Settings")
                 .font(TextStyle::new(18.0, 600.0))
-                .color(ink()),
+                .color(a.ink()),
         )
         .child(
             text_input(&s.settings_query, LABEL)
+                .caret(a.accent(), a.selection())
                 .key("settings-search")
                 .label("Search settings")
                 .w_full()
                 .h(30.0)
-                .color(ink())
-                .placeholder("Search settings", muted())
+                .color(a.ink())
+                .placeholder("Search settings", a.muted())
                 .on_edit(|s: &mut State| &mut s.settings_query),
         )
         .child(button(
+            a,
             "open-settings-json",
             "Open Settings JSON",
             |s, tx| s.dispatch(AppAction::OpenSettingsJson, tx),
         ));
     if let Some(error) = &s.settings_error {
-        page = page.child(
-            text(error)
-                .font(LABEL)
-                .color(rgb(238, 113, 129))
-                .wrap_anywhere(),
-        );
+        page = page.child(text(error).font(LABEL).color(a.danger()).wrap_anywhere());
     }
     let mut list = col()
         .key("settings-list")
@@ -120,7 +117,13 @@ pub(super) fn content(s: &State) -> El {
         "Files",
         "Bundled Commands",
     ] {
-        let visible = if section == "Terminal" {
+        let visible = if section == "Appearance" {
+            matches(
+                s,
+                section,
+                "theme family Catppuccin Latte Mocha Light Dark System palette",
+            )
+        } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
         } else if section == "Bundled Commands" {
@@ -141,9 +144,70 @@ pub(super) fn content(s: &State) -> El {
             .child(
                 text(section)
                     .font(TextStyle::new(13.0, 600.0))
-                    .color(accent()),
+                    .color(a.accent()),
             );
         match section {
+            "Appearance" => {
+                use crate::config::{Appearance as Mode, ThemeFamily};
+                let mut families = row().gap(6.0).scroll_x();
+                for &family in ThemeFamily::ALL {
+                    families = families.child(
+                        button(
+                            a,
+                            format!("theme-family-{}", family.label()),
+                            family.label(),
+                            move |s, _| s.save_config(|c| c.theme_family = family),
+                        )
+                        .role("radio")
+                        .checked(s.config.theme_family == family)
+                        .border(
+                            1.0,
+                            if s.config.theme_family == family {
+                                a.accent()
+                            } else {
+                                a.panel()
+                            },
+                        ),
+                    );
+                }
+                group = group
+                    .child(text("Theme family").font(LABEL).color(a.muted()))
+                    .child(families)
+                    .child(button(a, "reset-theme-family", "Reset family", |s, _| {
+                        s.save_config(|c| c.theme_family = Config::default().theme_family);
+                    }));
+                let mut choices = row().gap(6.0).scroll_x();
+                for (key, label, mode) in [
+                    ("light", "Light", Mode::Light),
+                    ("dark", "Dark", Mode::Dark),
+                    ("system", "System", Mode::System),
+                ] {
+                    choices = choices.child(
+                        button(a, format!("appearance-{key}"), label, move |s, _| {
+                            s.save_config(|c| c.appearance = mode)
+                        })
+                        .role("radio")
+                        .checked(s.config.appearance == mode)
+                        .border(
+                            1.0,
+                            if s.config.appearance == mode {
+                                a.accent()
+                            } else {
+                                a.panel()
+                            },
+                        ),
+                    );
+                }
+                group = group.child(choices)
+                    .child(text(format!("{} · applies immediately", a.name)).font(LABEL).color(a.muted()).wrap())
+                    .child(palette_preview(s.config.theme_family, Mode::Light))
+                    .child(palette_preview(s.config.theme_family, Mode::Dark))
+                    .child(button(a, "reset-appearance", "Reset appearance", |s, _| {
+                        s.save_config(|c| c.appearance = Config::default().appearance);
+                    }))
+                    .child(text("Catppuccin palette © 2021 Catppuccin · MIT · github.com/catppuccin/palette")
+                        .font(LABEL).color(a.muted()).wrap_anywhere());
+            }
             "Terminal" => {
                 if matches(s, section, "history save shell commands") {
                     group = group.child(
@@ -151,13 +215,14 @@ pub(super) fn content(s: &State) -> El {
                             .gap(6.0)
                             .center_y()
                             .child(button(
+                                a,
                                 "history",
                                 format!("History: {}", if s.config.history { "on" } else { "off" }),
                                 |s, _| {
                                     s.save_config(|config| config.history = !config.history);
                                 },
                             ))
-                            .child(button("reset-history", "Reset", |s, _| {
+                            .child(button(a, "reset-history", "Reset", |s, _| {
                                 s.save_config(|config| config.history = Config::default().history);
                             })),
                     );
@@ -171,20 +236,20 @@ pub(super) fn content(s: &State) -> El {
                             .child(
                                 text(format!("Scrollback: {} lines", s.config.scrollback))
                                     .font(LABEL)
-                                    .color(ink()),
+                                    .color(a.ink()),
                             )
-                            .child(button("less-scrollback", "− 1000", |s, _| {
+                            .child(button(a, "less-scrollback", "− 1000", |s, _| {
                                 s.save_config(|config| {
                                     config.scrollback =
                                         config.scrollback.saturating_sub(1000).max(100)
                                 });
                             }))
-                            .child(button("more-scrollback", "+ 1000", |s, _| {
+                            .child(button(a, "more-scrollback", "+ 1000", |s, _| {
                                 s.save_config(|config| {
                                     config.scrollback = (config.scrollback + 1000).min(100_000)
                                 });
                             }))
-                            .child(button("reset-scrollback", "Reset", |s, _| {
+                            .child(button(a, "reset-scrollback", "Reset", |s, _| {
                                 s.save_config(|config| {
                                     config.scrollback = Config::default().scrollback
                                 });
@@ -196,7 +261,7 @@ pub(super) fn content(s: &State) -> El {
                         "Command, history, and scrollback choices apply to new terminal sessions.",
                     )
                     .font(LABEL)
-                    .color(muted())
+                    .color(a.muted())
                     .wrap(),
                 );
             }
@@ -212,6 +277,7 @@ pub(super) fn content(s: &State) -> El {
                             .gap(6.0)
                             .center_y()
                             .child(button(
+                                a,
                                 format!("utility-{name}"),
                                 format!("{} {name}", if enabled { "✓" } else { "−" }),
                                 move |s, _| {
@@ -225,6 +291,7 @@ pub(super) fn content(s: &State) -> El {
                                 },
                             ))
                             .child(button(
+                                a,
                                 format!("reset-utility-{reset}"),
                                 "Reset",
                                 move |s, _| {
@@ -238,7 +305,7 @@ pub(super) fn content(s: &State) -> El {
                 group = group.child(
                     text("No configurable preferences in this section yet.")
                         .font(LABEL)
-                        .color(muted())
+                        .color(a.muted())
                         .wrap(),
                 );
             }
@@ -249,10 +316,43 @@ pub(super) fn content(s: &State) -> El {
         list = list.child(
             text("No settings match your search.")
                 .font(LABEL)
-                .color(muted()),
+                .color(a.muted()),
         );
     }
     page.child(list)
+}
+
+fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appearance) -> El {
+    let p = Appearance::resolve(family, mode, false);
+    let mut swatches = row().gap(3.0);
+    for i in 0..8 {
+        swatches = swatches.child(
+            el().size(16.0, 10.0)
+                .radius(2.0)
+                .fill(p.terminal(vt100::Color::Idx(i + 1), true)),
+        );
+    }
+    col()
+        .key(format!(
+            "palette-preview-{}",
+            if p.dark { "dark" } else { "light" }
+        ))
+        .w_full()
+        .min_w(0.0)
+        .px(10.0)
+        .py(8.0)
+        .gap(4.0)
+        .radius(6.0)
+        .fill(p.bg())
+        .border(1.0, p.kit().c.border_base)
+        .child(text(p.name).font(LABEL).color(p.ink()).wrap())
+        .child(
+            text("rodtty:~/projects $ cargo build")
+                .font(LABEL)
+                .color(p.accent())
+                .wrap(),
+        )
+        .child(swatches)
 }
 
 #[cfg(test)]
@@ -279,7 +379,129 @@ mod tests {
             .unwrap_or_else(|| panic!("missing control {key}"));
         runtime.pointer_down(x, y);
         runtime.pointer_up(x, y);
-        runtime.frame(1.0 / 60.0);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+    }
+    fn assert_canvas(runtime: &rune::Runtime<State>, hex: &str) {
+        let c = rune::theme::hex(hex).unwrap();
+        let actual = runtime.clear_color();
+        assert!(
+            actual
+                .iter()
+                .zip([c.r, c.g, c.b, c.a])
+                .all(|(a, b)| (a - b).abs() < 0.0001),
+            "canvas {actual:?}, expected {hex}"
+        );
+    }
+    #[test]
+    fn system_tracks_live_host_changes_while_explicit_appearance_stays_fixed() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        assert_canvas(&runtime, "#1e1e2e");
+        runtime.set_system_dark(false);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_canvas(&runtime, "#eff1f5");
+        click(&mut runtime, "settings");
+        click(&mut runtime, "appearance-dark");
+        runtime.set_system_dark(true);
+        runtime.frame(0.0);
+        runtime.set_system_dark(false);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_canvas(&runtime, "#1e1e2e");
+        click(&mut runtime, "appearance-light");
+        runtime.set_system_dark(true);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_canvas(&runtime, "#eff1f5");
+        click(&mut runtime, "reset-appearance");
+        assert_canvas(&runtime, "#1e1e2e");
+        runtime.set_system_dark(false);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_canvas(&runtime, "#eff1f5");
+        assert_eq!(
+            Config::load(root.path()).unwrap().appearance,
+            crate::config::Appearance::System
+        );
+        runtime.update(|s, _| s.settings_query.replace_text("latte"));
+        runtime.frame(0.0);
+        assert!(runtime.find("appearance-system").is_some());
+    }
+    #[test]
+    fn switching_appearance_recolors_ansi_but_preserves_extended_output_and_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        runtime.update(|s, _| {
+            let mut parser = vt100::Parser::new(8, 30, 0);
+            parser.process(b"\x1b[41m \x1b[48;5;196m \x1b[48;2;12;34;56m \x1b[0m output stays");
+            s.preview = Some(parser.screen().clone());
+            s.selection = Some(((1, 0), (1, 5)));
+        });
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        let cell_background = |runtime: &rune::Runtime<State>, col: usize| {
+            let r = runtime.presented("terminal").unwrap().0;
+            let x = r[0] + (col as f32 + 0.5) * CW;
+            runtime
+                .instances
+                .iter()
+                .find(|i| {
+                    (i.rect[1] - r[1]).abs() < 0.01
+                        && i.rect[3] == CH
+                        && i.rect[0] <= x
+                        && x < i.rect[0] + i.rect[2]
+                        && i.rect[2] < 2.0 * CW
+                })
+                .expect("terminal cell background")
+                .fill
+        };
+        let rgb = |hex: &str| {
+            let c = rune::theme::hex(hex).unwrap();
+            [c.r, c.g, c.b, c.a]
+        };
+        assert_eq!(cell_background(&runtime, 0), rgb("#f38ba8"));
+        assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
+        assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
+        click(&mut runtime, "settings");
+        click(&mut runtime, "appearance-light");
+        assert_eq!(cell_background(&runtime, 0), rgb("#d20f39"));
+        assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
+        assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
+        assert!(
+            runtime
+                .state
+                .with_screen(|screen| screen.contents().contains("output stays"))
+        );
+        assert_eq!(runtime.state.selection, Some(((1, 0), (1, 5))));
+    }
+    #[test]
+    fn owner_changes_appearance_live_and_reopens_with_saved_choice() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = self::runtime(root.path());
+        click(&mut runtime, "settings");
+        click(&mut runtime, "appearance-light");
+        assert_canvas(&runtime, "#eff1f5");
+        click(&mut runtime, "appearance-dark");
+        assert_canvas(&runtime, "#1e1e2e");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["appearance"], "dark");
+        assert_eq!(saved["theme_family"], "catppuccin");
+        let mut reopened = self::runtime(root.path());
+        reopened.set_system_dark(false);
+        for _ in 0..45 {
+            reopened.frame(1.0 / 60.0);
+        }
+        assert_canvas(&reopened, "#1e1e2e");
     }
     #[test]
     fn owner_searches_resets_and_edits_actual_json_beside_the_terminal() {
@@ -373,7 +595,7 @@ mod tests {
         let path = root.path().join("settings.json");
         std::fs::write(
             &path,
-            r#"{"history":false,"scrollback":2000,"future":{"choice":7}}"#,
+            r#"{"appearance":"light","history":false,"scrollback":2000,"future":{"choice":7}}"#,
         )
         .unwrap();
         runtime.update(|s, tx| {
@@ -383,6 +605,10 @@ mod tests {
         runtime.frame(1.0 / 60.0);
         assert!(!runtime.state.config.history);
         assert_eq!(runtime.state.config.scrollback, 2000);
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_canvas(&runtime, "#eff1f5");
         std::fs::write(&path, "{invalid JSON").unwrap();
         runtime.update(|s, tx| {
             s.settings_poll = Instant::now() - Duration::from_secs(1);
@@ -396,6 +622,7 @@ mod tests {
                 .message
                 .contains("keeping last valid preferences")
         );
+        assert_canvas(&runtime, "#eff1f5");
         // A UI action must not destroy the invalid JSON being repaired externally.
         runtime.update(|s, _| {
             s.settings_query.replace_text("history");

@@ -10,7 +10,9 @@ use rune::{
 };
 use std::{path::PathBuf, sync::Arc};
 mod actions;
+mod appearance;
 mod palette;
+use appearance::Appearance;
 mod settings;
 mod workspace;
 use actions::AppAction;
@@ -36,22 +38,6 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
         a: 1.0,
     }
 }
-fn bg() -> Color {
-    rgb(14, 18, 25)
-}
-fn panel() -> Color {
-    rgb(23, 29, 39)
-}
-fn ink() -> Color {
-    rgb(221, 229, 240)
-}
-fn muted() -> Color {
-    rgb(135, 151, 173)
-}
-fn accent() -> Color {
-    rgb(101, 218, 177)
-}
-
 enum Pending {
     Tab(usize),
     Quit,
@@ -266,73 +252,47 @@ impl State {
 }
 
 fn button(
+    a: &Appearance,
     key: impl Into<String>,
     label: impl Into<String>,
     action: impl Fn(&mut State, &mut Tx) + 'static,
 ) -> El {
+    let label = label.into();
+    let key = key.into();
+    let help = match key.as_str() {
+        "explorer-hide" => "Hide file explorer",
+        "explorer-up" => "Open parent folder",
+        "explorer-refresh" => "Refresh files",
+        "settings-close" => "Close Settings tab",
+        "find-close" => "Close editor search",
+        "diff-prev" => "Previous change",
+        "diff-next" => "Next change",
+        _ if key.starts_with("editor-close-") => "Close editor tab",
+        _ => &label,
+    };
     el().key(key)
+        .label(help)
+        .help(help)
+        .focusable(true)
+        .focus_ring(2.0, 1.0, a.accent())
         .h(29.0)
         .px(10.0)
         .center()
         .radius(5.0)
-        .fill(panel())
-        .hover(rgb(37, 49, 63))
+        .fill(a.panel())
+        .hover(a.hover_bg())
         .on_press_tx(move |state: &mut State, tx| {
             tx.blur();
             action(state, tx);
         })
-        .child(text(label).font(LABEL).color(ink()))
+        .child(text(label).font(LABEL).color(a.ink()))
 }
 
-fn terminal_color(color: vt100::Color, foreground: bool) -> Color {
-    match color {
-        vt100::Color::Default => {
-            if foreground {
-                ink()
-            } else {
-                bg()
-            }
-        }
-        vt100::Color::Rgb(r, g, b) => rgb(r, g, b),
-        vt100::Color::Idx(i) => {
-            let colors = [
-                (22, 28, 38),
-                (238, 113, 129),
-                (123, 213, 151),
-                (232, 197, 116),
-                (128, 168, 239),
-                (194, 148, 225),
-                (107, 206, 213),
-                (206, 215, 227),
-                (104, 119, 141),
-                (255, 143, 156),
-                (154, 233, 173),
-                (250, 216, 141),
-                (160, 193, 255),
-                (218, 176, 248),
-                (147, 227, 231),
-                (244, 247, 252),
-            ];
-            let (r, g, b) = if i < 16 {
-                colors[i as usize]
-            } else if i >= 232 {
-                let v = 8 + (i - 232) * 10;
-                (v, v, v)
-            } else {
-                let n = i - 16;
-                let level = |n: u8| if n == 0 { 0 } else { 55 + 40 * n };
-                (level(n / 36), level(n / 6 % 6), level(n % 6))
-            };
-            rgb(r, g, b)
-        }
-    }
+fn grid(state: &State, a: &Appearance) -> El {
+    state.with_screen(|screen| grid_view(state, screen, a))
 }
 
-fn grid(state: &State) -> El {
-    state.with_screen(|screen| grid_view(state, screen))
-}
-
-fn grid_view(state: &State, screen: &vt100::Screen) -> El {
+fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     let (rows, cols) = screen.size();
     let selection = state
         .selection
@@ -344,7 +304,7 @@ fn grid_view(state: &State, screen: &vt100::Screen) -> El {
         .w_full()
         .grow(1.0)
         .clip_soft(0.0)
-        .fill(bg());
+        .fill(a.bg());
     // Position runs on a fixed cell grid. Wide glyphs get their own run so
     // fallback-font advances cannot shift the cells following them.
     for r in 0..rows {
@@ -391,16 +351,16 @@ fn grid_view(state: &State, screen: &vt100::Screen) -> El {
                     break;
                 }
             }
-            let mut fg = terminal_color(cell.fgcolor(), true);
-            let mut background = terminal_color(cell.bgcolor(), false);
+            let mut fg = a.terminal(cell.fgcolor(), true);
+            let mut background = a.terminal(cell.bgcolor(), false);
             if cell.inverse() {
                 std::mem::swap(&mut fg, &mut background);
             }
             if selected(start) {
-                background = rgb(47, 80, 100);
+                background = a.bg().mix(a.accent(), 0.28);
             }
             let width = (end - start) as f32 * CW;
-            if background != bg() {
+            if background != a.bg() {
                 grid = grid.child(
                     el().absolute(start as f32 * CW, r as f32 * CH)
                         .size(width, CH)
@@ -437,7 +397,7 @@ fn grid_view(state: &State, screen: &vt100::Screen) -> El {
             el().key("terminal-caret")
                 .absolute(c as f32 * CW, r as f32 * CH + CH - 3.0)
                 .size(CW, 2.0)
-                .fill(accent())
+                .fill(a.accent())
                 .ime_cursor(),
         );
     }
@@ -482,7 +442,16 @@ fn grid_view(state: &State, screen: &vt100::Screen) -> El {
     })
 }
 
-fn view(state: &State, _: &mut Cx<State>) -> El {
+fn view(state: &State, cx: &mut Cx<State>) -> El {
+    let a = &Appearance::resolve(
+        state.config.theme_family,
+        state.config.appearance,
+        cx.system_dark(),
+    );
+    cx.foreground(a.ink());
+    cx.focus_ring(2.0, 1.0, a.accent());
+    cx.help_look(a.tooltip());
+    cx.caption_color(a.ink());
     let mut tabs = row()
         .key("tabs")
         .w_full()
@@ -490,7 +459,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
         .px(16.0)
         .gap(6.0)
         .center_y()
-        .fill(panel());
+        .fill(a.panel());
     for (i, session) in state.sessions.iter().enumerate() {
         let exited = session
             .state
@@ -500,24 +469,32 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
             .is_some();
         tabs = tabs.child(
             button(
+                a,
                 format!("tab-{i}"),
                 format!("{} {}", if exited { "○" } else { "●" }, i + 1),
                 move |s, tx| s.dispatch(AppAction::ActivateTerminal(i), tx),
             )
-            .border(1.0, if i == state.active { accent() } else { panel() }),
+            .border(
+                1.0,
+                if i == state.active {
+                    a.accent()
+                } else {
+                    a.panel()
+                },
+            ),
         );
     }
     if state.preview.is_some() {
-        tabs = tabs.child(text("●  1   Preview").font(LABEL).color(accent()));
+        tabs = tabs.child(text("●  1   Preview").font(LABEL).color(a.accent()));
     }
-    tabs = tabs.child(button("new-tab", "+  New tab", |s, tx| {
+    tabs = tabs.child(button(a, "new-tab", "+  New tab", |s, tx| {
         s.dispatch(AppAction::NewTerminal, tx)
     }));
     let mut root = col()
         .key("root")
         .w_full()
         .h_full()
-        .fill(bg())
+        .fill(a.bg())
         .child(
             row()
                 .key("app-toolbar")
@@ -530,36 +507,36 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                 .child(
                     text("RODTTY")
                         .font(TextStyle::new(15.0, 600.0))
-                        .color(ink()),
+                        .color(a.ink()),
                 )
                 .child(
                     text("WORKSPACE")
                         .font(TextStyle::new(10.0, 500.0))
-                        .color(accent()),
+                        .color(a.accent()),
                 )
                 .child(el().grow(1.0))
-                .child(button("files", "Files", |s, tx| {
+                .child(button(a, "files", "Files", |s, tx| {
                     s.dispatch(AppAction::ToggleExplorer, tx)
                 }))
-                .child(button("toggle-terminal", "Terminal", |s, tx| {
+                .child(button(a, "toggle-terminal", "Terminal", |s, tx| {
                     s.dispatch(AppAction::ToggleTerminal, tx)
                 }))
-                .child(button("toggle-editor", "Editor", |s, tx| {
+                .child(button(a, "toggle-editor", "Editor", |s, tx| {
                     s.dispatch(AppAction::ToggleEditor, tx)
                 }))
-                .child(button("find", "Find", |s, tx| {
+                .child(button(a, "find", "Find", |s, tx| {
                     s.dispatch(AppAction::FindTerminal, tx)
                 }))
-                .child(button("settings", "Settings", |s, tx| {
+                .child(button(a, "settings", "Settings", |s, tx| {
                     s.dispatch(AppAction::Settings, tx)
                 }))
-                .child(button("close-tab", "End session", |s, tx| {
+                .child(button(a, "close-tab", "End session", |s, tx| {
                     s.dispatch(AppAction::EndTerminal, tx)
                 }))
-                .child(button("palette", "Actions", |s, tx| {
+                .child(button(a, "palette", "Actions", |s, tx| {
                     s.dispatch(AppAction::CommandPalette, tx)
                 }))
-                .child(button("quit", "Quit", |s, tx| {
+                .child(button(a, "quit", "Quit", |s, tx| {
                     s.dispatch(AppAction::Quit, tx)
                 })),
         )
@@ -570,13 +547,14 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                 .px(16.0)
                 .py(8.0)
                 .gap(8.0)
-                .fill(panel())
+                .fill(a.panel())
                 .child(
                     text_input(&state.query, LABEL)
                         .key("search-query")
                         .w(320.0)
                         .h(30.0)
-                        .color(ink())
+                        .color(a.ink())
+                        .caret(a.accent(), a.selection())
                         .on_edit(|s: &mut State| &mut s.query)
                         .on_submit(|s: &mut State, tx| {
                             s.message = if s
@@ -590,12 +568,12 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                             tx.blur();
                         }),
                 )
-                .child(button("close-search", "Close search", |s, _| {
+                .child(button(a, "close-search", "Close search", |s, _| {
                     s.search = false
                 })),
         );
     }
-    root = root.child(workspace::body(state));
+    root = root.child(workspace::body(state, a));
     let cwd = if state.preview.is_some() {
         PathBuf::from("~/projects")
     } else {
@@ -611,8 +589,8 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
             .px(16.0)
             .gap(10.0)
             .center_y()
-            .fill(panel())
-            .child(text(cwd.to_string_lossy()).font(LABEL).color(muted()))
+            .fill(a.panel())
+            .child(text(cwd.to_string_lossy()).font(LABEL).color(a.muted()))
             .child(el().grow(1.0))
             .child(
                 text(if state.message.is_empty() {
@@ -621,7 +599,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                     &state.message
                 })
                 .font(LABEL)
-                .color(muted()),
+                .color(a.muted()),
             ),
     );
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
@@ -633,7 +611,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
             el().absolute(0.0, 0.0)
                 .w_full()
                 .h_full()
-                .fill(Color::BLACK.alpha(0.65))
+                .fill(a.scrim())
                 .center()
                 .child(
                     col()
@@ -644,26 +622,26 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                         .py(24.0)
                         .gap(16.0)
                         .radius(10.0)
-                        .fill(panel())
-                        .child(text(title).font(TextStyle::new(17.0, 600.0)).color(ink()))
+                        .fill(a.panel())
+                        .child(text(title).font(TextStyle::new(17.0, 600.0)).color(a.ink()))
                         .child(
                             text("Running commands in these sessions will stop.")
                                 .font(LABEL)
-                                .color(muted()),
+                                .color(a.muted()),
                         )
                         .child(
                             row()
                                 .gap(8.0)
-                                .child(button("cancel", "Cancel", |s, _| s.pending = None))
-                                .child(button("confirm", "End sessions", |s, tx| s.confirm(tx))),
+                                .child(button(a, "cancel", "Cancel", |s, _| s.pending = None))
+                                .child(button(a, "confirm", "End sessions", |s, tx| s.confirm(tx))),
                         ),
                 ),
         );
     }
-    if let Some(dialog) = workspace::file_dialog(state) {
+    if let Some(dialog) = workspace::file_dialog(state, a) {
         root = root.child(dialog);
     }
-    if let Some(palette) = palette::view(state) {
+    if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
     root.on_paste(|s: &mut State, content, _| {
@@ -1053,6 +1031,37 @@ fn native_check(
                 anyhow::bail!("terminal did not produce {needle}");
             };
             wait_text("rodtty:")?;
+            // Exercise live preferences against a real running terminal session.
+            // Retain the owner's original choice when this developer harness finishes.
+            let (choice_tx, choice_rx) = std::sync::mpsc::channel();
+            handle.update(move |s, _| {
+                let _ = choice_tx.send(s.config.appearance);
+            });
+            let original_appearance = choice_rx.recv_timeout(Duration::from_secs(10))?;
+            for appearance in [
+                config::Appearance::Light,
+                config::Appearance::Dark,
+                config::Appearance::System,
+            ] {
+                handle.update(move |s, _| s.save_config(|c| c.appearance = appearance));
+                wait_app(&handle, move |s| s.config.appearance == appearance)?;
+                let (identity_tx, identity_rx) = std::sync::mpsc::channel();
+                handle.update(move |s, _| {
+                    let _ = identity_tx.send(s.active().map(|session| session.state.clone()));
+                });
+                let active = identity_rx
+                    .recv_timeout(Duration::from_secs(10))?
+                    .context("terminal missing after appearance change")?;
+                anyhow::ensure!(
+                    Arc::ptr_eq(&session, &active),
+                    "appearance change replaced the terminal session"
+                );
+            }
+            handle.update(move |s, _| {
+                s.save_config(|c| c.appearance = original_appearance);
+                s.send(b"printf '\\033[31mANSI \\033[38;5;196mEXTENDED \\033[38;2;12;34;56mTRUECOLOR\\033[0m APPEARANCE_%s\\n' RETAINED\r".to_vec());
+            });
+            wait_text("APPEARANCE_RETAINED")?;
             let _workspace_fixture = if with_workspace {
                 let fixture = tempfile::tempdir()?;
                 let file = fixture.path().join("workspace-check.rs");
@@ -1123,7 +1132,7 @@ fn native_check(
             );
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
-                "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true});
+                "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"output_after_appearance_change":true});
             if with_workspace {
                 report["unsaved_close_prompt"] = true.into();
                 report["editor_saved"] = true.into();
