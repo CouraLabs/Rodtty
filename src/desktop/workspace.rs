@@ -59,8 +59,8 @@ pub(super) struct Workspace {
     pub git_error: Option<String>,
     scan_token: u64,
     scan_busy: bool,
-    last_scan: Instant,
-    last_follow: Option<PathBuf>,
+    pub(super) last_scan: Instant,
+    pub(super) last_follow: Option<PathBuf>,
     next_id: u64,
     opening: Vec<PathBuf>,
     restore_active: Option<PathBuf>,
@@ -169,7 +169,7 @@ impl State {
             );
         }
     }
-    fn navigate(&mut self, path: PathBuf) {
+    pub(super) fn navigate(&mut self, path: PathBuf) {
         self.workspace.directory = Some(path.clone());
         self.workspace.address.replace_text(path.to_string_lossy());
         self.workspace.entries.clear();
@@ -195,7 +195,7 @@ impl State {
             self.message = "Opening file…".into();
         }
     }
-    fn activate_editor(&mut self, index: usize) {
+    pub(super) fn activate_editor(&mut self, index: usize) {
         self.settings = false;
         self.workspace.terminal_focus = false;
         self.workspace.active = index;
@@ -344,7 +344,7 @@ impl State {
             tab.after_save = None;
         }
     }
-    fn invalidate_diff(&mut self, clear: bool) {
+    pub(super) fn invalidate_diff(&mut self, clear: bool) {
         self.workspace.last_diff = Instant::now() - Duration::from_secs(3);
         if clear {
             self.workspace.diff = DiffState::default();
@@ -359,22 +359,20 @@ impl State {
         }
     }
     fn file_key(&mut self, id: u64, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if event.is_command('s') {
-            self.save_file(id, false, None);
+        if event.is_command('s') && !event.mods.shift {
+            self.dispatch(AppAction::SaveEditor(Some(id)), tx);
             return true;
         }
-        if event.is_command('f') {
-            self.workspace.find = true;
-            tx.focus_when_shown("editor-find", true);
+        if event.is_command('f') && !event.mods.shift {
+            self.dispatch(AppAction::FindEditor, tx);
             return true;
         }
-        if event.is_command('h') {
-            self.workspace.find = true;
-            tx.focus_when_shown("editor-replace", true);
+        if event.is_command('h') && !event.mods.shift {
+            self.dispatch(AppAction::ReplaceEditor, tx);
             return true;
         }
         if event.is_command('w') && !event.mods.shift {
-            self.request_action(Action::Editor(id), tx);
+            self.dispatch(AppAction::CloseEditor(Some(id)), tx);
             return true;
         }
         if event.key == Key::Function(3) {
@@ -785,8 +783,8 @@ fn explorer(s: &State) -> El {
                 .center_y()
                 .child(text("FILES").font(ui_label()).color(accent()))
                 .child(el().grow(1.0))
-                .child(button("explorer-hide", "×", |s, _| {
-                    s.workspace.layout.explorer = false
+                .child(button("explorer-hide", "×", |s, tx| {
+                    s.dispatch(AppAction::ToggleExplorer, tx)
                 })),
         )
         .child(
@@ -816,19 +814,11 @@ fn explorer(s: &State) -> El {
         .child(
             row()
                 .gap(4.0)
-                .child(button("explorer-up", "↑", |s, _| {
-                    if let Some(parent) = s
-                        .workspace
-                        .directory
-                        .as_ref()
-                        .and_then(|p| p.parent())
-                        .map(PathBuf::from)
-                    {
-                        s.navigate(parent);
-                    }
+                .child(button("explorer-up", "↑", |s, tx| {
+                    s.dispatch(AppAction::ExplorerParent, tx)
                 }))
-                .child(button("explorer-refresh", "↻", |s, _| {
-                    s.workspace.last_scan = Instant::now() - Duration::from_secs(3)
+                .child(button("explorer-refresh", "↻", |s, tx| {
+                    s.dispatch(AppAction::RefreshExplorer, tx)
                 }))
                 .child(button(
                     "explorer-follow",
@@ -837,10 +827,7 @@ fn explorer(s: &State) -> El {
                     } else {
                         "Follow"
                     },
-                    |s, _| {
-                        s.workspace.layout.follow = !s.workspace.layout.follow;
-                        s.workspace.last_follow = None;
-                    },
+                    |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
                 ))
                 .child(button(
                     "explorer-hidden",
@@ -849,10 +836,7 @@ fn explorer(s: &State) -> El {
                     } else {
                         ".*"
                     },
-                    |s, _| {
-                        s.workspace.layout.hidden = !s.workspace.layout.hidden;
-                        s.workspace.last_scan = Instant::now() - Duration::from_secs(3);
-                    },
+                    |s, tx| s.dispatch(AppAction::ToggleHidden, tx),
                 )),
         );
     let mut list = col()
@@ -954,7 +938,7 @@ fn editor(s: &State) -> El {
                 button(
                     format!("editor-tab-{id}"),
                     format!("{}{}", name, if tab.dirty() { " •" } else { "" }),
-                    move |s, _| s.activate_editor(i),
+                    move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
                 )
                 .border(
                     1.0,
@@ -966,17 +950,16 @@ fn editor(s: &State) -> El {
                 ),
             )
             .child(button(format!("editor-close-{id}"), "×", move |s, tx| {
-                s.request_action(Action::Editor(id), tx)
+                s.dispatch(AppAction::CloseEditor(Some(id)), tx)
             }));
     }
     if s.settings_open {
         tabs = tabs
             .child(button("settings-tab", "Settings", |s, tx| {
-                s.open_settings(tx)
+                s.dispatch(AppAction::Settings, tx)
             }))
-            .child(button("settings-close", "×", |s, _| {
-                s.settings_open = false;
-                s.settings = false;
+            .child(button("settings-close", "×", |s, tx| {
+                s.dispatch(AppAction::CloseSettings, tx)
             }));
     }
     pane = pane.child(tabs);
@@ -1002,22 +985,10 @@ fn editor(s: &State) -> El {
         .child(button(
             "file-save",
             if tab.saving { "Saving…" } else { "Save" },
-            move |s, tx| {
-                s.save_file(id, false, None);
-                if s.workspace
-                    .tabs
-                    .iter()
-                    .any(|t| t.id == id && t.mode == View::Edit)
-                {
-                    tx.focus_when_shown(format!("file-editor-{id}"), true);
-                }
-            },
+            move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
         ))
-        .child(button("file-edit", "Edit", move |s, tx| {
-            if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
-                tab.mode = View::Edit;
-                tx.focus_when_shown(format!("file-editor-{id}"), true);
-            }
+        .child(button("file-edit", "Edit", |s, tx| {
+            s.dispatch(AppAction::EditFile, tx)
         }));
     for (key, label, mode) in [
         ("diff-current", "Current", Comparison::Current),
@@ -1025,12 +996,8 @@ fn editor(s: &State) -> El {
         ("diff-staged", "Staged", Comparison::Staged),
     ] {
         controls = controls.child(
-            button(key, label, move |s, _| {
-                if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
-                    tab.mode = View::Diff(mode);
-                }
-                s.workspace.terminal_focus = false;
-                s.invalidate_diff(true);
+            button(key, label, move |s, tx| {
+                s.dispatch(AppAction::Compare(mode), tx)
             })
             .border(
                 1.0,
@@ -1044,19 +1011,10 @@ fn editor(s: &State) -> El {
     }
     controls = controls
         .child(button("file-find", "Find", |s, tx| {
-            if let Some(tab) = s.workspace.tabs.get_mut(s.workspace.active) {
-                tab.mode = View::Edit;
-            }
-            s.workspace.find = !s.workspace.find;
-            if s.workspace.find {
-                tx.focus_when_shown("editor-find", true);
-            }
+            s.dispatch(AppAction::FindEditor, tx)
         }))
-        .child(button("editor-hide", "Hide", |s, _| {
-            s.workspace.layout.editor = false;
-            if !s.workspace.layout.terminal {
-                s.workspace.layout.terminal = true;
-            }
+        .child(button("editor-hide", "Hide", |s, tx| {
+            s.dispatch(AppAction::ToggleEditor, tx)
         }));
     pane = pane.child(controls).child(
         text(tab.document.path.to_string_lossy())
@@ -1468,6 +1426,162 @@ mod tests {
     fn open(state: &mut State, path: &std::path::Path) {
         state.open_file(path.to_owned());
         wait(state, |s| !s.workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn dismissing_palette_returns_typing_to_the_editor_without_changing_its_text() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        runtime.update(|_, tx| tx.focus("file-editor-1", true));
+        runtime.frame(0.0);
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("no such action".into()),
+            Default::default(),
+        );
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("No matching actions"))
+        );
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("file-editor-1") && e.focused)
+        );
+        press(&mut runtime, Key::Text("edit".into()), Default::default());
+        assert!(runtime.state.workspace.tabs[0].edit.text.contains("edit"));
+        assert!(
+            !runtime.state.workspace.tabs[0]
+                .edit
+                .text
+                .contains("no such action")
+        );
+    }
+
+    #[test]
+    fn palette_and_editor_close_control_both_preserve_unsaved_work_until_a_decision() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        runtime.update(|_, tx| tx.focus("file-editor-1", true));
+        runtime.frame(0.0);
+        press(
+            &mut runtime,
+            Key::Text("unsaved".into()),
+            Default::default(),
+        );
+        let draft = runtime.state.workspace.tabs[0].edit.text.clone();
+        let (x, y) = runtime.find("editor-close-1").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.find("file-dialog").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("close editor".into()),
+            Default::default(),
+        );
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+        assert!(runtime.find("file-dialog").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[test]
+    fn palette_file_actions_do_not_target_an_editor_behind_settings() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime.find("settings").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("save file".into()),
+            Default::default(),
+        );
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Select a file editor first"))
+        );
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_some());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[test]
+    fn save_control_shortcut_and_palette_save_the_same_editor_buffer() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        let command = rune::Mods {
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        for (entry, expected) in [
+            (0, "saved from control"),
+            (1, "saved from shortcut"),
+            (2, "saved from palette"),
+        ] {
+            runtime.update(|_, tx| tx.focus("file-editor-1", true));
+            runtime.frame(0.0);
+            press(&mut runtime, Key::Command('a'), command);
+            press(&mut runtime, Key::Text(expected.into()), Default::default());
+            match entry {
+                0 => {
+                    let (x, y) = runtime.find("file-save").unwrap();
+                    runtime.pointer_down(x, y);
+                    runtime.pointer_up(x, y);
+                    runtime.frame(0.0);
+                }
+                1 => press(&mut runtime, Key::Command('s'), command),
+                _ => {
+                    open_palette(&mut runtime);
+                    press(
+                        &mut runtime,
+                        Key::Text("save file".into()),
+                        Default::default(),
+                    );
+                    press(&mut runtime, Key::Enter, Default::default());
+                }
+            }
+            runtime.update(|s, _| wait(s, |s| !s.workspace.tabs[0].saving));
+            runtime.frame(0.0);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+            assert!(runtime.find("file-dialog").is_none());
+        }
     }
 
     #[test]

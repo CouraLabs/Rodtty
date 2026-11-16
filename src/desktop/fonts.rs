@@ -202,21 +202,52 @@ mod tests {
         let mut state = State::with_root(root.path().into());
         workspace_preview(&mut state);
         let text = state.workspace.tabs[0].edit.text.clone();
-        let mut rt = Runtime::with_text(state, view, (1600.0, 1000.0), Env { system_dark: true, scale: 1.0 }, rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")));
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1600.0, 1000.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
         frame(&mut rt);
         let before = rect(&rt, "file-editor-1")[3];
         std::fs::write(root.path().join("settings.json"), r#"{"fonts":{"ui_family":"Rodtty Missing UI Face 1827","terminal_family":"Rodtty Missing Mono Face 1827","ui_size":16,"terminal_size":18,"editor_size":22}}"#).unwrap();
-        rt.update(|s, tx| { s.settings_poll = Instant::now() - Duration::from_secs(1); poll(s, 0.0, tx); });
+        rt.update(|s, tx| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            poll(s, 0.0, tx);
+        });
         frame(&mut rt);
         assert!(rt.font_families().0.ends_with("\"Geist\""));
         assert!(rt.font_families().1.ends_with("\"Geist Mono\""));
         assert!(rect(&rt, "file-editor-1")[3] > before);
-        assert_eq!(rt.elements().into_iter().find(|e| e.key.as_deref() == Some("file-editor-1")).unwrap().text.as_deref(), Some(text.as_str()));
+        assert_eq!(
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("file-editor-1"))
+                .unwrap()
+                .text
+                .as_deref(),
+            Some(text.as_str())
+        );
         let before = rect(&rt, "terminal-caret");
-        std::fs::write(root.path().join("settings.json"), r#"{"fonts":{"terminal_size":0}}"#).unwrap();
-        rt.update(|s, tx| { s.settings_poll = Instant::now() - Duration::from_secs(1); poll(s, 0.0, tx); }); frame(&mut rt);
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"fonts":{"terminal_size":0}}"#,
+        )
+        .unwrap();
+        rt.update(|s, tx| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            poll(s, 0.0, tx);
+        });
+        frame(&mut rt);
         assert_eq!(rect(&rt, "terminal-caret"), before);
-        assert!(rt.elements().iter().any(|e| e.text.as_ref().is_some_and(|t| t.contains("font size must be between"))));
+        assert!(rt.elements().iter().any(|e| {
+            e.text
+                .as_ref()
+                .is_some_and(|t| t.contains("font size must be between"))
+        }));
     }
-
 }
