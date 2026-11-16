@@ -196,6 +196,7 @@ impl State {
         }
     }
     fn activate_editor(&mut self, index: usize) {
+        self.settings = false;
         self.workspace.terminal_focus = false;
         self.workspace.active = index;
         self.workspace.layout.editor = true;
@@ -968,7 +969,20 @@ fn editor(s: &State) -> El {
                 s.request_action(Action::Editor(id), tx)
             }));
     }
+    if s.settings_open {
+        tabs = tabs
+            .child(button("settings-tab", "Settings", |s, tx| {
+                s.open_settings(tx)
+            }))
+            .child(button("settings-close", "×", |s, _| {
+                s.settings_open = false;
+                s.settings = false;
+            }));
+    }
     pane = pane.child(tabs);
+    if s.settings {
+        return pane.child(super::settings::content(s));
+    }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         return pane.child(
             col()
@@ -1250,7 +1264,7 @@ fn editor(s: &State) -> El {
 
 pub(super) fn body(s: &State) -> El {
     let workspace = &s.workspace;
-    let show_editor = workspace.layout.editor && !workspace.tabs.is_empty();
+    let show_editor = workspace.layout.editor && (!workspace.tabs.is_empty() || s.settings_open);
     let terminal = workspace.layout.terminal || !show_editor;
     let mut body = row()
         .key("workspace")
@@ -1434,8 +1448,7 @@ pub(super) fn demo(s: &mut State, diff: bool) {
 mod tests {
     use super::*;
     fn state(root: &std::path::Path) -> State {
-        let mut state = State::init();
-        state.root = root.to_owned();
+        let mut state = State::with_root(root.to_owned());
         state.directory = root.to_owned();
         state.workspace_setup();
         state

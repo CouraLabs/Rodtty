@@ -9,7 +9,7 @@ default-run = "rodtty"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:rune", "dep:serde_json", "dep:rune-kit"]
+desktop = ["dep:rune", "dep:rune-kit"]
 
 [dependencies]
 anyhow = "1"
@@ -21,7 +21,7 @@ brush-coreutils-builtins = { git = "https://github.com/reubeno/brush", rev = "fb
 directories = "6"
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 tempfile = "3"
 toml = "1"
 similar = "2"

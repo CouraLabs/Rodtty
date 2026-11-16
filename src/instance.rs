@@ -11,6 +11,7 @@ use std::{
 pub struct Instance {
     _lock: File,
     root: PathBuf,
+    compatibility: Option<Box<Instance>>,
 }
 
 impl Instance {
@@ -26,6 +27,7 @@ impl Instance {
             Ok(()) => Ok(Some(Self {
                 _lock: lock,
                 root: root.to_owned(),
+                compatibility: None,
             })),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 Self::request_open(root)?;
@@ -33,6 +35,22 @@ impl Instance {
             }
             Err(error) => Err(error).context("lock Rodtty host instance"),
         }
+    }
+
+    /// Lock the legacy root first so an older live host remains authoritative.
+    /// Holding it for our lifetime also makes older launchers request our window.
+    pub fn acquire_owner(root: &Path, legacy: &Path) -> Result<Option<Self>> {
+        if root == legacy {
+            return Self::acquire(root);
+        }
+        let Some(compatibility) = Self::acquire(legacy)? else {
+            return Ok(None);
+        };
+        let Some(mut instance) = Self::acquire(root)? else {
+            return Ok(None);
+        };
+        instance.compatibility = Some(Box::new(compatibility));
+        Ok(Some(instance))
     }
 
     fn request_open(root: &Path) -> Result<()> {
@@ -45,20 +63,35 @@ impl Instance {
     }
 
     pub fn watch(&self, open: impl Fn() + Send + 'static) -> Result<RecommendedWatcher> {
-        let request = self.root.join("open.request");
-        let mut last = std::fs::read_to_string(&request).unwrap_or_default();
+        let mut roots = vec![self.root.clone()];
+        if let Some(compatibility) = &self.compatibility {
+            roots.push(compatibility.root.clone());
+        }
+        let mut requests: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                let path = root.join("open.request");
+                let last = std::fs::read_to_string(&path).unwrap_or_default();
+                (path, last)
+            })
+            .collect();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                if event.is_ok_and(|event| event.kind.is_modify() || event.kind.is_create())
-                    && let Ok(next) = std::fs::read_to_string(&request)
-                    && !next.is_empty()
-                    && next != last
-                {
-                    last = next;
-                    open();
+                if event.is_ok_and(|event| event.kind.is_modify() || event.kind.is_create()) {
+                    for (request, last) in &mut requests {
+                        if let Ok(next) = std::fs::read_to_string(request)
+                            && !next.is_empty()
+                            && next != *last
+                        {
+                            *last = next;
+                            open();
+                        }
+                    }
                 }
             })?;
-        watcher.watch(&self.root, RecursiveMode::NonRecursive)?;
+        for root in roots {
+            watcher.watch(&root, RecursiveMode::NonRecursive)?;
+        }
         Ok(watcher)
     }
 }

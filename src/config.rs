@@ -3,11 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Config {
     pub disabled: Vec<String>,
     pub scrollback: usize,
     pub history: bool,
+    /// Preserve preferences owned by other feature modules and future versions.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for Config {
@@ -16,6 +19,7 @@ impl Default for Config {
             disabled: Vec::new(),
             scrollback: 10_000,
             history: true,
+            extra: Default::default(),
         }
     }
 }
@@ -35,9 +39,18 @@ impl Config {
     }
 
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join("config.toml");
-        let config = if path.exists() {
-            toml::from_str(&std::fs::read_to_string(&path)?)
+        let path = root.join("settings.json");
+        if !path.exists() && !root.join(".storage-migrated-v1").exists() {
+            let legacy = root.join("config.toml");
+            if legacy.exists() {
+                let config: Self = toml::from_str(&std::fs::read_to_string(&legacy)?)
+                    .with_context(|| format!("invalid {}", legacy.display()))?;
+                config.validate()?;
+                write_json(&path, &config, false)?;
+            }
+        }
+        let config: Self = if path.exists() {
+            serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid {}", path.display()))?
         } else {
             Self::default()
@@ -47,24 +60,82 @@ impl Config {
     }
 
     pub fn save(&self, root: &Path) -> Result<()> {
-        use std::io::Write;
         self.validate()?;
-        std::fs::create_dir_all(root)?;
-        let mut file = tempfile::NamedTempFile::new_in(root)?;
-        file.write_all(toml::to_string_pretty(self)?.as_bytes())?;
-        file.as_file().sync_all()?;
-        file.persist(root.join("config.toml"))?;
-        Ok(())
+        write_json(&root.join("settings.json"), self, true)
     }
+}
+
+/// Atomically publish a complete JSON document. Migration uses no-clobber
+/// persistence so an existing owner destination always wins, including races.
+pub(crate) fn write_json(path: &Path, value: &impl Serialize, replace: bool) -> Result<()> {
+    use std::io::Write;
+    let root = path.parent().context("settings path has no parent")?;
+    std::fs::create_dir_all(root)?;
+    let mut file = tempfile::NamedTempFile::new_in(root)?;
+    file.write_all(&serde_json::to_vec_pretty(value)?)?;
+    file.write_all(b"\n")?;
+    file.as_file().sync_all()?;
+    if replace {
+        file.persist(path)?;
+    } else if let Err(error) = file.persist_noclobber(path)
+        && error.error.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 pub fn app_root() -> Result<PathBuf> {
     if let Some(root) = std::env::var_os("RODTTY_HOME") {
         return Ok(PathBuf::from(root));
     }
+    directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().join(".rodtty"))
+        .context("could not find the owner's home directory")
+}
+
+/// The previous coordination location must remain locked for compatibility
+/// with a surviving host from before the storage migration.
+pub fn legacy_root() -> Result<PathBuf> {
+    if let Some(root) = std::env::var_os("RODTTY_HOME") {
+        return Ok(PathBuf::from(root));
+    }
     directories::ProjectDirs::from("dev", "CouraLabs", "Rodtty")
         .map(|dirs| dirs.config_dir().to_owned())
         .context("could not find the owner's configuration directory")
+}
+
+/// Called after acquiring both owner locks. Originals and existing destinations
+/// are retained; session directories are deliberately never copied.
+pub fn migrate_storage(root: &Path, legacy: &Path) -> Result<()> {
+    let marker = root.join(".storage-migrated-v1");
+    if marker.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(root)?;
+    if root != legacy {
+        for name in ["config.toml", "workspace.toml", "startup.sh", "history"] {
+            let source = legacy.join(name);
+            let destination = root.join(name);
+            if source.is_file() && !destination.exists() {
+                let mut file = tempfile::NamedTempFile::new_in(root)?;
+                std::io::copy(&mut std::fs::File::open(&source)?, &mut file)?;
+                file.as_file().sync_all()?;
+                if let Err(error) = file.persist_noclobber(&destination)
+                    && error.error.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+    if !root.join("settings.json").exists() {
+        Config::load(root)?;
+    }
+    if !root.join("workspace-state.json").exists() {
+        crate::work::Layout::load(root)?;
+    }
+    write_json(&marker, &1, false)
 }
 
 pub fn initial_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {

@@ -26,7 +26,7 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 
 - Terminal tabs run independent Brush sessions with native PTYs and a terminal-state parser.
 - Commands on the inherited host PATH remain available. Bash-style syntax is the target; complete Bash script compatibility is not promised.
-- The Commands panel enables/disables bundled utilities and configures history and scrollback. Changes apply to new sessions.
+- The searchable Settings editor tab enables/disables bundled utilities and configures history and scrollback, with individual reset controls. Changes apply to new sessions.
 - Enabled utilities run through native launchers as external processes, supporting concurrent pipelines. Disabled names report an error instead of falling back to a host utility in the managed environment.
 - The terminal displays ANSI colors, Unicode, alternate-screen applications, and a cursor; supports resizing, selection, clipboard paste/copy, and scrollback search.
 - Closing the window keeps sessions running. Relaunching Rodtty or using its tray entry reopens the same instance. Ending a tab or selecting Quit requires confirmation. A computer restart creates fresh sessions.
@@ -66,14 +66,18 @@ On macOS, Command replaces Ctrl+Shift for application shortcuts; Control continu
 
 ## Configuration
 
-Run `rodtty --paths` to locate the owner's `config.toml`, optional `startup.sh`, and shared history file. `workspace.toml` beside these files stores pane layout and saved file paths; it does not store unsaved drafts. Set `RODTTY_HOME` to use a separate configuration directory for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
+Owner preferences live at `~/.rodtty/settings.json` on every desktop platform. Settings opens beside the terminal and saves UI changes immediately; Open Settings JSON edits that actual file in the editor. Valid external edits apply automatically within the open app, with command/history/scrollback changes taking effect for new sessions. Invalid JSON keeps the last valid preferences active and reports the problem without replacing the file. Unrecognized preference fields are preserved when existing controls save.
+
+`~/.rodtty/workspace-state.json` separately stores pane layout and saved file paths; workspace activity does not rewrite preferences and unsaved drafts are not stored. Existing platform-directory `config.toml`, `workspace.toml`, optional `startup.sh`, and shared history migrate once while preserving originals and existing destinations. Launch coordination also retains the old owner lock so surviving sessions are reopened safely. Run `rodtty --paths` to locate these files. Set `RODTTY_HOME` to isolate all storage and coordination for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
 
 With history enabled, commands append to the shared history file at each prompt. New sessions load saved history; sessions already running retain their own recall list. The pinned Brush version does not support Bash's `history -n` incremental import.
 
-```toml
-disabled = ["rm"]
-scrollback = 10000
-history = true
+```json
+{
+  "disabled": ["rm"],
+  "scrollback": 10000,
+  "history": true
+}
 ```
 
 New tabs inherit the active tab's directory but begin with the host environment and Rodtty-specific startup file. Host Bash/Zsh startup files are loaded only when explicitly sourced. Startup-file PATH changes are followed by prepending the session's managed utility directory.

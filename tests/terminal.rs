@@ -406,3 +406,57 @@ fn real_vim_accepts_keyboard_input_and_saves_a_file() {
         "Hello from Rodtty — café\n"
     );
 }
+
+#[test]
+fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_startup() {
+    let legacy = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        legacy.path().join("config.toml"),
+        "disabled = ['cat']\nhistory = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        legacy.path().join("startup.sh"),
+        "export RODTTY_MIGRATED=original\n",
+    )
+    .unwrap();
+    std::fs::write(
+        legacy.path().join("history"),
+        "echo retained-owner-history\n",
+    )
+    .unwrap();
+    rodtty::config::migrate_storage(root.path(), legacy.path()).unwrap();
+    let first = session(root.path(), Config::load(root.path()).unwrap());
+    std::fs::write(
+        root.path().join("settings.json"),
+        r#"{"disabled":["ls"],"history":false,"scrollback":2000}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("startup.sh"),
+        "export RODTTY_MIGRATED=changed\n",
+    )
+    .unwrap();
+    let second = session(root.path(), Config::load(root.path()).unwrap());
+    run(
+        &first,
+        "printf 'START:%s\\n' \"$RODTTY_MIGRATED\"; cat; ls --version; history",
+        "OLD_JSON_SESSION",
+    );
+    run(
+        &second,
+        "printf 'START:%s\\n' \"$RODTTY_MIGRATED\"; test -z \"$HISTFILE\" && printf 'HISTORY_%s\\n' DISABLED; cat --version; ls",
+        "NEW_JSON_SESSION",
+    );
+    let old = first.screen().contents();
+    let new = second.screen().contents();
+    assert!(old.contains("START:original"), "{old}");
+    assert!(old.contains("cat: disabled for this session"), "{old}");
+    assert!(old.contains("retained-owner-history"), "{old}");
+    assert!(new.contains("START:changed"), "{new}");
+    assert!(new.contains("HISTORY_DISABLED"), "{new}");
+    assert!(new.contains("ls: disabled for this session"), "{new}");
+    assert!(new.to_lowercase().contains("uutils"), "{new}");
+    assert!(legacy.path().join("history").is_file());
+}
