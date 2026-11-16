@@ -9,6 +9,7 @@ use rune::{
     row, text, text_input,
 };
 use std::{path::PathBuf, sync::Arc};
+mod settings;
 mod workspace;
 
 const CW: f32 = 8.4;
@@ -67,6 +68,12 @@ struct State {
     wake: Arc<dyn Fn() + Send + Sync>,
     generations: Vec<u64>,
     settings: bool,
+    settings_open: bool,
+    settings_query: TextEdit,
+    settings_error: Option<String>,
+    settings_seen: Option<Vec<u8>>,
+    settings_poll: std::time::Instant,
+    last_valid_config: Config,
     search: bool,
     query: TextEdit,
     pending: Option<Pending>,
@@ -78,6 +85,10 @@ struct State {
 impl State {
     fn init() -> Self {
         let root = config::app_root().unwrap_or_else(|_| std::env::temp_dir().join("rodtty"));
+        Self::with_root(root)
+    }
+
+    fn with_root(root: PathBuf) -> Self {
         let loaded = Config::load(&root);
         let directory = config::initial_directory(
             std::env::args()
@@ -89,14 +100,16 @@ impl State {
         let message = loaded
             .as_ref()
             .err()
-            .map(ToString::to_string)
+            .map(|error| format!("Could not load Settings JSON: {error:#}"))
             .unwrap_or_default();
         let config_valid = loaded.is_ok();
         Self {
             workspace: workspace::Workspace::default(),
             handle: None,
+            settings_seen: std::fs::read(root.join("settings.json")).ok(),
             root,
             shell: config::shell_executable().ok(),
+            last_valid_config: loaded.as_ref().cloned().unwrap_or_default(),
             config: loaded.unwrap_or_default(),
             config_valid,
             sessions: Vec::new(),
@@ -105,6 +118,10 @@ impl State {
             wake: Arc::new(|| {}),
             generations: Vec::new(),
             settings: false,
+            settings_open: false,
+            settings_query: TextEdit::new(""),
+            settings_error: (!config_valid).then(|| message.clone()),
+            settings_poll: std::time::Instant::now(),
             search: false,
             query: TextEdit::new(""),
             pending: None,
@@ -179,13 +196,37 @@ impl State {
         }
     }
 
-    fn save_config(&mut self) {
+    fn save_config(&mut self, edit: impl FnOnce(&mut Config)) {
+        // An invalid owner file may be in the middle of an external edit. Keep
+        // it intact rather than treating a UI change as permission to replace it.
+        match Config::load(&self.root) {
+            Ok(current) => {
+                self.last_valid_config = current.clone();
+                self.config = current;
+                edit(&mut self.config);
+            }
+            Err(error) => {
+                self.config = self.last_valid_config.clone();
+                let error = format!(
+                    "Invalid Settings JSON; keeping last valid preferences. Repair the JSON before saving: {error:#}"
+                );
+                self.message = error.clone();
+                self.settings_error = Some(error);
+                return;
+            }
+        }
         self.message = match self.config.save(&self.root) {
             Ok(()) => {
+                self.last_valid_config = self.config.clone();
+                self.settings_seen = std::fs::read(self.root.join("settings.json")).ok();
+                self.settings_error = None;
                 self.config_valid = true;
-                "Saved. Command and history settings apply to new sessions.".into()
+                "Saved. Command, history, and scrollback settings apply to new sessions.".into()
             }
-            Err(error) => format!("Could not save settings: {error:#}"),
+            Err(error) => {
+                self.config = self.last_valid_config.clone();
+                format!("Could not save settings: {error:#}")
+            }
         };
     }
 
@@ -501,9 +542,7 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                         tx.focus("search-query", true);
                     }
                 }))
-                .child(button("settings", "Commands", |s, _| {
-                    s.settings = !s.settings
-                }))
+                .child(button("settings", "Settings", |s, tx| s.open_settings(tx)))
                 .child(button("close-tab", "End session", |s, _| {
                     if s.active().is_some() {
                         s.pending = Some(Pending::Tab(s.active));
@@ -514,80 +553,6 @@ fn view(state: &State, _: &mut Cx<State>) -> El {
                 })),
         )
         .child(tabs);
-    if state.settings {
-        let mut settings = col()
-            .key("command-settings")
-            .w_full()
-            .px(16.0)
-            .py(12.0)
-            .gap(8.0)
-            .fill(panel())
-            .child(
-                text("Bundled commands · changes apply to new sessions")
-                    .font(LABEL)
-                    .color(muted()),
-            );
-        let names = profile::utility_names();
-        for chunk in names.chunks(7) {
-            let mut line = row().gap(6.0);
-            for name in chunk {
-                let name = name.clone();
-                let enabled = !state.config.disabled.contains(&name);
-                line = line.child(
-                    button(
-                        format!("utility-{name}"),
-                        format!("{} {name}", if enabled { "✓" } else { "−" }),
-                        move |s, _| {
-                            if s.config.disabled.contains(&name) {
-                                s.config.disabled.retain(|n| n != &name);
-                            } else {
-                                s.config.disabled.push(name.clone());
-                            }
-                            s.save_config();
-                        },
-                    )
-                    .border(
-                        1.0,
-                        if enabled {
-                            accent().alpha(0.4)
-                        } else {
-                            muted().alpha(0.3)
-                        },
-                    ),
-                );
-            }
-            settings = settings.child(line);
-        }
-        settings = settings.child(
-            row()
-                .gap(8.0)
-                .child(button(
-                    "history",
-                    format!(
-                        "History: {}",
-                        if state.config.history { "on" } else { "off" }
-                    ),
-                    |s, _| {
-                        s.config.history = !s.config.history;
-                        s.save_config();
-                    },
-                ))
-                .child(button("less-scrollback", "− 1000 lines", |s, _| {
-                    s.config.scrollback = s.config.scrollback.saturating_sub(1000).max(100);
-                    s.save_config();
-                }))
-                .child(
-                    text(format!("Scrollback: {}", state.config.scrollback))
-                        .font(LABEL)
-                        .color(muted()),
-                )
-                .child(button("more-scrollback", "+ 1000 lines", |s, _| {
-                    s.config.scrollback = (s.config.scrollback + 1000).min(100_000);
-                    s.save_config();
-                })),
-        );
-        root = root.child(settings);
-    }
     if state.search {
         root = root.child(
             row()
@@ -823,7 +788,8 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         .collect();
     let changed = generations != state.generations;
     state.generations = generations;
-    state.workspace_poll(tx) || changed
+    let settings_changed = state.poll_settings();
+    state.workspace_poll(tx) || changed || settings_changed
 }
 
 fn preview(state: &mut State) {
@@ -838,6 +804,10 @@ fn workspace_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, false);
 }
+fn settings_preview(state: &mut State) {
+    preview(state);
+    state.open_settings(&mut Tx::default());
+}
 fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
@@ -849,7 +819,7 @@ pub fn run() -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(
-                &serde_json::json!({"config":root.join("config.toml"),"startup":root.join("startup.sh"),"history":root.join("history")})
+                &serde_json::json!({"config":root.join("settings.json"),"workspace":root.join("workspace-state.json"),"startup":root.join("startup.sh"),"history":root.join("history")})
             )?
         );
         return Ok(());
@@ -874,12 +844,17 @@ pub fn run() -> Result<()> {
     let instance = if headless {
         None
     } else {
-        let Some(instance) = crate::instance::Instance::acquire(&config::app_root()?)? else {
+        let Some(instance) = crate::instance::Instance::acquire_owner(
+            &config::app_root()?,
+            &config::legacy_root()?,
+        )?
+        else {
             return Ok(());
         };
         Some(instance)
     };
     if instance.is_some() {
+        config::migrate_storage(&config::app_root()?, &config::legacy_root()?)?;
         profile::cleanup_stale(&config::app_root()?);
     }
     let spec = AppSpec {
@@ -890,6 +865,7 @@ pub fn run() -> Result<()> {
             ("preview", preview),
             ("workspace", workspace_preview),
             ("diff", diff_preview),
+            ("settings", settings_preview),
         ],
         fonts: &[include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")],
         families: ("IBM Plex Mono", "IBM Plex Mono"),
