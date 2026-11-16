@@ -1,0 +1,3 @@
+# Draw themed desktop window chrome
+
+The desktop redesign retains the native Rust/Rune application and the terminal-first explorer, terminal, and editor layout. Rodtty will draw its own title bar, window controls, and visible frame using the selected application theme instead of displaying the operating system's standard title bar and borders, so the window appearance remains coherent across desktop systems. This deliberately trades standard window decorations for responsibility for window movement, resizing, minimize/maximize/restore/close behavior, and platform validation; closing the window follows the configured action in ADR-0004 and preserves running terminal sessions by default.

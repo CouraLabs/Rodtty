@@ -1,0 +1,10 @@
+{
+  "arch": "x86_64",
+  "os": "linux",
+  "output_while_closed": true,
+  "passed": true,
+  "reopened_from_second_launch": true,
+  "same_session": true,
+  "window_backend": "Xlib",
+  "window_closed": true
+}

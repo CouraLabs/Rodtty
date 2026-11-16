@@ -1,0 +1,5 @@
+# Store owner settings in home-directory JSON
+
+Rodtty's owner settings will be stored at `~/.rodtty/settings.json`, where `~` is the owner's home directory on each supported desktop system. This replaces platform-specific configuration directories and `config.toml` with a consistent, directly editable preferences file, at the cost of departing from each operating system's usual configuration-directory convention. Appearance and configurable action behavior belong to these owner settings; restored regular editor tabs, terminal-tab order and last directories, pane sizes, and expanded folders are stored separately in `~/.rodtty/workspace-state.json` so routine workspace changes do not rewrite owner preferences.
+
+Existing preferences migrate once without overwriting an existing `settings.json` or deleting the original files. The Settings interface saves preference changes immediately, offers direct JSON editing, and applies valid external edits without requiring a restart where the setting supports live application; terminal-session command configuration retains its established new-session behavior.

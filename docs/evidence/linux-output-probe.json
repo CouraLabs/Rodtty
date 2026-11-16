@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "command": "seq 1 100000",
+  "scope": "headless probe including startup, PTY processing, final snapshot and shutdown",
+  "elapsed_ms": 506.1,
+  "max_rss_kib": 72284,
+  "lines_generated": 100000,
+  "configured_scrollback_lines": 10000
+}
