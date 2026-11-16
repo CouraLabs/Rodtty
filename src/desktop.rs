@@ -827,6 +827,10 @@ fn workspace_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, false);
 }
+fn tree_preview(state: &mut State) {
+    preview(state);
+    workspace::host_tree_demo(state);
+}
 fn palette_preview(state: &mut State) {
     workspace_preview(state);
     state.open_palette(&mut Tx::default());
@@ -894,6 +898,7 @@ pub fn run() -> Result<()> {
             ("workspace", workspace_preview),
             ("diff", diff_preview),
             ("palette", palette_preview),
+            ("tree", tree_preview),
             ("settings", settings_preview),
         ],
         fonts: &[include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")],

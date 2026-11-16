@@ -1,5 +1,5 @@
 use crate::{
-    files::{self, Document, Entry, SaveFailure, TextFile},
+    files::{self, Document, Entry, SaveFailure, TextFile, TreeListing},
     git::{self, Comparison, Repository},
 };
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,10 @@ use std::{
 pub struct Layout {
     pub explorer: bool,
     pub explorer_directory: Option<PathBuf>,
+    pub expanded_folders: Vec<PathBuf>,
+    #[serde(skip_serializing)]
     pub follow: bool,
+    #[serde(skip_serializing)]
     pub hidden: bool,
     pub explorer_width: f32,
     pub editor_share: f32,
@@ -27,6 +30,7 @@ impl Default for Layout {
         Self {
             explorer: false,
             explorer_directory: None,
+            expanded_folders: Vec::new(),
             follow: false,
             hidden: false,
             explorer_width: 240.0,
@@ -87,6 +91,8 @@ pub enum Job {
         token: u64,
         directory: Option<PathBuf>,
         hidden: bool,
+        expanded: Vec<PathBuf>,
+        respect_ignore: bool,
         files: Vec<(u64, u64, PathBuf)>,
     },
     Diff {
@@ -116,7 +122,7 @@ pub enum Event {
     },
     Scan {
         token: u64,
-        listing: Option<Result<(PathBuf, Vec<Entry>), String>>,
+        listing: Option<Result<TreeListing, String>>,
         git: Result<Option<Repository>, String>,
         files: Vec<(u64, u64, Result<TextFile, String>)>,
     },
@@ -170,24 +176,42 @@ impl Worker {
                         token,
                         directory,
                         hidden,
+                        expanded,
+                        respect_ignore,
                         files,
                     } => {
-                        let mut listing = directory.as_ref().map(|p| {
-                            files::list_directory(p, hidden).map_err(|e| format!("{e:#}"))
-                        });
-                        let git = directory
+                        let mut git = directory
                             .as_ref()
                             .map(|p| git::inspect(p).map_err(|e| format!("{e:#}")))
                             .unwrap_or(Ok(None));
-                        if let (Some(Ok((directory, entries))), Ok(Some(repo))) =
-                            (&mut listing, &git)
-                        {
+                        let ignored = if respect_ignore {
+                            match &git {
+                                Ok(Some(repo)) => match git::ignored(repo) {
+                                    Ok(paths) => paths,
+                                    Err(error) => {
+                                        git = Err(format!("Ignore rules: {error:#}"));
+                                        Vec::new()
+                                    }
+                                },
+                                _ => Vec::new(),
+                            }
+                        } else {
+                            Vec::new()
+                        };
+                        let mut listing = directory.as_ref().map(|p| {
+                            files::list_tree(p, &expanded, hidden, &ignored)
+                                .map_err(|e| format!("{e:#}"))
+                        });
+                        if let (Some(Ok(listing)), Ok(Some(repo))) = (&mut listing, &git) {
                             for (path, status) in &repo.files {
                                 if status.code.contains('D')
-                                    && path.parent() == Some(directory.as_path())
+                                    && path.parent().is_some_and(|parent| {
+                                        parent == listing.root
+                                            || expanded.iter().any(|p| p == parent)
+                                    })
                                     && !path.exists()
                                 {
-                                    entries.push(Entry {
+                                    listing.entries.push(Entry {
                                         path: path.clone(),
                                         name: path
                                             .file_name()
