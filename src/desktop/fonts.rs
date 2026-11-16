@@ -55,6 +55,23 @@ pub(super) fn editor() -> TextStyle {
         .lh(size * 1.5)
 }
 
+// Rune Kit diff/editor widgets must use the same owner sizes as app-drawn text.
+pub(super) fn kit(mut kit: rune_kit::Kit) -> rune_kit::Kit {
+    kit.ty.ui = ui(13.0, 400.0);
+    kit.ty.ui_medium = ui(13.0, 500.0);
+    kit.ty.ui_compact = ui(13.0, 400.0);
+    kit.ty.small = ui(11.0, 400.0);
+    kit.ty.small_medium = ui(11.0, 500.0);
+    kit.ty.body = ui(14.0, 400.0);
+    kit.ty.body_medium = ui(14.0, 500.0);
+    kit.ty.text_small = ui(13.0, 400.0);
+    kit.ty.text_small_medium = ui(13.0, 500.0);
+    kit.ty.text_xsmall = ui(12.0, 400.0);
+    kit.ty.text_xsmall_medium = ui(12.0, 500.0);
+    kit.ty.mono = editor();
+    kit
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct Metrics {
     pub width: f32,

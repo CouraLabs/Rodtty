@@ -1148,7 +1148,7 @@ fn editor(s: &State) -> El {
             .px(10.0)
             .py(8.0)
             .child(field);
-        pane = pane.child(Kit::neutral(true).scroll_bar(viewport));
+        pane = pane.child(fonts::kit(Kit::neutral(true)).scroll_bar(viewport));
         let position = tab.edit.focus;
         let line = tab.edit.text[..position]
             .bytes()
@@ -1211,7 +1211,7 @@ fn editor(s: &State) -> El {
                     |s: &mut State| &mut s.workspace.diff,
                 )
                 .key("git-diff")
-                .build(s, &Kit::neutral(true))
+                .build(s, &fonts::kit(Kit::neutral(true)))
                 .focusable(true)
                 .grow(1.0)
                 .min_h(0.0),
