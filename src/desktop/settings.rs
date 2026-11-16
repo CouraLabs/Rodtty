@@ -73,13 +73,9 @@ pub(super) fn content(s: &State) -> El {
         .px(12.0)
         .py(12.0)
         .gap(10.0)
+        .child(text("Settings").font(ui_style(18.0, 600.0)).color(ink()))
         .child(
-            text("Settings")
-                .font(TextStyle::new(18.0, 600.0))
-                .color(ink()),
-        )
-        .child(
-            text_input(&s.settings_query, LABEL)
+            text_input(&s.settings_query, ui_label())
                 .key("settings-search")
                 .label("Search settings")
                 .w_full()
@@ -96,7 +92,7 @@ pub(super) fn content(s: &State) -> El {
     if let Some(error) = &s.settings_error {
         page = page.child(
             text(error)
-                .font(LABEL)
+                .font(ui_label())
                 .color(rgb(238, 113, 129))
                 .wrap_anywhere(),
         );
@@ -123,6 +119,9 @@ pub(super) fn content(s: &State) -> El {
         let visible = if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
+                || matches(s, section, "font size")
+        } else if section == "Appearance" || section == "Editor" {
+            matches(s, section, "font size")
         } else if section == "Bundled Commands" {
             profile::utility_names()
                 .iter()
@@ -138,12 +137,56 @@ pub(super) fn content(s: &State) -> El {
             .key(format!("settings-section-{section}"))
             .w_full()
             .gap(6.0)
-            .child(
-                text(section)
-                    .font(TextStyle::new(13.0, 600.0))
-                    .color(accent()),
+            .child(text(section).font(ui_style(13.0, 600.0)).color(accent()));
+        let target = match section {
+            "Appearance" => Some("ui"),
+            "Terminal" => Some("terminal"),
+            "Editor" => Some("editor"),
+            _ => None,
+        };
+        if let Some(target) = target.filter(|_| matches(s, section, "font size")) {
+            let size = match target {
+                "ui" => s.config.fonts.ui_size,
+                "terminal" => s.config.fonts.terminal_size,
+                _ => s.config.fonts.editor_size,
+            };
+            let mut sizes = row().gap(6.0).center_y().child(
+                text(format!(
+                    "{} font size: {size}px",
+                    if target == "ui" { "UI" } else { target }
+                ))
+                .font(ui_label())
+                .color(ink()),
             );
+            for (action, title, delta) in [
+                ("less", "−", -1.0),
+                ("more", "+", 1.0),
+                ("reset", "Reset", 0.0),
+            ] {
+                sizes = sizes.child(button(
+                    format!("{action}-{target}-font-size"),
+                    title,
+                    move |s, _| {
+                        s.save_config(|c| {
+                            let defaults = config::FontPreferences::default();
+                            let (size, default) = match target {
+                                "ui" => (&mut c.fonts.ui_size, defaults.ui_size),
+                                "terminal" => (&mut c.fonts.terminal_size, defaults.terminal_size),
+                                _ => (&mut c.fonts.editor_size, defaults.editor_size),
+                            };
+                            *size = if delta == 0.0 {
+                                default
+                            } else {
+                                (*size + delta).clamp(8.0, 32.0)
+                            };
+                        });
+                    },
+                ));
+            }
+            group = group.child(sizes);
+        }
         match section {
+            "Appearance" | "Editor" => {}
             "Terminal" => {
                 if matches(s, section, "history save shell commands") {
                     group = group.child(
@@ -170,7 +213,7 @@ pub(super) fn content(s: &State) -> El {
                             .scroll_x()
                             .child(
                                 text(format!("Scrollback: {} lines", s.config.scrollback))
-                                    .font(LABEL)
+                                    .font(ui_label())
                                     .color(ink()),
                             )
                             .child(button("less-scrollback", "− 1000", |s, _| {
@@ -195,7 +238,7 @@ pub(super) fn content(s: &State) -> El {
                     text(
                         "Command, history, and scrollback choices apply to new terminal sessions.",
                     )
-                    .font(LABEL)
+                    .font(ui_label())
                     .color(muted())
                     .wrap(),
                 );
@@ -237,7 +280,7 @@ pub(super) fn content(s: &State) -> El {
             _ => {
                 group = group.child(
                     text("No configurable preferences in this section yet.")
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(muted())
                         .wrap(),
                 );
@@ -248,7 +291,7 @@ pub(super) fn content(s: &State) -> El {
     if count == 0 {
         list = list.child(
             text("No settings match your search.")
-                .font(LABEL)
+                .font(ui_label())
                 .color(muted()),
         );
     }
@@ -280,6 +323,48 @@ mod tests {
         runtime.pointer_down(x, y);
         runtime.pointer_up(x, y);
         runtime.frame(1.0 / 60.0);
+    }
+    #[test]
+    fn owner_changes_and_resets_independent_live_font_sizes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        click(&mut runtime, "settings");
+        runtime.update(|s, _| s.settings_query.replace_text("font size"));
+        runtime.frame(0.0);
+        let before = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Settings"))
+            .unwrap()
+            .rect[3];
+        click(&mut runtime, "more-ui-font-size");
+        let after = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Settings"))
+            .unwrap()
+            .rect[3];
+        assert!(
+            after > before,
+            "UI text applies the chosen size immediately"
+        );
+        click(&mut runtime, "more-terminal-font-size");
+        click(&mut runtime, "more-editor-font-size");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["fonts"]["ui_size"], 14.0);
+        assert_eq!(saved["fonts"]["terminal_size"], 15.0);
+        assert_eq!(saved["fonts"]["editor_size"], 15.0);
+        click(&mut runtime, "reset-ui-font-size");
+        click(&mut runtime, "reset-terminal-font-size");
+        click(&mut runtime, "reset-editor-font-size");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["fonts"]["ui_size"], 13.0);
+        assert_eq!(saved["fonts"]["terminal_size"], 14.0);
+        assert_eq!(saved["fonts"]["editor_size"], 14.0);
     }
     #[test]
     fn owner_searches_resets_and_edits_actual_json_beside_the_terminal() {

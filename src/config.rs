@@ -8,6 +8,7 @@ pub struct Config {
     pub disabled: Vec<String>,
     pub scrollback: usize,
     pub history: bool,
+    pub fonts: FontPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -19,6 +20,7 @@ impl Default for Config {
             disabled: Vec::new(),
             scrollback: 10_000,
             history: true,
+            fonts: FontPreferences::default(),
             extra: Default::default(),
         }
     }
@@ -29,6 +31,7 @@ impl Config {
         if !(100..=100_000).contains(&self.scrollback) {
             bail!("scrollback must be between 100 and 100000 lines");
         }
+        self.fonts.validate()?;
         let utilities = brush_coreutils_builtins::bundled_commands();
         for name in &self.disabled {
             if !utilities.contains_key(name) {
@@ -170,4 +173,58 @@ pub fn shell_executable() -> Result<PathBuf> {
         );
     }
     Ok(path)
+}
+
+/// Owner typography. The editor uses the terminal family with its own size.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FontPreferences {
+    pub ui_family: String,
+    pub terminal_family: String,
+    pub ui_size: f32,
+    pub terminal_size: f32,
+    pub editor_size: f32,
+}
+impl Default for FontPreferences {
+    fn default() -> Self {
+        Self {
+            ui_family: "Geist".into(),
+            terminal_family: "Geist Mono".into(),
+            ui_size: 13.0,
+            terminal_size: 14.0,
+            editor_size: 14.0,
+        }
+    }
+}
+impl FontPreferences {
+    fn validate(&self) -> Result<()> {
+        for (name, size) in [
+            ("UI", self.ui_size),
+            ("terminal", self.terminal_size),
+            ("editor", self.editor_size),
+        ] {
+            if !size.is_finite() || !(8.0..=32.0).contains(&size) {
+                bail!("{name} font size must be between 8 and 32 pixels");
+            }
+        }
+        for family in [&self.ui_family, &self.terminal_family] {
+            if family.trim().is_empty()
+                || family.len() > 256
+                || family.chars().any(char::is_control)
+            {
+                bail!("font family must be a nonempty name of at most 256 bytes");
+            }
+        }
+        Ok(())
+    }
+    pub fn families(&self) -> (String, String) {
+        let list = |family: &str, fallback: &str| {
+            let quoted = serde_json::to_string(family).expect("font name is a string");
+            format!("{quoted}, \"{fallback}\"")
+        };
+        (
+            list(&self.ui_family, "Geist"),
+            list(&self.terminal_family, "Geist Mono"),
+        )
+    }
 }

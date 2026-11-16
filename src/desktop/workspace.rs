@@ -783,14 +783,14 @@ fn explorer(s: &State) -> El {
             row()
                 .h(35.0)
                 .center_y()
-                .child(text("FILES").font(LABEL).color(accent()))
+                .child(text("FILES").font(ui_label()).color(accent()))
                 .child(el().grow(1.0))
                 .child(button("explorer-hide", "×", |s, _| {
                     s.workspace.layout.explorer = false
                 })),
         )
         .child(
-            text_input(&workspace.address, LABEL)
+            text_input(&workspace.address, ui_label())
                 .key("explorer-address")
                 .label("Explorer folder path")
                 .single_line()
@@ -900,7 +900,7 @@ fn explorer(s: &State) -> El {
                 })
                 .child(
                     text(label)
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(if entry.missing {
                             rgb(238, 113, 129)
                         } else {
@@ -910,7 +910,7 @@ fn explorer(s: &State) -> El {
                         .shrink()
                         .grow(1.0),
                 )
-                .child(text(badge).font(LABEL).color(accent())),
+                .child(text(badge).font(ui_label()).color(accent())),
         );
     }
     if workspace.entries.is_empty() {
@@ -920,13 +920,13 @@ fn explorer(s: &State) -> El {
             } else {
                 "No visible files"
             })
-            .font(LABEL)
+            .font(ui_label())
             .color(muted()),
         );
     }
     pane = pane.child(list);
     if let Some(error) = &workspace.git_error {
-        pane = pane.child(text(error).font(LABEL).color(muted()).wrap_anywhere());
+        pane = pane.child(text(error).font(ui_label()).color(muted()).wrap_anywhere());
     }
     pane
 }
@@ -985,10 +985,11 @@ fn editor(s: &State) -> El {
     }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         return pane.child(
-            col()
-                .grow(1.0)
-                .center()
-                .child(text("Open a file from Files").font(MONO).color(muted())),
+            col().grow(1.0).center().child(
+                text("Open a file from Files")
+                    .font(fonts::editor())
+                    .color(muted()),
+            ),
         );
     };
     let id = tab.id;
@@ -1059,7 +1060,7 @@ fn editor(s: &State) -> El {
         }));
     pane = pane.child(controls).child(
         text(tab.document.path.to_string_lossy())
-            .font(TextStyle::new(10.0, 400.0))
+            .font(ui_style(10.0, 400.0))
             .color(muted())
             .truncate()
             .w_full(),
@@ -1067,7 +1068,7 @@ fn editor(s: &State) -> El {
     if let Some(error) = &tab.disk_error {
         pane = pane.child(
             text(format!("Disk: {error}"))
-                .font(LABEL)
+                .font(ui_label())
                 .color(rgb(238, 113, 129))
                 .wrap_anywhere(),
         );
@@ -1080,7 +1081,7 @@ fn editor(s: &State) -> El {
                 .py(6.0)
                 .child(
                     text("Changed on disk. Your unsaved edits are preserved.")
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(ink())
                         .wrap(),
                 )
@@ -1110,7 +1111,7 @@ fn editor(s: &State) -> El {
                     row()
                         .gap(4.0)
                         .child(
-                            text_input(&workspace.find_query, LABEL)
+                            text_input(&workspace.find_query, ui_label())
                                 .key("editor-find")
                                 .single_line()
                                 .w_full()
@@ -1131,7 +1132,7 @@ fn editor(s: &State) -> El {
                     row()
                         .gap(4.0)
                         .child(
-                            text_input(&workspace.replacement, LABEL)
+                            text_input(&workspace.replacement, ui_label())
                                 .key("editor-replace")
                                 .single_line()
                                 .w_full()
@@ -1153,7 +1154,7 @@ fn editor(s: &State) -> El {
         let language = syntax::lang_for_path(&tab.document.path.to_string_lossy());
         let highlights = syntax::highlight(language, &tab.edit.text);
         let spans = SyntaxTheme::neutral(true).spans(&highlights, 0);
-        let field = text_input(&tab.edit, MONO)
+        let field = text_input(&tab.edit, fonts::editor())
             .key(format!("file-editor-{id}"))
             .label("File editor")
             .w_full()
@@ -1209,7 +1210,7 @@ fn editor(s: &State) -> El {
                 if tab.document.saved.bom { " BOM" } else { "" },
                 tab.document.saved.preferred
             ))
-            .font(TextStyle::new(10.0, 400.0))
+            .font(ui_style(10.0, 400.0))
             .color(muted()),
         );
     } else {
@@ -1236,12 +1237,12 @@ fn editor(s: &State) -> El {
         );
         pane = pane.child(
             text(&workspace.diff_label)
-                .font(TextStyle::new(10.0, 400.0))
+                .font(ui_style(10.0, 400.0))
                 .color(muted())
                 .wrap(),
         );
         if let Some(error) = &workspace.diff_error {
-            pane = pane.child(text(error).font(LABEL).color(muted()).wrap_anywhere());
+            pane = pane.child(text(error).font(ui_label()).color(muted()).wrap_anywhere());
         }
         if workspace.diff_patch.is_empty() {
             pane = pane.child(el().grow(1.0));
@@ -1372,9 +1373,9 @@ pub(super) fn file_dialog(s: &State) -> Option<El> {
     }
     Some(el().absolute(0.0,0.0).w_full().h_full().fill(Color::BLACK.alpha(0.65)).center()
         .child(col().key("file-dialog").modal(false,|s:&mut State|s.cancel_file_action()).w(470.0).px(24.0).py(24.0).gap(16.0).radius(10.0).fill(panel())
-            .child(text(title).font(TextStyle::new(17.0,600.0)).color(ink()))
-            .child(text(tab.document.path.to_string_lossy()).font(LABEL).color(muted()).wrap_anywhere())
-            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(LABEL).color(muted()).wrap())
+            .child(text(title).font(ui_style(17.0,600.0)).color(ink()))
+            .child(text(tab.document.path.to_string_lossy()).font(ui_label()).color(muted()).wrap_anywhere())
+            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(ui_label()).color(muted()).wrap())
             .child(buttons)))
 }
 
