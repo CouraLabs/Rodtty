@@ -17,6 +17,9 @@ pub(super) enum AppAction {
     FindEditor,
     ReplaceEditor,
     Settings,
+    OpenSettingsJson,
+    CloseSettings,
+    ActivateEditor(usize),
     CopyTerminal,
     PasteTerminal,
     SaveEditor(Option<u64>),
@@ -166,9 +169,21 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         ),
         (
             "settings",
-            "Settings: Bundled Commands",
+            "Settings: Open Settings",
             "",
             AppAction::Settings,
+        ),
+        (
+            "settings-json",
+            "Settings: Open Settings JSON",
+            "",
+            AppAction::OpenSettingsJson,
+        ),
+        (
+            "settings-close",
+            "Settings: Close Settings Tab",
+            "",
+            AppAction::CloseSettings,
         ),
         (
             "close-window",
@@ -215,6 +230,7 @@ impl State {
             {
                 Some("Select a file editor first")
             }
+            AppAction::CloseSettings if !self.settings_open => Some("Settings is not open"),
             AppAction::NewTerminal if !self.config_valid => {
                 Some("Fix settings before starting a session")
             }
@@ -288,8 +304,10 @@ impl State {
             }
             AppAction::ToggleEditor => {
                 self.workspace.layout.editor = !self.workspace.layout.editor;
-                if !self.workspace.layout.editor && !self.workspace.layout.terminal {
+                if !self.workspace.layout.editor {
                     self.workspace.layout.terminal = true;
+                    self.workspace.terminal_focus = true;
+                    tx.blur();
                 }
             }
             AppAction::FindTerminal => {
@@ -312,7 +330,19 @@ impl State {
                     true,
                 );
             }
-            AppAction::Settings => self.settings = !self.settings,
+            AppAction::Settings => self.open_settings(tx),
+            AppAction::OpenSettingsJson => self.open_settings_json(),
+            AppAction::CloseSettings => {
+                self.settings_open = false;
+                self.settings = false;
+                if self.workspace.tabs.is_empty() {
+                    self.workspace.terminal_focus = true;
+                    tx.blur();
+                } else {
+                    self.dispatch(AppAction::EditFile, tx);
+                }
+            }
+            AppAction::ActivateEditor(index) => self.activate_editor(index),
             AppAction::CopyTerminal => self.copy(tx),
             AppAction::PasteTerminal => {
                 self.workspace.terminal_focus = true;

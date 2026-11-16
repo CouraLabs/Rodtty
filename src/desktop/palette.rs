@@ -32,7 +32,7 @@ impl State {
         let previous = self.palette.take().and_then(|palette| palette.return_focus);
         tx.blur();
         if let Some(key) = previous {
-            tx.focus_when_shown(key, true);
+            tx.return_focus(key, true);
         }
     }
 

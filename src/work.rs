@@ -40,11 +40,19 @@ impl Default for Layout {
 }
 impl Layout {
     pub fn load(root: &Path) -> anyhow::Result<Self> {
-        let path = root.join("workspace.toml");
+        let path = root.join("workspace-state.json");
+        if !path.exists()
+            && !root.join(".storage-migrated-v1").exists()
+            && root.join("workspace.toml").exists()
+        {
+            let layout: Self =
+                toml::from_str(&std::fs::read_to_string(root.join("workspace.toml"))?)?;
+            crate::config::write_json(&path, &layout, false)?;
+        }
         if !path.exists() {
             return Ok(Self::default());
         }
-        let mut layout: Self = toml::from_str(&std::fs::read_to_string(path)?)?;
+        let mut layout: Self = serde_json::from_slice(&std::fs::read(path)?)?;
         layout.explorer_width = if layout.explorer_width.is_finite() {
             layout.explorer_width.clamp(160.0, 600.0)
         } else {
@@ -58,13 +66,7 @@ impl Layout {
         Ok(layout)
     }
     pub fn save(&self, root: &Path) -> anyhow::Result<()> {
-        use std::io::Write;
-        std::fs::create_dir_all(root)?;
-        let mut file = tempfile::NamedTempFile::new_in(root)?;
-        file.write_all(toml::to_string_pretty(self)?.as_bytes())?;
-        file.as_file().sync_all()?;
-        file.persist(root.join("workspace.toml"))?;
-        Ok(())
+        crate::config::write_json(&root.join("workspace-state.json"), self, true)
     }
 }
 

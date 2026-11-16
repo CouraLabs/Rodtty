@@ -4,7 +4,9 @@ Validation date: 2026-11-16. Tested host: Linux x86-64 with Rust/Cargo 1.100.0.
 
 ## Implemented behavior
 
-The Rune desktop now combines the terminal with a collapsible file explorer and a lightweight editor. The explorer opens at the active terminal's directory and navigates independently unless Follow is enabled. Pane sizes, visibility, explorer location, and saved file tabs persist in `workspace.toml`.
+The Rune desktop now combines the terminal with a collapsible file explorer and a lightweight editor. The explorer opens at the active terminal's directory and navigates independently unless Follow is enabled. Pane sizes, visibility, explorer location, and saved file tabs persist in `~/.rodtty/workspace-state.json`, separately from owner preferences in `~/.rodtty/settings.json`.
+
+Settings opens as an editor-pane tab beside the terminal. Its sections are searchable, existing command/history/scrollback preferences save immediately and reset individually, and Open Settings JSON edits the actual owner file. Valid external edits update the open app; invalid edits retain the last valid configuration and show an explanation. The storage migration preserves original files, existing destinations, history/startup behavior, and both old and new owner-instance locks. Native workspace lifecycle regression checks passed on [Wayland](evidence/settings-storage-wayland.json) and [X11](evidence/settings-storage-x11.json) with isolated storage roots; Windows/macOS native runtime checks remain pending.
 
 The editor provides file tabs, syntax highlighting, undo/redo, find/replace, and saving for UTF-8 text files up to 2 MiB. Saves preserve BOMs, line endings, and file permissions. External changes reload clean buffers automatically; dirty buffers keep their edits and offer conflict resolution. Closing a dirty file/window or quitting offers Save, Discard, or Cancel. Unsaved drafts are not recovered after an application crash.
 

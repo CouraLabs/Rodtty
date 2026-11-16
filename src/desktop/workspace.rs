@@ -195,7 +195,8 @@ impl State {
             self.message = "Opening file…".into();
         }
     }
-    fn activate_editor(&mut self, index: usize) {
+    pub(super) fn activate_editor(&mut self, index: usize) {
+        self.settings = false;
         self.workspace.terminal_focus = false;
         self.workspace.active = index;
         self.workspace.layout.editor = true;
@@ -937,7 +938,7 @@ fn editor(s: &State) -> El {
                 button(
                     format!("editor-tab-{id}"),
                     format!("{}{}", name, if tab.dirty() { " •" } else { "" }),
-                    move |s, _| s.activate_editor(i),
+                    move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
                 )
                 .border(
                     1.0,
@@ -952,7 +953,19 @@ fn editor(s: &State) -> El {
                 s.dispatch(AppAction::CloseEditor(Some(id)), tx)
             }));
     }
+    if s.settings_open {
+        tabs = tabs
+            .child(button("settings-tab", "Settings", |s, tx| {
+                s.dispatch(AppAction::Settings, tx)
+            }))
+            .child(button("settings-close", "×", |s, tx| {
+                s.dispatch(AppAction::CloseSettings, tx)
+            }));
+    }
     pane = pane.child(tabs);
+    if s.settings {
+        return pane.child(super::settings::content(s));
+    }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         return pane.child(
             col()
@@ -1209,7 +1222,7 @@ fn editor(s: &State) -> El {
 
 pub(super) fn body(s: &State) -> El {
     let workspace = &s.workspace;
-    let show_editor = workspace.layout.editor && !workspace.tabs.is_empty();
+    let show_editor = workspace.layout.editor && (!workspace.tabs.is_empty() || s.settings_open);
     let terminal = workspace.layout.terminal || !show_editor;
     let mut body = row()
         .key("workspace")
@@ -1393,8 +1406,7 @@ pub(super) fn demo(s: &mut State, diff: bool) {
 mod tests {
     use super::*;
     fn state(root: &std::path::Path) -> State {
-        let mut state = State::init();
-        state.root = root.to_owned();
+        let mut state = State::with_root(root.to_owned());
         state.directory = root.to_owned();
         state.workspace_setup();
         state
