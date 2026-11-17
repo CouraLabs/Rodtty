@@ -1,0 +1,47 @@
+{
+  "active": 0,
+  "directories": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/beta",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/alpha"
+  ],
+  "editor_files": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/alpha/retained.txt",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/beta/preview.txt"
+  ],
+  "host_pid": 897697,
+  "output": [
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/revie\n\"\nT22_PID=897741\nrodtty:~/Projects/CouraLabs/Rodtty/target/revie\nTLE\\007'; sleep 1; printf 'T22_OLD_%s\\n' OUTPUT\nT22_OLD_OUTPUT\nrodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/beta$ ",
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/alpha$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=897737\nrodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/alpha$ "
+  ],
+  "panes": {
+    "editor_share": 0.6100000143051147,
+    "editor_visible": true,
+    "explorer_revealed": true,
+    "explorer_visible": true,
+    "explorer_width": 310.0,
+    "terminal_focus": false
+  },
+  "passed": true,
+  "pids": [
+    897741,
+    897737
+  ],
+  "recent_output_retained": true,
+  "regular_files": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-xlib-restoration/native-restoration/alpha/retained.txt"
+  ],
+  "same_session_and_pid_on_reopen": true,
+  "session_ids": [
+    3,
+    2
+  ],
+  "single_fresh_preference_preserved_live_sessions": true,
+  "titles": [
+    "T22 OLD TITLE",
+    "\u203a_  Term alpha"
+  ],
+  "window_backend": "Xlib",
+  "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+  "qualification_date": "2026-11-17",
+  "binary_sha256": "e8524d89c4427101ba9ccfc0bde0866bba08cadc69487a2aea2b56a1261ef9f6"
+}
