@@ -177,7 +177,7 @@ impl WindowHandle {
     /// the borrow cannot outlive the callback. Native operations retain their platform
     /// limitations. In particular Wayland `is_minimized` returns None, and macOS
     /// `drag_resize_window` is unsupported. Pointer operations must run immediately
-    /// in the native pressed event; use `custom_frame_resize_border` on Linux.
+    /// in the native pressed event; use `custom_frame_resize_border` for the app-owned frame.
     pub fn with_winit_window<R>(&self, f: impl FnOnce(&Window) -> R) -> Result<R, String> {
         let window = self.window()?;
         Ok(f(&window))

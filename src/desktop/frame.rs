@@ -14,7 +14,7 @@ pub(super) enum Placement {
 pub(super) fn placement() -> Placement {
     if cfg!(target_os = "macos") {
         Placement::Left
-    } else if cfg!(target_os = "linux") {
+    } else if cfg!(any(target_os = "linux", target_os = "windows")) {
         Placement::Right
     } else {
         Placement::Native

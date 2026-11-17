@@ -22,7 +22,7 @@ Owned behavior changes are deliberately narrow:
   contract, for native state/operation access. It preserves winit's Option/unknown
   state on Wayland instead of deriving maximization from unavailable placement.
 - `WindowOptions::custom_frame_resize_border`: opt-in logical hit band for a
-  borderless resizable Linux/macOS window. Native pressed events initiate winit resize
+  borderless resizable Linux/Windows/macOS window. Native pressed events initiate winit resize
   before runtime/deferred shell handling, preserving the actual Wayland seat and
   pressed-button serial. Eight directions and matching native cursors are supplied.
   Maximized/fullscreen/fixed/decorated windows bypass the band; app zoom does not
@@ -37,8 +37,14 @@ Owned behavior changes are deliberately narrow:
   unsupported macOS drag_resize_window is never called. App-frame header double
   clicks explicitly maximize/restore instead of applying the OS minimize preference.
 
-Windows retains native decorations until its adapter opts in. Native macOS
-execution is pending; Apple-target metadata compilation is distinct evidence.
+- Windows uses the real winit drag/resize/minimize/maximize operations. Both GPU
+  and CPU-rendered native lifetimes initialize the opt-in resize band. App-frame
+  attributes disable winit's undecorated-shadow path, which otherwise reserves a
+  visible one-pixel non-client border; ordinary windows retain their defaults.
+  Native sizing/AeroSnap styles remain under winit's ownership.
+
+Native Windows/macOS execution is pending; cross-target metadata compilation is
+separate evidence and does not establish native runtime compatibility.
 
 `rodtty.patch` records the delta to the pinned Rune crate, including standalone
 manifest changes. Regenerate it against the revision above when changing the bridge;
