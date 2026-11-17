@@ -141,6 +141,10 @@ def main():
                 evidence['error'] = str(error)
             finally:
                 report.with_suffix('.input.json').write_text(json.dumps(evidence, indent=2))
+                try:
+                    command('restorePrior')
+                except Exception:
+                    pass
                 driver.terminate()
                 driver.wait(timeout=5)
                 try:

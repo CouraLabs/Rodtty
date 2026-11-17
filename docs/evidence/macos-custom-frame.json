@@ -1,0 +1,26 @@
+{
+  "platform": "macOS",
+  "native_execution": {
+    "status": "pending",
+    "reason": "No macOS GUI host is available in this Linux implementation environment.",
+    "harness": "scripts/native/check-macos-frame.py",
+    "native_input_helper": "scripts/native/mac-frame-input.swift",
+    "manual_qualification": "docs/macos-custom-frame.md"
+  },
+  "apple_silicon_metadata": {
+    "status": "passed",
+    "target": "aarch64-apple-darwin",
+    "command": "CARGO_FEATURE_PURE=1 CC_aarch64_apple_darwin=clang cargo check --offline --locked --target aarch64-apple-darwin --all-targets",
+    "scope": "Owned Rune AppKit adapter, desktop application and all test targets; no native linking or execution.",
+    "portable_hash_path": "CARGO_FEATURE_PURE selects blake3 portable Rust hashing for metadata checking without an Apple C SDK."
+  },
+  "linux_runtime": {
+    "status": "passed",
+    "command": "cargo test --offline --locked --all-targets -- --test-threads=1 --include-ignored",
+    "passed_tests": 107,
+    "mac_layout": "Actual Rune view with left controls at 640x360 and 2x scale; full control bounds, child exclusion, Settings, header Drag/DoubleClick, dirty Close/Cancel preserving the draft.",
+    "strict_clippy": "passed",
+    "desktop_build": "passed",
+    "backend_only_check": "passed"
+  }
+}

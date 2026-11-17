@@ -4,6 +4,8 @@ import ApplicationServices
 
 let pid = pid_t(CommandLine.arguments[1])!
 let application = AXUIElementCreateApplication(pid)
+let previousApplication = NSWorkspace.shared.frontmostApplication
+let previousPointer = CGEvent(source: nil)?.location
 var pressed = false
 func window() throws -> AXUIElement {
     var value: CFTypeRef?
@@ -28,6 +30,9 @@ while let line = readLine() {
             result["trusted"] = AXIsProcessTrusted() && CGPreflightPostEventAccess()
         case "activate":
             NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateIgnoringOtherApps])
+        case "restorePrior":
+            if let point = previousPointer { post(.mouseMoved, point) }
+            previousApplication?.activate(options: [.activateIgnoringOtherApps])
         case "restore":
             let code = try AXUIElementSetAttributeValue(window(), kAXMinimizedAttribute as CFString, kCFBooleanFalse)
             guard code == .success else { throw NSError(domain: "AX restore", code: Int(code.rawValue)) }
