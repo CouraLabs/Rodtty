@@ -5,7 +5,6 @@ use crate::{
     work::{Event, Job, Layout, Worker},
 };
 use rune_kit::{
-    Kit,
     diff::{DiffMode, DiffState, DiffView},
     syntax::{self, SyntaxTheme},
 };
@@ -766,7 +765,7 @@ impl State {
     }
 }
 
-fn explorer(s: &State) -> El {
+fn explorer(s: &State, a: &Appearance) -> El {
     let workspace = &s.workspace;
     let mut pane = col()
         .key("explorer")
@@ -774,27 +773,28 @@ fn explorer(s: &State) -> El {
         .min_w(160.0)
         .h_full()
         .min_h(0.0)
-        .fill(panel())
+        .fill(a.panel())
         .px(10.0)
         .gap(6.0)
         .child(
             row()
                 .h(35.0)
                 .center_y()
-                .child(text("FILES").font(ui_label()).color(accent()))
+                .child(text("FILES").font(ui_label()).color(a.accent()))
                 .child(el().grow(1.0))
-                .child(button("explorer-hide", "×", |s, tx| {
+                .child(button(a, "explorer-hide", "×", |s, tx| {
                     s.dispatch(AppAction::ToggleExplorer, tx)
                 })),
         )
         .child(
             text_input(&workspace.address, ui_label())
+                .caret(a.accent(), a.selection())
                 .key("explorer-address")
                 .label("Explorer folder path")
                 .single_line()
                 .w_full()
                 .h(30.0)
-                .color(ink())
+                .color(a.ink())
                 .on_edit(|s: &mut State| &mut s.workspace.address)
                 .on_submit(|s: &mut State, tx| {
                     let path = PathBuf::from(&s.workspace.address.text);
@@ -814,13 +814,14 @@ fn explorer(s: &State) -> El {
         .child(
             row()
                 .gap(4.0)
-                .child(button("explorer-up", "↑", |s, tx| {
+                .child(button(a, "explorer-up", "↑", |s, tx| {
                     s.dispatch(AppAction::ExplorerParent, tx)
                 }))
-                .child(button("explorer-refresh", "↻", |s, tx| {
+                .child(button(a, "explorer-refresh", "↻", |s, tx| {
                     s.dispatch(AppAction::RefreshExplorer, tx)
                 }))
                 .child(button(
+                    a,
                     "explorer-follow",
                     if workspace.layout.follow {
                         "Follow ✓"
@@ -830,6 +831,7 @@ fn explorer(s: &State) -> El {
                     |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
                 ))
                 .child(button(
+                    a,
                     "explorer-hidden",
                     if workspace.layout.hidden {
                         ".* ✓"
@@ -873,7 +875,7 @@ fn explorer(s: &State) -> El {
                 .h(28.0)
                 .gap(4.0)
                 .center_y()
-                .hover(rgb(37, 49, 63))
+                .hover(a.hover_bg())
                 .on_press_tx(move |s: &mut State, tx| {
                     tx.blur();
                     if directory {
@@ -885,16 +887,12 @@ fn explorer(s: &State) -> El {
                 .child(
                     text(label)
                         .font(ui_label())
-                        .color(if entry.missing {
-                            rgb(238, 113, 129)
-                        } else {
-                            ink()
-                        })
+                        .color(if entry.missing { a.danger() } else { a.ink() })
                         .truncate()
                         .shrink()
                         .grow(1.0),
                 )
-                .child(text(badge).font(ui_label()).color(accent())),
+                .child(text(badge).font(ui_label()).color(a.accent())),
         );
     }
     if workspace.entries.is_empty() {
@@ -905,26 +903,31 @@ fn explorer(s: &State) -> El {
                 "No visible files"
             })
             .font(ui_label())
-            .color(muted()),
+            .color(a.muted()),
         );
     }
     pane = pane.child(list);
     if let Some(error) = &workspace.git_error {
-        pane = pane.child(text(error).font(ui_label()).color(muted()).wrap_anywhere());
+        pane = pane.child(
+            text(error)
+                .font(ui_label())
+                .color(a.muted())
+                .wrap_anywhere(),
+        );
     }
     pane
 }
 
-fn editor(s: &State) -> El {
+fn editor(s: &State, a: &Appearance) -> El {
     let workspace = &s.workspace;
     let mut pane = col()
         .key("editor-pane")
         .h_full()
         .min_h(0.0)
         .min_w(0.0)
-        .fill(bg())
+        .fill(a.bg())
         .on_layout(|s: &mut State, r| s.workspace.editor_width = r[2]);
-    let mut tabs = row().h(34.0).w_full().scroll_x().fill(panel());
+    let mut tabs = row().h(34.0).w_full().scroll_x().fill(a.panel());
     for (i, tab) in workspace.tabs.iter().enumerate() {
         let id = tab.id;
         let name = tab
@@ -936,6 +939,7 @@ fn editor(s: &State) -> El {
         tabs = tabs
             .child(
                 button(
+                    a,
                     format!("editor-tab-{id}"),
                     format!("{}{}", name, if tab.dirty() { " •" } else { "" }),
                     move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
@@ -943,35 +947,38 @@ fn editor(s: &State) -> El {
                 .border(
                     1.0,
                     if i == workspace.active {
-                        accent()
+                        a.accent()
                     } else {
-                        panel()
+                        a.panel()
                     },
                 ),
             )
-            .child(button(format!("editor-close-{id}"), "×", move |s, tx| {
-                s.dispatch(AppAction::CloseEditor(Some(id)), tx)
-            }));
+            .child(button(
+                a,
+                format!("editor-close-{id}"),
+                "×",
+                move |s, tx| s.dispatch(AppAction::CloseEditor(Some(id)), tx),
+            ));
     }
     if s.settings_open {
         tabs = tabs
-            .child(button("settings-tab", "Settings", |s, tx| {
+            .child(button(a, "settings-tab", "Settings", |s, tx| {
                 s.dispatch(AppAction::Settings, tx)
             }))
-            .child(button("settings-close", "×", |s, tx| {
+            .child(button(a, "settings-close", "×", |s, tx| {
                 s.dispatch(AppAction::CloseSettings, tx)
             }));
     }
     pane = pane.child(tabs);
     if s.settings {
-        return pane.child(super::settings::content(s));
+        return pane.child(super::settings::content(s, a));
     }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         return pane.child(
             col().grow(1.0).center().child(
                 text("Open a file from Files")
                     .font(fonts::editor())
-                    .color(muted()),
+                    .color(a.muted()),
             ),
         );
     };
@@ -983,11 +990,12 @@ fn editor(s: &State) -> El {
         .center_y()
         .scroll_x()
         .child(button(
+            a,
             "file-save",
             if tab.saving { "Saving…" } else { "Save" },
             move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
         ))
-        .child(button("file-edit", "Edit", |s, tx| {
+        .child(button(a, "file-edit", "Edit", |s, tx| {
             s.dispatch(AppAction::EditFile, tx)
         }));
     for (key, label, mode) in [
@@ -996,30 +1004,30 @@ fn editor(s: &State) -> El {
         ("diff-staged", "Staged", Comparison::Staged),
     ] {
         controls = controls.child(
-            button(key, label, move |s, tx| {
+            button(a, key, label, move |s, tx| {
                 s.dispatch(AppAction::Compare(mode), tx)
             })
             .border(
                 1.0,
                 if tab.mode == View::Diff(mode) {
-                    accent().alpha(0.5)
+                    a.accent().alpha(0.5)
                 } else {
-                    panel()
+                    a.panel()
                 },
             ),
         );
     }
     controls = controls
-        .child(button("file-find", "Find", |s, tx| {
+        .child(button(a, "file-find", "Find", |s, tx| {
             s.dispatch(AppAction::FindEditor, tx)
         }))
-        .child(button("editor-hide", "Hide", |s, tx| {
+        .child(button(a, "editor-hide", "Hide", |s, tx| {
             s.dispatch(AppAction::ToggleEditor, tx)
         }));
     pane = pane.child(controls).child(
         text(tab.document.path.to_string_lossy())
             .font(ui_style(10.0, 400.0))
-            .color(muted())
+            .color(a.muted())
             .truncate()
             .w_full(),
     );
@@ -1027,7 +1035,7 @@ fn editor(s: &State) -> El {
         pane = pane.child(
             text(format!("Disk: {error}"))
                 .font(ui_label())
-                .color(rgb(238, 113, 129))
+                .color(a.danger())
                 .wrap_anywhere(),
         );
     }
@@ -1035,23 +1043,24 @@ fn editor(s: &State) -> El {
         pane = pane.child(
             col()
                 .w_full()
-                .fill(rgb(58, 43, 26))
+                .fill(a.warning_bg())
                 .py(6.0)
                 .child(
                     text("Changed on disk. Your unsaved edits are preserved.")
                         .font(ui_label())
-                        .color(ink())
+                        .color(a.ink())
                         .wrap(),
                 )
                 .child(
                     row()
                         .gap(4.0)
                         .child(button(
+                            a,
                             "external-reload",
                             "Reload · discard edits",
                             move |s, _| s.reload_external(id),
                         ))
-                        .child(button("external-keep", "Keep edits", move |s, _| {
+                        .child(button(a, "external-keep", "Keep edits", move |s, _| {
                             if let Some(t) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
                                 t.dismissed = true;
                             }
@@ -1070,53 +1079,58 @@ fn editor(s: &State) -> El {
                         .gap(4.0)
                         .child(
                             text_input(&workspace.find_query, ui_label())
+                                .caret(a.accent(), a.selection())
                                 .key("editor-find")
                                 .single_line()
                                 .w_full()
                                 .shrink()
                                 .grow(1.0)
                                 .h(28.0)
-                                .color(ink())
-                                .placeholder("Find text", muted())
+                                .color(a.ink())
+                                .placeholder("Find text", a.muted())
                                 .on_edit(|s: &mut State| &mut s.workspace.find_query)
                                 .on_submit(|s: &mut State, tx| s.find_editor(false, tx)),
                         )
-                        .child(button("find-next", "Next", |s, tx| {
+                        .child(button(a, "find-next", "Next", |s, tx| {
                             s.find_editor(false, tx)
                         }))
-                        .child(button("find-close", "×", |s, _| s.workspace.find = false)),
+                        .child(button(a, "find-close", "×", |s, _| {
+                            s.workspace.find = false
+                        })),
                 )
                 .child(
                     row()
                         .gap(4.0)
                         .child(
                             text_input(&workspace.replacement, ui_label())
+                                .caret(a.accent(), a.selection())
                                 .key("editor-replace")
                                 .single_line()
                                 .w_full()
                                 .shrink()
                                 .grow(1.0)
                                 .h(28.0)
-                                .color(ink())
-                                .placeholder("Replace with", muted())
+                                .color(a.ink())
+                                .placeholder("Replace with", a.muted())
                                 .on_edit(|s: &mut State| &mut s.workspace.replacement),
                         )
-                        .child(button("replace-next", "Replace", |s, tx| {
+                        .child(button(a, "replace-next", "Replace", |s, tx| {
                             s.find_editor(true, tx)
                         }))
-                        .child(button("replace-all", "All", |s, _| s.replace_all())),
+                        .child(button(a, "replace-all", "All", |s, _| s.replace_all())),
                 ),
         );
     }
     if tab.mode == View::Edit {
         let language = syntax::lang_for_path(&tab.document.path.to_string_lossy());
         let highlights = syntax::highlight(language, &tab.edit.text);
-        let spans = SyntaxTheme::neutral(true).spans(&highlights, 0);
+        let spans = SyntaxTheme::from_kit(a.kit()).spans(&highlights, 0);
         let field = text_input(&tab.edit, fonts::editor())
+            .caret(a.accent(), a.selection())
             .key(format!("file-editor-{id}"))
             .label("File editor")
             .w_full()
-            .color(ink())
+            .color(a.ink())
             .wrap_anywhere()
             .spans(spans)
             .on_edit(move |s: &mut State| {
@@ -1148,7 +1162,7 @@ fn editor(s: &State) -> El {
             .px(10.0)
             .py(8.0)
             .child(field);
-        pane = pane.child(fonts::kit(Kit::neutral(true)).scroll_bar(viewport));
+        pane = pane.child(a.kit().scroll_bar(viewport));
         let position = tab.edit.focus;
         let line = tab.edit.text[..position]
             .bytes()
@@ -1169,7 +1183,7 @@ fn editor(s: &State) -> El {
                 tab.document.saved.preferred
             ))
             .font(ui_style(10.0, 400.0))
-            .color(muted()),
+            .color(a.muted()),
         );
     } else {
         pane = pane.child(
@@ -1177,30 +1191,35 @@ fn editor(s: &State) -> El {
                 .gap(4.0)
                 .h(32.0)
                 .scroll_x()
-                .child(button("diff-auto", "Auto", |s, _| {
+                .child(button(a, "diff-auto", "Auto", |s, _| {
                     s.workspace.diff_layout = 0
                 }))
-                .child(button("diff-inline", "Inline", |s, _| {
+                .child(button(a, "diff-inline", "Inline", |s, _| {
                     s.workspace.diff_layout = 1
                 }))
-                .child(button("diff-split", "Split", |s, _| {
+                .child(button(a, "diff-split", "Split", |s, _| {
                     s.workspace.diff_layout = 2
                 }))
-                .child(button("diff-prev", "↑", |s, tx| {
+                .child(button(a, "diff-prev", "↑", |s, tx| {
                     s.workspace.diff.next_hunk(false, tx);
                 }))
-                .child(button("diff-next", "↓", |s, tx| {
+                .child(button(a, "diff-next", "↓", |s, tx| {
                     s.workspace.diff.next_hunk(true, tx);
                 })),
         );
         pane = pane.child(
             text(&workspace.diff_label)
                 .font(ui_style(10.0, 400.0))
-                .color(muted())
+                .color(a.muted())
                 .wrap(),
         );
         if let Some(error) = &workspace.diff_error {
-            pane = pane.child(text(error).font(ui_label()).color(muted()).wrap_anywhere());
+            pane = pane.child(
+                text(error)
+                    .font(ui_label())
+                    .color(a.muted())
+                    .wrap_anywhere(),
+            );
         }
         if workspace.diff_patch.is_empty() {
             pane = pane.child(el().grow(1.0));
@@ -1211,7 +1230,7 @@ fn editor(s: &State) -> El {
                     |s: &mut State| &mut s.workspace.diff,
                 )
                 .key("git-diff")
-                .build(s, &fonts::kit(Kit::neutral(true)))
+                .build(s, a.kit())
                 .focusable(true)
                 .grow(1.0)
                 .min_h(0.0),
@@ -1221,7 +1240,7 @@ fn editor(s: &State) -> El {
     pane
 }
 
-pub(super) fn body(s: &State) -> El {
+pub(super) fn body(s: &State, a: &Appearance) -> El {
     let workspace = &s.workspace;
     let show_editor = workspace.layout.editor && (!workspace.tabs.is_empty() || s.settings_open);
     let terminal = workspace.layout.terminal || !show_editor;
@@ -1232,12 +1251,12 @@ pub(super) fn body(s: &State) -> El {
         .min_h(0.0)
         .on_layout(|s: &mut State, r| s.workspace.body_width = r[2]);
     if workspace.layout.explorer {
-        body = body.child(explorer(s)).child(
+        body = body.child(explorer(s, a)).child(
             el().key("explorer-divider")
                 .w(5.0)
                 .h_full()
-                .fill(panel())
-                .hover(accent().alpha(0.3))
+                .fill(a.panel())
+                .hover(a.accent().alpha(0.3))
                 .on_drag(|s: &mut State, d, _| {
                     if d.phase == Phase::Down {
                         s.workspace.drag_width = s.workspace.layout.explorer_width;
@@ -1256,7 +1275,7 @@ pub(super) fn body(s: &State) -> El {
             .min_w(0.0)
             .px(12.0)
             .py(10.0)
-            .child(grid(s));
+            .child(grid(s, a));
         main = main.child(if show_editor {
             pane.grow(1.0 - workspace.layout.editor_share)
         } else {
@@ -1269,8 +1288,8 @@ pub(super) fn body(s: &State) -> El {
                 el().key("editor-divider")
                     .w(5.0)
                     .h_full()
-                    .fill(panel())
-                    .hover(accent().alpha(0.3))
+                    .fill(a.panel())
+                    .hover(a.accent().alpha(0.3))
                     .on_drag(|s: &mut State, d, _| {
                         if d.phase == Phase::Down {
                             s.workspace.drag_share = s.workspace.layout.editor_share;
@@ -1286,7 +1305,7 @@ pub(super) fn body(s: &State) -> El {
                     }),
             );
         }
-        main = main.child(editor(s).grow(if terminal {
+        main = main.child(editor(s, a).grow(if terminal {
             workspace.layout.editor_share
         } else {
             1.0
@@ -1295,7 +1314,7 @@ pub(super) fn body(s: &State) -> El {
     body.child(main)
 }
 
-pub(super) fn file_dialog(s: &State) -> Option<El> {
+pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
     let Some(Pending::File(prompt)) = &s.pending else {
         return None;
     };
@@ -1306,34 +1325,34 @@ pub(super) fn file_dialog(s: &State) -> Option<El> {
     let tab = s.workspace.tabs.iter().find(|t| t.id == id)?;
     let mut buttons = row()
         .gap(8.0)
-        .child(button("file-cancel", "Cancel", |s, _| {
+        .child(button(a, "file-cancel", "Cancel", |s, _| {
             s.cancel_file_action()
         }));
     match *prompt {
         FilePrompt::Unsaved { id, action } => {
             buttons = buttons
-                .child(button("file-discard", "Discard", move |s, tx| {
+                .child(button(a, "file-discard", "Discard", move |s, tx| {
                     s.discard_for_action(id, action, tx)
                 }))
-                .child(button("file-save-confirm", "Save", move |s, _| {
+                .child(button(a, "file-save-confirm", "Save", move |s, _| {
                     s.save_file(id, false, Some(action))
                 }));
         }
         FilePrompt::Conflict { id, after } => {
             buttons = buttons
-                .child(button("file-reload-confirm", "Reload", move |s, _| {
+                .child(button(a, "file-reload-confirm", "Reload", move |s, _| {
                     s.reload_external(id)
                 }))
-                .child(button("file-overwrite", "Overwrite", move |s, _| {
+                .child(button(a, "file-overwrite", "Overwrite", move |s, _| {
                     s.save_file(id, true, after)
                 }));
         }
     }
-    Some(el().absolute(0.0,0.0).w_full().h_full().fill(Color::BLACK.alpha(0.65)).center()
-        .child(col().key("file-dialog").modal(false,|s:&mut State|s.cancel_file_action()).w(470.0).px(24.0).py(24.0).gap(16.0).radius(10.0).fill(panel())
-            .child(text(title).font(ui_style(17.0,600.0)).color(ink()))
-            .child(text(tab.document.path.to_string_lossy()).font(ui_label()).color(muted()).wrap_anywhere())
-            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(ui_label()).color(muted()).wrap())
+    Some(el().absolute(0.0,0.0).w_full().h_full().fill(a.scrim()).center()
+        .child(col().key("file-dialog").modal(false,|s:&mut State|s.cancel_file_action()).w(470.0).px(24.0).py(24.0).gap(16.0).radius(10.0).fill(a.panel())
+            .child(text(title).font(ui_style(17.0,600.0)).color(a.ink()))
+            .child(text(tab.document.path.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
+            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(ui_label()).color(a.muted()).wrap())
             .child(buttons)))
 }
 

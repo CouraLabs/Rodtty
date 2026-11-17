@@ -71,7 +71,7 @@ impl State {
     }
 }
 
-pub(super) fn view(state: &State) -> Option<El> {
+pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
     let palette = state.palette.as_ref()?;
     let mut content = col()
         .key("command-palette")
@@ -82,17 +82,18 @@ pub(super) fn view(state: &State) -> Option<El> {
         .py(16.0)
         .gap(8.0)
         .radius(10.0)
-        .fill(panel())
-        .child(text("Command Palette").font(ui_label()).color(ink()))
+        .fill(a.panel())
+        .child(text("Command Palette").font(ui_label()).color(a.ink()))
         .child(
             text_input(&state.palette_query, ui_label())
+                .caret(a.accent(), a.selection())
                 .key("command-query")
                 .label("Search application actions")
-                .placeholder("Search actions…", muted())
+                .placeholder("Search actions…", a.muted())
                 .single_line()
                 .w_full()
                 .h(32.0)
-                .color(ink())
+                .color(a.ink())
                 .on_input_key(|s: &mut State, event, tx| s.palette_key(event, tx))
                 .on_edit(|s: &mut State| &mut s.palette_query)
                 .on_input_change(|s: &mut State, _| {
@@ -103,7 +104,11 @@ pub(super) fn view(state: &State) -> Option<El> {
         );
     let matches = state.palette_matches();
     if matches.is_empty() {
-        content = content.child(text("No matching actions").font(ui_label()).color(muted()));
+        content = content.child(
+            text("No matching actions")
+                .font(ui_label())
+                .color(a.muted()),
+        );
     }
     let count = matches.len();
     let first = palette.selected.saturating_sub(3);
@@ -118,16 +123,16 @@ pub(super) fn view(state: &State) -> Option<El> {
             .py(3.0)
             .radius(5.0)
             .fill(if position == palette.selected {
-                rgb(37, 49, 63)
+                a.hover_bg()
             } else {
-                panel()
+                a.panel()
             })
             .border(
                 1.0,
                 if position == palette.selected {
-                    accent()
+                    a.accent()
                 } else {
-                    panel()
+                    a.panel()
                 },
             )
             .disabled(disabled.is_some())
@@ -139,7 +144,11 @@ pub(super) fn view(state: &State) -> Option<El> {
                     .child(
                         text(command.title)
                             .font(ui_label())
-                            .color(if disabled.is_some() { muted() } else { ink() })
+                            .color(if disabled.is_some() {
+                                a.muted()
+                            } else {
+                                a.ink()
+                            })
                             .truncate()
                             .shrink()
                             .grow(1.0),
@@ -147,14 +156,14 @@ pub(super) fn view(state: &State) -> Option<El> {
                     .child(
                         text(command.shortcut)
                             .font(ui_style(10.0, 400.0))
-                            .color(muted()),
+                            .color(a.muted()),
                     ),
             );
         if let Some(reason) = disabled {
             item = item.child(
                 text(reason)
                     .font(ui_style(10.0, 400.0))
-                    .color(muted())
+                    .color(a.muted())
                     .truncate(),
             );
         }
@@ -166,14 +175,14 @@ pub(super) fn view(state: &State) -> Option<El> {
             if count == 0 { 0 } else { palette.selected + 1 }
         ))
         .font(ui_style(10.0, 400.0))
-        .color(muted()),
+        .color(a.muted()),
     );
     Some(
         col()
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .fill(Color::BLACK.alpha(0.65))
+            .fill(a.scrim())
             .items_center()
             .px(16.0)
             .pt(16.0)
