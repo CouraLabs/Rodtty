@@ -11,6 +11,8 @@ use rune::{
 use std::{path::PathBuf, sync::Arc};
 mod actions;
 mod appearance;
+mod file_icon_catalog;
+mod file_icons;
 mod fonts;
 mod frame;
 mod palette;
@@ -1106,6 +1108,10 @@ fn tree_preview(state: &mut State) {
     preview(state);
     workspace::host_tree_demo(state);
 }
+fn icons_preview(state: &mut State) {
+    preview(state);
+    workspace::icons_demo(state);
+}
 fn palette_preview(state: &mut State) {
     workspace_preview(state);
     state.open_palette(&mut Tx::default());
@@ -1186,6 +1192,7 @@ pub fn run() -> Result<()> {
             ("palette", palette_preview),
             ("file-collision", file_collision_preview),
             ("tree", tree_preview),
+            ("icons", icons_preview),
             ("tabs-light", tabs_light_preview),
             ("tabs-dark", tabs_dark_preview),
             ("tabs-light-editor", tabs_light_editor_preview),
