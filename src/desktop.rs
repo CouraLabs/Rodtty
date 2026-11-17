@@ -14,6 +14,7 @@ mod appearance;
 mod fonts;
 mod frame;
 mod palette;
+mod tabs;
 use appearance::Appearance;
 mod file_operations;
 mod settings;
@@ -46,6 +47,7 @@ enum Pending {
 
 struct State {
     workspace: workspace::Workspace,
+    tab_strips: tabs::Tabs,
     commands: Vec<actions::Command>,
     palette: Option<palette::Palette>,
     palette_query: TextEdit,
@@ -107,6 +109,7 @@ impl State {
         let mut commands = Vec::new();
         actions::register(&mut commands);
         Self {
+            tab_strips: Default::default(),
             commands,
             palette: None,
             palette_query: TextEdit::new(""),
@@ -266,10 +269,22 @@ impl State {
                 self.sessions.clear();
                 tx.quit();
             }
-            Some(Pending::Tab(index)) if index < self.sessions.len() => {
-                self.sessions.remove(index);
-                self.active = self.active.min(self.sessions.len().saturating_sub(1));
-                self.selection = None;
+            Some(Pending::Tab(id)) => {
+                if let Some(index) = self.sessions.iter().position(|s| tabs::session_id(s) == id) {
+                    let active = self.active().map(tabs::session_id);
+                    self.sessions.remove(index);
+                    if index < self.generations.len() {
+                        self.generations.remove(index);
+                    }
+                    self.active = self
+                        .sessions
+                        .iter()
+                        .position(|s| Some(tabs::session_id(s)) == active)
+                        .unwrap_or_else(|| index.min(self.sessions.len().saturating_sub(1)));
+                    if active == Some(id) {
+                        self.selection = None;
+                    }
+                }
             }
             _ => {}
         }
@@ -315,7 +330,13 @@ fn button(
             tx.blur();
             action(state, tx);
         })
-        .child(text(label).font(ui_label()).color(a.ink()))
+        .child(
+            text(label)
+                .font(ui_label())
+                .color(a.ink())
+                .min_w(0.0)
+                .truncate(),
+        )
 }
 
 fn grid(state: &State, a: &Appearance) -> El {
@@ -487,25 +508,33 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
         .scroll_x()
         .gap(4.0);
     for (i, session) in state.sessions.iter().enumerate() {
-        let exited = session
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .exit
-            .is_some();
+        let label = session.tab_title();
+        let id = tabs::session_id(session);
         list = list.child(
-            button(
-                a,
-                format!("tab-{i}"),
-                format!("{}  Terminal {}", if exited { "○" } else { "›_" }, i + 1),
-                move |s, tx| s.dispatch(AppAction::ActivateTerminal(i), tx),
-            )
-            .max_w(240.0)
-            .fill(if i == state.active {
-                a.hover_bg()
-            } else {
-                a.panel()
-            }),
+            row()
+                .key(format!("terminal-group-{id}"))
+                .gap(2.0)
+                .center_y()
+                .child(tabs::interactive(
+                    button(a, format!("tab-{i}"), &label, move |s, tx| {
+                        s.dispatch(AppAction::ActivateTerminal(i), tx)
+                    })
+                    .w(180.0)
+                    .help(&label)
+                    .fill(if i == state.active {
+                        a.hover_bg()
+                    } else {
+                        a.panel()
+                    }),
+                    tabs::Target::Terminal(id),
+                ))
+                .child(
+                    button(a, format!("terminal-close-{i}"), "×", move |s, tx| {
+                        s.dispatch(AppAction::CloseTerminal(id), tx)
+                    })
+                    .px(6.0)
+                    .help("End terminal session"),
+                ),
         );
     }
     if state.preview.is_some() {
@@ -517,9 +546,11 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
             .fill(a.hover_bg()),
         );
     }
-    tabs = tabs.child(list).child(button(a, "new-tab", "+", |s, tx| {
-        s.dispatch(AppAction::NewTerminal, tx)
-    }));
+    tabs = tabs
+        .child(tabs::scroll_strip(list, state, true))
+        .child(button(a, "new-tab", "+", |s, tx| {
+            s.dispatch(AppAction::NewTerminal, tx)
+        }));
     tabs
 }
 
@@ -983,6 +1014,93 @@ fn workspace_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, false);
 }
+fn tabs_preview(state: &mut State) {
+    workspace::demo(state, false);
+    state.preview = None;
+    let fixture = tempfile::tempdir().expect("tab preview directory");
+    let Some(shell) = state.shell.clone() else {
+        return;
+    };
+    state.root = fixture.path().to_owned();
+    state.directory = state.root.clone();
+    let explorer_root = state.root.join("Rodtty");
+    for index in 0..7 {
+        let cwd = explorer_root.join(if index % 2 == 0 { "client" } else { "host" });
+        std::fs::create_dir_all(&cwd).unwrap();
+        let session = Session::spawn(
+            &shell,
+            &state.root,
+            &cwd,
+            Config::default(),
+            28,
+            100,
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        session
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        if index == 0 {
+            session.send(format!("printf '\\033]2;{}\\007\\033[2J\\033[H'; printf 'TITLE_READY\\n'\r",
+                "Agent 日本語 — preserving the complete application title while the label visually ellipsizes ".repeat(3)).into_bytes()).unwrap();
+            session
+                .wait_for("TITLE_READY", std::time::Duration::from_secs(15))
+                .unwrap();
+        }
+        state.sessions.push(session);
+    }
+    state.workspace.tabs.clear();
+    state.workspace.worker = Some(crate::work::Worker::new(state.wake.clone()));
+    for (index, folder) in ["client", "host", "shared", "packages", "tests"]
+        .iter()
+        .enumerate()
+    {
+        let path = explorer_root.join(folder).join("config.rs");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "// Tab preview\nfn main() {}\n").unwrap();
+        state.open_file(path);
+        let started = std::time::Instant::now();
+        while state.workspace.tabs.len() <= index {
+            state.workspace_poll(&mut Tx::default());
+            assert!(started.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    state.navigate(explorer_root.clone());
+    let started = std::time::Instant::now();
+    while !state
+        .workspace
+        .entries
+        .iter()
+        .any(|entry| entry.path.starts_with(&explorer_root))
+    {
+        state.workspace_poll(&mut Tx::default());
+        assert!(started.elapsed().as_secs() < 10);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    state.message = "Tab strip preview · running PTYs and real file buffers".into();
+    state.workspace.tabs[0].edit.insert("// Unsaved changes\n");
+    state.workspace.active = 0;
+    state.workspace.terminal_focus = true;
+    state.active = 0;
+    state.tab_strips.preview_root = Some(fixture);
+}
+fn tabs_light_preview(state: &mut State) {
+    tabs_preview(state);
+    state.config.appearance = config::Appearance::Light;
+}
+fn tabs_dark_preview(state: &mut State) {
+    tabs_preview(state);
+    state.config.appearance = config::Appearance::Dark;
+}
+fn tabs_light_editor_preview(state: &mut State) {
+    tabs_light_preview(state);
+    state.workspace.terminal_focus = false;
+}
+fn tabs_dark_editor_preview(state: &mut State) {
+    tabs_dark_preview(state);
+    state.workspace.terminal_focus = false;
+}
 fn tree_preview(state: &mut State) {
     preview(state);
     workspace::host_tree_demo(state);
@@ -1067,6 +1185,10 @@ pub fn run() -> Result<()> {
             ("palette", palette_preview),
             ("file-collision", file_collision_preview),
             ("tree", tree_preview),
+            ("tabs-light", tabs_light_preview),
+            ("tabs-dark", tabs_dark_preview),
+            ("tabs-light-editor", tabs_light_editor_preview),
+            ("tabs-dark-editor", tabs_dark_editor_preview),
             ("settings", settings_preview),
         ],
         fonts: fonts::BUNDLED,
@@ -1682,6 +1804,246 @@ mod tests {
         assert!(runtime.state.pending.is_none());
         assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
         assert!(runtime.state.workspace.tabs[0].dirty());
+    }
+
+    #[test]
+    fn terminal_tabs_show_application_title_verbatim_then_directory_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file())
+            .unwrap();
+        let session = Session::spawn(
+            &shell,
+            root.path(),
+            root.path(),
+            Config::default(),
+            28,
+            100,
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        session
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        session
+            .send(b"printf '\\033]2;Agent title\\007'\r".to_vec())
+            .unwrap();
+        let start = std::time::Instant::now();
+        while session.state.lock().unwrap().parser.callbacks().title != "Agent title" {
+            assert!(start.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        state.sessions.push(session);
+        let mut runtime = runtime_for(state);
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Agent title"))
+        );
+        assert!(
+            !runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref().is_some_and(|t| t.contains("Terminal 1")))
+        );
+        assert!(runtime.find("terminal-close-0").is_some());
+        let child = root.path().join("new-folder");
+        std::fs::create_dir(&child).unwrap();
+        runtime.state.sessions[0]
+            .send(format!("cd {}\r", profile::quote(&child).unwrap()).into_bytes())
+            .unwrap();
+        let start = std::time::Instant::now();
+        while runtime.state.sessions[0].cwd() != child {
+            assert!(start.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        runtime.frame(0.0);
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Agent title"))
+        );
+        runtime.state.sessions[0]
+            .send(b"printf '\\033]2;\\007'\r".to_vec())
+            .unwrap();
+        let start = std::time::Instant::now();
+        while !runtime.state.sessions[0]
+            .state
+            .lock()
+            .unwrap()
+            .parser
+            .callbacks()
+            .title
+            .is_empty()
+        {
+            assert!(start.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("›_  Term new-folder"))
+        );
+        let full = "Application title 日本語 with preserved content ".repeat(8);
+        runtime.state.sessions[0]
+            .send(format!("printf '\\033]2;{}\\007'\r", full).into_bytes())
+            .unwrap();
+        let start = std::time::Instant::now();
+        while runtime.state.sessions[0].tab_title() != full {
+            assert!(start.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        let tab = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("tab-0") && !e.exiting)
+            .unwrap();
+        assert_eq!(tab.help.as_deref(), Some(full.as_str()));
+        assert!(tab.rect[2] <= 180.0);
+    }
+
+    #[test]
+    fn dragging_and_closing_earlier_terminal_tabs_preserves_active_session() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file())
+            .unwrap();
+        for _ in 0..3 {
+            state.sessions.push(
+                Session::spawn(
+                    &shell,
+                    root.path(),
+                    root.path(),
+                    Config::default(),
+                    28,
+                    100,
+                    Arc::new(|| {}),
+                )
+                .unwrap(),
+            );
+        }
+        for session in &state.sessions {
+            session
+                .wait_for("rodtty:", std::time::Duration::from_secs(15))
+                .unwrap();
+        }
+        let observed: std::collections::HashMap<_, _> = state
+            .sessions
+            .iter()
+            .map(|session| (session.id(), session.state.lock().unwrap().generation))
+            .collect();
+        state.generations = state.sessions.iter().map(|s| observed[&s.id()]).collect();
+        state.active = 2;
+        let active = state.sessions[2].state.clone();
+        let first = state.sessions[0].state.clone();
+        state.selection = Some(((0, 0), (0, 2)));
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime.find("tab-0").unwrap();
+        let (end, _) = runtime.find("tab-2").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_move(end + 30.0, y);
+        runtime.pointer_up(end + 30.0, y);
+        runtime.frame(0.0);
+        assert!(Arc::ptr_eq(&runtime.state.sessions[2].state, &first));
+        assert!(Arc::ptr_eq(&runtime.state.active().unwrap().state, &active));
+        assert!(runtime.state.selection.is_some());
+        assert_eq!(
+            runtime.state.generations,
+            runtime
+                .state
+                .sessions
+                .iter()
+                .map(|s| observed[&s.id()])
+                .collect::<Vec<_>>()
+        );
+
+        let (x, y) = runtime.find("tab-0").unwrap();
+        runtime.button_down(x, y, rune::PointerButton::Middle);
+        runtime.button_up(x, y, rune::PointerButton::Middle);
+        runtime.frame(0.0);
+        assert!(runtime.find("confirmation").is_some());
+        let (x, y) = runtime.find("confirm").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(Arc::ptr_eq(&runtime.state.active().unwrap().state, &active));
+        assert_eq!(
+            runtime.state.generations,
+            runtime
+                .state
+                .sessions
+                .iter()
+                .map(|s| observed[&s.id()])
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn terminal_overflow_scrolls_and_context_close_targets_its_session() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file())
+            .unwrap();
+        for _ in 0..5 {
+            state.sessions.push(
+                Session::spawn(
+                    &shell,
+                    root.path(),
+                    root.path(),
+                    Config::default(),
+                    28,
+                    100,
+                    Arc::new(|| {}),
+                )
+                .unwrap(),
+            );
+        }
+        state.active = 2;
+        let active = state.sessions[2].state.clone();
+        let closing = tabs::session_id(&state.sessions[4]);
+        let mut runtime = runtime_for(state);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("tab-0").unwrap();
+        runtime.wheel_xy(x, y, 0.0, -5000.0);
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let last = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("tab-4") && !e.exiting)
+            .unwrap();
+        assert!(last.visible[2] > 0.0);
+        let (x, y) = runtime.find("tab-4").unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.popup_menu().is_some());
+        runtime.resolve_popup(Some("close")).unwrap();
+        runtime.frame(0.0);
+        assert!(matches!(runtime.state.pending, Some(Pending::Tab(id)) if id == closing));
+        assert!(Arc::ptr_eq(&runtime.state.active().unwrap().state, &active));
     }
 
     #[test]

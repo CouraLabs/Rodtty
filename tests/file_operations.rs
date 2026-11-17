@@ -159,11 +159,41 @@ fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
     fs::create_dir(&source).unwrap();
     fs::write(source.join("ordinary.txt"), "ordinary file").unwrap();
     use std::os::unix::fs::PermissionsExt;
-    let read_only = source.join("read-only");
-    fs::create_dir(&read_only).unwrap();
-    fs::write(read_only.join("file.txt"), "read-only nested file").unwrap();
-    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o555)).unwrap();
+    let create_read_only = |number| {
+        let path = source.join(format!("read-only-{number}"));
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("file.txt"), "read-only nested file").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o555)).unwrap();
+        path
+    };
+    let mut read_only_directories = vec![create_read_only(0)];
     let _socket = std::os::unix::net::UnixListener::bind(source.join("socket")).unwrap();
+    // Cover insertion and reverse insertion enumeration, then verify the fixture
+    // exercises cleanup after a completed subtree rather than failing immediately.
+    let has_completed_subtree = || {
+        fs::read_dir(&source)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .take_while(|name| name != "socket")
+            .any(|name| name.to_string_lossy().starts_with("read-only-"))
+    };
+    if !has_completed_subtree() {
+        read_only_directories.push(create_read_only(1));
+    }
+    assert!(
+        has_completed_subtree(),
+        "fixture needs a read-only directory before the socket"
+    );
+    let referent = root.path().join("referent");
+    fs::create_dir(&referent).unwrap();
+    fs::write(referent.join("keep.txt"), "unrelated contents").unwrap();
+    fs::set_permissions(&referent, fs::Permissions::from_mode(0o555)).unwrap();
+    // Include a symlink in every completed subtree so cleanup must not chmod its referent.
+    for read_only in &read_only_directories {
+        fs::set_permissions(read_only, fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&referent, read_only.join("external-link")).unwrap();
+        fs::set_permissions(read_only, fs::Permissions::from_mode(0o555)).unwrap();
+    }
     fs::create_dir(&target).unwrap();
     fs::write(target.join("precious.txt"), "keep this").unwrap();
     let request = copy(&source, &target);
@@ -185,8 +215,100 @@ fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
     names.sort();
-    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(names, ["source", "target"]);
+    for read_only in &read_only_directories {
+        assert_eq!(
+            fs::metadata(read_only).unwrap().permissions().mode() & 0o777,
+            0o555
+        );
+        assert_eq!(
+            fs::read_to_string(read_only.join("file.txt")).unwrap(),
+            "read-only nested file"
+        );
+        fs::set_permissions(read_only, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let referent_mode = fs::metadata(&referent).unwrap().permissions().mode() & 0o777;
+    fs::set_permissions(&referent, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(referent_mode, 0o555);
+    assert_eq!(
+        fs::read_to_string(referent.join("keep.txt")).unwrap(),
+        "unrelated contents"
+    );
+    assert_eq!(names, ["referent", "source", "target"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn replacing_a_read_only_folder_cleans_its_backup_without_changing_published_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    let referent = root.path().join("referent");
+    for directory in [&source, &target, &referent] {
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("nested/file.txt"), "original contents").unwrap();
+    }
+    fs::write(source.join("nested/file.txt"), "replacement contents").unwrap();
+    fs::write(target.join("old.txt"), "discard this backup").unwrap();
+    std::os::unix::fs::symlink(&referent, target.join("external-link")).unwrap();
+    for directory in [&source, &target, &referent] {
+        fs::set_permissions(
+            directory.join("nested/file.txt"),
+            fs::Permissions::from_mode(0o444),
+        )
+        .unwrap();
+        fs::set_permissions(directory.join("nested"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    // Moving a directory across parents requires its root to be writable on Unix;
+    // its nested read-only tree must still be cleaned once it becomes the backup.
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let request = copy(&source, &target);
+    let ticket = collision(request.clone());
+    let result = request.execute(Some((ticket, CollisionChoice::Replace)));
+    let mut names = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    names.sort();
+    // Capture modes before restoring fixture permissions for TempDir's own cleanup.
+    let modes = [&source, &target, &referent].map(|directory| {
+        let modes = [
+            directory.to_path_buf(),
+            directory.join("nested"),
+            directory.join("nested/file.txt"),
+        ]
+        .map(|path| fs::metadata(path).unwrap().permissions().mode() & 0o777);
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(directory.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
+        modes
+    });
+    assert!(matches!(
+        result.unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    assert_eq!(
+        modes,
+        [
+            [0o555, 0o555, 0o444],
+            [0o555, 0o555, 0o444],
+            [0o555, 0o555, 0o444]
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("nested/file.txt")).unwrap(),
+        "replacement contents"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("nested/file.txt")).unwrap(),
+        "replacement contents"
+    );
+    assert_eq!(
+        fs::read_to_string(referent.join("nested/file.txt")).unwrap(),
+        "original contents"
+    );
+    assert!(!target.join("old.txt").exists());
+    assert_eq!(names, ["referent", "source", "target"]);
 }
 
 #[test]
@@ -213,24 +335,42 @@ fn a_read_only_source_folder_can_be_copied_with_its_permissions_preserved() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("copy");
-    fs::create_dir(&source).unwrap();
-    fs::write(source.join("file.txt"), "readable").unwrap();
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::create_dir_all(source.join("nested/deeper")).unwrap();
+    fs::write(source.join("nested/deeper/file.txt"), "readable").unwrap();
+    for relative in ["nested/deeper", "nested", ""] {
+        fs::set_permissions(source.join(relative), fs::Permissions::from_mode(0o555)).unwrap();
+    }
     let result = copy(&source, &target).execute(None);
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+    let source_modes = ["", "nested", "nested/deeper"].map(|relative| {
+        let path = source.join(relative);
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        mode
+    });
     assert!(matches!(
         result.unwrap(),
         OperationOutcome::Completed { .. }
     ));
-    assert_eq!(
-        fs::read_to_string(target.join("file.txt")).unwrap(),
-        "readable"
-    );
-    assert_eq!(
-        fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-        0o555
-    );
-    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let target_modes = ["", "nested", "nested/deeper"].map(|relative| {
+        let path = target.join(relative);
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        mode
+    });
+    assert_eq!(source_modes, [0o555; 3]);
+    assert_eq!(target_modes, [0o555; 3]);
+    for directory in [&source, &target] {
+        assert_eq!(
+            fs::read_to_string(directory.join("nested/deeper/file.txt")).unwrap(),
+            "readable"
+        );
+    }
+    let mut names = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["copy", "source"]);
 }
 
 #[test]

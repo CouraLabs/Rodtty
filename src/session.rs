@@ -7,7 +7,11 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -20,7 +24,7 @@ pub struct TerminalEvents {
 
 impl vt100::Callbacks for TerminalEvents {
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
-        self.title = String::from_utf8_lossy(title).chars().take(120).collect();
+        self.title = String::from_utf8_lossy(title).into_owned();
     }
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
         if params.first() == Some(&b"7".as_slice())
@@ -61,7 +65,10 @@ pub struct TerminalState {
     pub error: Option<String>,
 }
 
+static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
+
 pub struct Session {
+    id: usize,
     pub initial_cwd: PathBuf,
     pub config: Config,
     pub state: Arc<Mutex<TerminalState>>,
@@ -185,6 +192,7 @@ impl Session {
             wake();
         });
         Ok(Self {
+            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             initial_cwd: cwd.to_owned(),
             config,
             state,
@@ -193,6 +201,11 @@ impl Session {
             killer,
             size: (rows, cols),
         })
+    }
+
+    /// Process-lifetime identity, independent of tab position and rendering.
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     pub fn send(&self, bytes: impl Into<Vec<u8>>) -> Result<()> {
@@ -246,6 +259,21 @@ impl Session {
     pub fn with_screen<R>(&self, read: impl FnOnce(&vt100::Screen) -> R) -> R {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         read(state.parser.screen())
+    }
+
+    /// Current application title, or the directory fallback when the app has none.
+    pub fn tab_title(&self) -> String {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let events = state.parser.callbacks();
+        if !events.title.is_empty() {
+            return events.title.clone();
+        }
+        let cwd = events.cwd.as_ref().unwrap_or(&self.initial_cwd);
+        let folder = cwd
+            .file_name()
+            .unwrap_or_else(|| cwd.as_os_str())
+            .to_string_lossy();
+        format!("›_  Term {folder}")
     }
 
     pub fn cwd(&self) -> PathBuf {
