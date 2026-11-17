@@ -1,4 +1,5 @@
 pub mod operations;
+pub mod removal;
 use anyhow::{Context, Result, bail};
 use similar::{ChangeTag, TextDiff};
 use std::{

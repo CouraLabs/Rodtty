@@ -9,6 +9,8 @@ pub(super) enum AppAction {
     CreateFile,
     CreateFolder,
     CopyFile,
+    TrashFile,
+    ToggleDeletionConfirmation,
     RenameFile,
     MoveFile,
     RevealFileOperation,
@@ -84,6 +86,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         }
     };
     for (id, title, shortcut, action) in [
+        (
+            "trash-file",
+            "Explorer: Move Selected Item to Trash",
+            "",
+            AppAction::TrashFile,
+        ),
         (
             "reveal-file-operation",
             "Explorer: Reveal Last File Operation",
@@ -353,20 +361,39 @@ impl State {
     }
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
+        if self.removal_background_busy()
+            && !matches!(
+                action,
+                AppAction::ShowTerminal
+                    | AppAction::ToggleTerminal
+                    | AppAction::ActivateTerminal(_)
+                    | AppAction::CopyTerminal
+                    | AppAction::PasteTerminal
+            )
+        {
+            return Some(
+                "Files are protected while the operation finishes; terminal input remains available",
+            );
+        }
         match action {
+            AppAction::TrashFile if self.settings => Some("Select a file in the explorer first"),
             AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
                 Some("No completed file operation")
             }
             AppAction::CreateFile
             | AppAction::CreateFolder
             | AppAction::CopyFile
+            | AppAction::TrashFile
             | AppAction::RenameFile
             | AppAction::MoveFile
-                if self.workspace.operation_busy =>
+                if self.workspace.operation_busy || self.workspace.removal.is_some() =>
             {
                 Some("A file operation is in progress")
             }
-            AppAction::CopyFile | AppAction::RenameFile | AppAction::MoveFile
+            AppAction::CopyFile
+            | AppAction::TrashFile
+            | AppAction::RenameFile
+            | AppAction::MoveFile
                 if self.selected_entry().is_none() =>
             {
                 Some("Select a file or folder first")
@@ -445,6 +472,10 @@ impl State {
             self.supersede_pending_preview();
         }
         match action {
+            AppAction::TrashFile => self.begin_removal(tx),
+            AppAction::ToggleDeletionConfirmation => {
+                self.save_config(|c| c.explorer.confirm_deletion = !c.explorer.confirm_deletion);
+            }
             AppAction::CreateFile => {
                 self.begin_file_operation(crate::files::operations::FileOperation::CreateFile, tx)
             }

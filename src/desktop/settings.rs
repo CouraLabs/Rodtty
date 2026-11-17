@@ -170,7 +170,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             matches(
                 s,
                 section,
-                "explorer follow terminal show hidden files respect ignore rules",
+                "explorer follow terminal show hidden files respect ignore rules confirm deletion trash",
             )
         } else if section == "Bundled Commands" {
             profile::utility_names()
@@ -589,6 +589,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             "Files" => {
                 for (key, title, enabled, action) in [
                     (
+                        "settings-confirm-deletion",
+                        "Confirm moving files to Trash",
+                        s.config.explorer.confirm_deletion,
+                        AppAction::ToggleDeletionConfirmation,
+                    ),
+                    (
                         "settings-explorer-follow",
                         "Follow Terminal",
                         s.config.explorer.follow_terminal,
@@ -607,7 +613,10 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         AppAction::ToggleIgnore,
                     ),
                 ] {
-                    if matches(s, section, title) {
+                    if matches(s, section, title)
+                        || (key == "settings-confirm-deletion"
+                            && matches(s, section, "confirm deletion move trash remove files"))
+                    {
                         group = group.child(button(
                             a,
                             key,

@@ -32,11 +32,13 @@ rune-kit = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a005
 
 fontique = { version = "0.12", features = ["std", "system", "fontconfig-dlopen"], optional = true }
 read-fonts = { version = "0.41", optional = true }
+trash = { version = "=5.3.0", default-features = false, features = ["chrono", "coinit_apartmentthreaded", "freedesktop"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }
 
 [patch.crates-io]
+trash = { path = "vendor/trash" }
 vte = { path = "vendor/vte" }
 wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
 winit = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }

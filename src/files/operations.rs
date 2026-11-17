@@ -1,4 +1,5 @@
 //! Background filesystem operations with explicit, version-checked collision decisions.
+use super::{Document, MAX_FILE_BYTES, TextFile};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
@@ -11,8 +12,18 @@ use std::{
 pub enum FileOperation {
     CreateFile,
     CreateFolder,
-    Copy { source: PathBuf },
-    Move { source: PathBuf },
+    Copy {
+        source: PathBuf,
+    },
+    Move {
+        source: PathBuf,
+    },
+    SaveAs {
+        document: Document,
+        text: String,
+        removing: PathBuf,
+        protected: Vec<PathBuf>,
+    },
 }
 #[derive(Clone, Debug)]
 pub struct OperationRequest {
@@ -33,6 +44,7 @@ pub struct Collision {
 }
 #[derive(Debug)]
 pub enum OperationOutcome {
+    SavedAs(Document),
     Completed {
         request: OperationRequest,
         path: PathBuf,
@@ -91,6 +103,40 @@ impl OperationRequest {
         let directory = match &self.operation {
             FileOperation::CreateFolder => true,
             FileOperation::CreateFile => false,
+            FileOperation::SaveAs {
+                removing,
+                protected,
+                ..
+            } => {
+                let removal_parent = removing
+                    .parent()
+                    .context("Invalid removal path")?
+                    .canonicalize()?;
+                let removal =
+                    removal_parent.join(removing.file_name().context("Invalid removal path")?);
+                if target.starts_with(&removal) {
+                    bail!("Choose a Save As location outside the item being deleted.");
+                }
+                // Reject existing aliases into the removal subtree, and do not replace
+                // another open editor's version underneath its buffer.
+                let resolved_target = target.canonicalize().unwrap_or_else(|_| target.clone());
+                let resolved_removal = removing.canonicalize().unwrap_or(removal);
+                if resolved_target.starts_with(&resolved_removal) {
+                    bail!("Choose a Save As location outside the item being deleted.");
+                }
+                if protected
+                    .iter()
+                    .any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == resolved_target)
+                {
+                    bail!(
+                        "The Save As destination is open in another editor. Choose a different file."
+                    );
+                }
+                if fs::symlink_metadata(&target).is_ok_and(|m| m.is_dir()) {
+                    bail!("The Save As destination is a folder. Choose a file name.");
+                }
+                false
+            }
             FileOperation::Copy { source } | FileOperation::Move { source } => {
                 let metadata = fs::symlink_metadata(source).context("Read source")?;
                 if metadata.is_dir()
@@ -177,11 +223,30 @@ impl OperationRequest {
                 .tempdir_in(&parent)?,
         ));
         let prepared = stage.path().join("item");
+        let mut saved_as = None;
         match &self.operation {
             FileOperation::CreateFile => {
                 fs::File::create(&prepared)?;
             }
             FileOperation::CreateFolder => fs::create_dir(&prepared)?,
+            FileOperation::SaveAs { document, text, .. } => {
+                use std::io::Write;
+                let raw = document.saved.encode(text);
+                if raw.len() as u64 > MAX_FILE_BYTES {
+                    bail!("The edited file exceeds the 2 MiB editor limit.");
+                }
+                let mut file = fs::File::create(&prepared)?;
+                file.write_all(&raw)?;
+                file.sync_all()?;
+                if let Ok(metadata) = fs::metadata(&document.path) {
+                    file.set_permissions(metadata.permissions())?;
+                }
+                saved_as = Some(Document {
+                    path: target.clone(),
+                    saved: TextFile::decode(raw)?,
+                    existed: true,
+                });
+            }
             FileOperation::Copy { source } | FileOperation::Move { source } => {
                 copy_item(source, &prepared)?
             }
@@ -233,6 +298,9 @@ impl OperationRequest {
         }
         if let Some(moved) = &mut moved {
             moved.committed = true;
+        }
+        if let Some(document) = saved_as {
+            return Ok(OperationOutcome::SavedAs(document));
         }
         Ok(OperationOutcome::Completed {
             request: self,
@@ -610,7 +678,7 @@ fn publish(prepared: &Path, target: &Path) -> Result<()> {
     }
 }
 
-fn fingerprint(path: &Path) -> Result<Option<u64>> {
+pub(super) fn fingerprint(path: &Path) -> Result<Option<u64>> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
