@@ -594,6 +594,10 @@ fn workspace_menu(a: &Appearance) -> El {
 }
 
 fn view(state: &State, cx: &mut Cx<State>) -> El {
+    view_with_frame(state, cx, frame::placement())
+}
+
+fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placement) -> El {
     let _fonts = fonts::scope(&state.config.fonts, cx.env().scale);
     let a = &Appearance::resolve(
         state.config.theme_family,
@@ -620,8 +624,19 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(a.bg())
-        .padding(if frame::enabled() { frame::BORDER } else { 0.0 })
-        .border(if frame::enabled() { 1.0 } else { 0.0 }, a.hover_bg())
+        .padding(if placement != frame::Placement::Native {
+            frame::BORDER
+        } else {
+            0.0
+        })
+        .border(
+            if placement != frame::Placement::Native {
+                1.0
+            } else {
+                0.0
+            },
+            a.hover_bg(),
+        )
         .child(
             row()
                 .key("workspace-header")
@@ -633,6 +648,11 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .gap(if width < 880.0 { 3.0 } else { 6.0 })
                 .center_y()
                 .fill(a.panel())
+                .child(if placement == frame::Placement::Left {
+                    frame::controls(state, a, placement)
+                } else {
+                    el()
+                })
                 .child(
                     text(if width < 880.0 { "" } else { "Rodtty" })
                         .font(ui_style(13.0, 600.0))
@@ -712,7 +732,11 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                         tx.focus_when_shown("palette", true);
                     }
                 }))
-                .child(frame::controls(state, a)),
+                .child(if placement == frame::Placement::Right {
+                    frame::controls(state, a, placement)
+                } else {
+                    el()
+                }),
         );
     root = root.child(workspace::body(state, a, width));
 
@@ -1713,6 +1737,86 @@ mod tests {
     }
 
     #[test]
+    fn mac_frame_keeps_left_controls_clickable_at_minimum_size() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        workspace::demo(&mut state, false);
+        state.workspace.tabs[0].edit.insert("mac frame draft ");
+        let draft = state.workspace.tabs[0].edit.text.clone();
+        let mut runtime = rune::Runtime::new(
+            state,
+            |state, cx| view_with_frame(state, cx, frame::Placement::Left),
+            (640.0, 360.0),
+            rune::Env::new(true, 2.0),
+        );
+        runtime.frame(0.0);
+        let close = runtime.find("window-close").expect("custom close");
+        let minimize = runtime.find("window-minimize").expect("custom minimize");
+        let maximize = runtime.find("window-maximize").expect("custom maximize");
+        let folder = runtime.find("active-folder").expect("folder");
+        assert!(
+            close.0 < minimize.0 && minimize.0 < maximize.0 && maximize.0 < folder.0,
+            "macOS controls must precede folder identity: {close:?} {minimize:?} {maximize:?} {folder:?}"
+        );
+        for key in [
+            "window-close",
+            "window-minimize",
+            "window-maximize",
+            "settings",
+            "workspace-menu",
+        ] {
+            let rect = runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                .unwrap()
+                .rect;
+            assert!(
+                rect[0] >= 6.0
+                    && rect[0] + rect[2] <= 634.0
+                    && rect[1] >= 6.0
+                    && rect[1] + rect[3] <= 54.0,
+                "{key} fits inside the minimum-size frame: {rect:?}"
+            );
+        }
+        runtime.pointer_down(close.0, close.1);
+        assert_eq!(runtime.take_titlebar_action(), None);
+        runtime.pointer_up(close.0, close.1);
+        runtime.frame(0.1);
+        runtime.settle_all();
+        runtime.frame(0.15);
+        assert!(runtime.find("file-save-confirm").is_some());
+        let cancel = runtime.find("file-cancel").unwrap();
+        runtime.pointer_down(cancel.0, cancel.1);
+        runtime.pointer_up(cancel.0, cancel.1);
+        runtime.frame(0.2);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        let settings = runtime.find("settings").unwrap();
+        runtime.pointer_down(settings.0, settings.1);
+        assert_eq!(runtime.take_titlebar_action(), None);
+        runtime.pointer_up(settings.0, settings.1);
+        runtime.frame(0.3);
+        assert!(runtime.find("settings-search").is_some());
+        runtime.set_viewport((1200.0, 700.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.5);
+        let folder = runtime.find("active-folder").unwrap();
+        runtime.pointer_down(folder.0, folder.1);
+        assert_eq!(
+            runtime.take_titlebar_action(),
+            Some(rune::TitlebarAction::Drag)
+        );
+        runtime.pointer_up(folder.0, folder.1);
+        runtime.pointer_down(folder.0, folder.1);
+        assert_eq!(
+            runtime.take_titlebar_action(),
+            Some(rune::TitlebarAction::DoubleClick)
+        );
+        runtime.pointer_up(folder.0, folder.1);
+    }
+
+    #[test]
     #[cfg(target_os = "linux")]
     fn custom_frame_places_controls_right_and_header_controls_keep_their_clicks() {
         let mut runtime = runtime();
@@ -1771,7 +1875,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn custom_close_keeps_unsaved_editor_until_owner_decides() {
         let root = tempfile::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
