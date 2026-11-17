@@ -461,6 +461,7 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
         }
     })
     .build(a.kit(), layers)
+    .w(280.0)
 }
 
 pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
@@ -867,6 +868,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn narrow_settings_theme_dropdown_is_searchable_and_selectable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        rt.set_viewport((680.0, 800.0), 1.0);
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("theme"));
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "theme-family-trigger");
+        assert!(rt.find("theme-family-option-Dracula").is_some());
+        rt.paste("solar");
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "theme-family-option-Solarized");
+        assert_canvas(&rt, "#002b36");
+        assert_eq!(
+            Config::load(root.path()).unwrap().theme_family.label(),
+            "Solarized"
+        );
     }
 
     #[test]
