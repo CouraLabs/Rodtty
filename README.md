@@ -116,7 +116,7 @@ cargo test --locked --test terminal real_vim_accepts_keyboard_input_and_saves_a_
 
 The last check requires an installed `vim`. CI defines native Linux, Windows, and macOS jobs. Those jobs have not run until the workflow is published and executed.
 
-Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery; `tree` reads nested folders from the actual host startup location):
+Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery; `file-collision` previews the explicit collision choices; `tree` reads nested folders from the actual host startup location):
 
 ```sh
 target/debug/rodtty --scene workspace --snap target/workspace-preview.png --size 1440x860 --scale 1

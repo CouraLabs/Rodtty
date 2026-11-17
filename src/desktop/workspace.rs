@@ -61,7 +61,15 @@ pub(super) struct Workspace {
     pub active: usize,
     pub worker: Option<Worker>,
     pub entries: Vec<Entry>,
-    tree: TreeModel<TreeEntry>,
+    pub(super) tree: TreeModel<TreeEntry>,
+    pub(super) operation_busy: bool,
+    pub(super) operation_result: Option<PathBuf>,
+    pub(super) operation_id: u64,
+    pub(super) operation_name: TextEdit,
+    pub(super) operation_destination: TextEdit,
+    pub(super) operation_error: Option<String>,
+    pub(super) operation_context: Option<(f32, f32)>,
+    pub(super) operation_viewport: (f32, f32),
     tree_errors: Vec<(PathBuf, String)>,
     tree_dirty: bool,
     explorer_error: Option<String>,
@@ -111,6 +119,14 @@ impl Default for Workspace {
             worker: None,
             entries: Vec::new(),
             tree: TreeModel::new().key("file-list"),
+            operation_busy: false,
+            operation_result: None,
+            operation_id: 0,
+            operation_name: TextEdit::new(""),
+            operation_destination: TextEdit::new(""),
+            operation_error: None,
+            operation_context: None,
+            operation_viewport: (1080.0, 720.0),
             tree_errors: Vec::new(),
             tree_dirty: true,
             explorer_error: None,
@@ -192,7 +208,7 @@ impl State {
             Err(e) => self.message = format!("Could not restore workspace: {e:#}"),
         }
     }
-    fn io(&mut self, job: Job) -> bool {
+    pub(super) fn io(&mut self, job: Job) -> bool {
         if let Some(worker) = &self.workspace.worker {
             if let Err(e) = worker.send(job) {
                 self.message = e;
@@ -278,6 +294,39 @@ impl State {
         if cwd != *root {
             self.workspace.pending_reveal = Some(cwd.clone());
             self.workspace.tree.reveal(&cwd.to_string_lossy(), tx);
+        }
+        self.workspace.scan_token += 1;
+        self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+    }
+
+    pub(super) fn reveal_file_result(&mut self, path: PathBuf, tx: &mut Tx) {
+        if let Some(root) = self.workspace.directory.clone()
+            && path.starts_with(&root)
+        {
+            let mut parent = path.parent();
+            while let Some(folder) =
+                parent.filter(|folder| *folder != root && folder.starts_with(&root))
+            {
+                if !self
+                    .workspace
+                    .layout
+                    .expanded_folders
+                    .iter()
+                    .any(|p| p == folder)
+                {
+                    self.workspace
+                        .layout
+                        .expanded_folders
+                        .push(folder.to_owned());
+                }
+                self.workspace
+                    .tree
+                    .set_expanded(&folder.to_string_lossy(), true);
+                parent = folder.parent();
+            }
+            self.workspace.revealed_directory = Some(path.clone());
+            self.workspace.pending_reveal = Some(path.clone());
+            self.workspace.tree.reveal(&path.to_string_lossy(), tx);
         }
         self.workspace.scan_token += 1;
         self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
@@ -696,6 +745,7 @@ impl State {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                Event::FileOperation { id, result } => self.finish_file_operation(id, result, tx),
                 Event::Reload {
                     id,
                     revision,
@@ -1123,6 +1173,26 @@ fn explorer(s: &State, a: &Appearance) -> El {
                 |s, tx| s.dispatch(AppAction::ExplorerTerminalRoot, tx),
             ));
     }
+    if let Some(path) = &workspace.operation_result
+        && workspace
+            .directory
+            .as_ref()
+            .is_none_or(|root| !path.starts_with(root))
+    {
+        pane = pane
+            .child(
+                text(format!("Last result: {}", path.display()))
+                    .font(ui_label())
+                    .color(a.muted())
+                    .wrap_anywhere(),
+            )
+            .child(button(
+                a,
+                "explorer-reveal-result",
+                "Show destination",
+                |s, tx| s.dispatch(AppAction::RevealFileOperation, tx),
+            ));
+    }
     let danger = a.danger();
     let mut tree_style = TreeStyle::from_kit(a.kit())
         .label(ui_label(), a.ink(), a.ink())
@@ -1152,8 +1222,12 @@ fn explorer(s: &State, a: &Appearance) -> El {
     .instant_changes()
     .pb(ui_label().size * 0.25)
     .grow(1.0)
-    .min_h(0.0);
+    .min_h(0.0)
+    .on_secondary_press(|s: &mut State, press, tx| s.file_context_menu(press, tx));
     pane = pane.child(list);
+    if workspace.operation_busy {
+        pane = pane.child(text("Working on files…").font(ui_label()).color(a.muted()));
+    }
     if workspace.scan_busy {
         pane = pane.child(text("Loading…").font(ui_label()).color(a.muted()));
     } else if workspace.entries.is_empty() && workspace.explorer_error.is_none() {
@@ -2067,6 +2141,287 @@ mod tests {
     }
 
     #[test]
+    fn explorer_create_actions_write_and_reveal_files_and_folders() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        for (action, name) in [
+            (AppAction::CreateFile, "notes.txt"),
+            (AppAction::CreateFolder, "work"),
+        ] {
+            runtime.update(|s, tx| s.dispatch(action, tx));
+            runtime.frame(1.0);
+            assert!(runtime.find("operation-dialog").is_some());
+            press(&mut runtime, Key::Text(name.into()), Default::default());
+            let (x, y) = runtime.find("operation-submit").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.0);
+            wait_runtime(&mut runtime, |s| {
+                !s.workspace.operation_busy && s.workspace.entries.iter().any(|e| e.name == name)
+            });
+            runtime.update(|_, _| {});
+            runtime.frame(0.0);
+            assert!(
+                runtime
+                    .find(root.path().join(name).to_str().unwrap())
+                    .is_some()
+            );
+        }
+        assert_eq!(std::fs::read(root.path().join("notes.txt")).unwrap(), b"");
+        assert!(root.path().join("work").is_dir());
+    }
+
+    fn wait_runtime(runtime: &mut rune::Runtime<State>, condition: impl Fn(&State) -> bool) {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(8) {
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            runtime.frame(0.02);
+            if condition(&runtime.state) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("application operation timed out: {}", runtime.state.message);
+    }
+    fn click(runtime: &mut rune::Runtime<State>, key: &str) {
+        runtime.frame(1.0);
+        let (x, y) = runtime.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(1.0);
+    }
+    fn fill(runtime: &mut rune::Runtime<State>, key: &str, value: &str) {
+        use super::super::tests::press;
+        runtime.update(|_, tx| tx.focus(key, true));
+        runtime.frame(1.0);
+        press(
+            runtime,
+            Key::Command('a'),
+            rune::Mods {
+                ctrl: true,
+                cmd: true,
+                ..Default::default()
+            },
+        );
+        press(runtime, Key::Text(value.into()), Default::default());
+    }
+
+    #[test]
+    fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        std::fs::create_dir_all(source.join("nested")).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(source.join("nested/file.txt"), "copy me").unwrap();
+        let editor = root.path().join("draft.txt");
+        std::fs::write(&editor, "saved").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &editor);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved draft");
+        click(&mut runtime, source.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy
+                && s.workspace
+                    .entries
+                    .iter()
+                    .any(|e| e.path == source.join("nested"))
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(1.0);
+        let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(1.0);
+        assert!(runtime.find("file-context-menu").is_some());
+        click(&mut runtime, "context-copy-file");
+        fill(
+            &mut runtime,
+            "operation-destination",
+            destination.to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Copied")
+        });
+        assert_eq!(
+            std::fs::read_to_string(destination.join("source/nested/file.txt")).unwrap(),
+            "copy me"
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved draft");
+        assert_eq!(std::fs::read_to_string(editor).unwrap(), "saved");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy
+                && s.workspace
+                    .entries
+                    .iter()
+                    .any(|e| e.path == destination.join("source"))
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(1.0);
+        assert!(
+            runtime
+                .find(destination.join("source").to_str().unwrap())
+                .is_some()
+        );
+        assert!(runtime.find(source.to_str().unwrap()).is_some());
+        assert!(
+            runtime
+                .find(source.join("nested").to_str().unwrap())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn explorer_copy_collision_choices_never_silently_overwrite_open_content() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("report.txt");
+        let destination = root.path().join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(&source, "new report").unwrap();
+        let target = destination.join("report.txt");
+        std::fs::write(&target, "existing report").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &target);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved report");
+        for choice in [
+            "operation-cancel",
+            "operation-keep-both",
+            "operation-replace",
+        ] {
+            runtime.frame(1.0);
+            let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+            runtime.secondary_down(x, y);
+            runtime.secondary_up(x, y);
+            runtime.frame(1.0);
+            click(&mut runtime, "context-copy-file");
+            fill(
+                &mut runtime,
+                "operation-destination",
+                destination.to_str().unwrap(),
+            );
+            click(&mut runtime, "operation-submit");
+            wait_runtime(&mut runtime, |s| {
+                matches!(
+                    s.pending,
+                    Some(Pending::Operation(
+                        super::super::file_operations::OperationPrompt::Collision(_)
+                    ))
+                )
+            });
+            runtime.update(|_, _| {});
+            runtime.frame(1.0);
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "existing report");
+            assert!(runtime.find("operation-keep-both").is_some());
+            assert!(runtime.find("operation-replace").is_some());
+            if choice == "operation-cancel" {
+                press(&mut runtime, Key::Text(" ".into()), Default::default());
+                assert!(
+                    runtime.state.pending.is_none(),
+                    "Space activates the focused Cancel button"
+                );
+            } else {
+                click(&mut runtime, choice);
+            }
+            wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+            if choice == "operation-replace" {
+                assert_eq!(std::fs::read_to_string(&target).unwrap(), "new report");
+            } else {
+                assert_eq!(std::fs::read_to_string(&target).unwrap(), "existing report");
+            }
+            if choice == "operation-cancel" {
+                assert!(!destination.join("report copy.txt").exists());
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(destination.join("report copy.txt")).unwrap(),
+                    "new report"
+                );
+            }
+            assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved report");
+        }
+    }
+
+    #[test]
+    fn explorer_file_operation_errors_leave_disk_and_editor_content_intact() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        std::fs::create_dir_all(source.join("child")).unwrap();
+        let editor = source.join("draft.txt");
+        std::fs::write(&editor, "saved draft").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &editor);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved draft");
+        runtime.frame(1.0);
+        let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(1.0);
+        click(&mut runtime, "context-copy-file");
+        fill(
+            &mut runtime,
+            "operation-destination",
+            source.join("child").to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.contains("cannot be copied into itself")
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(1.0);
+        assert!(runtime.elements().iter().any(|e| {
+            e.text
+                .as_deref()
+                .is_some_and(|t| t.contains("File operation failed:"))
+        }));
+        assert!(!source.join("child/source").exists());
+        runtime.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "../outside.txt");
+        click(&mut runtime, "operation-submit");
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Enter a single file or folder name."))
+        );
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.state.pending.is_none());
+        runtime.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "new.txt");
+        fill(
+            &mut runtime,
+            "operation-destination",
+            root.path().join("missing").to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.contains("Open destination folder")
+        });
+        assert!(!root.path().join("missing").exists());
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved draft");
+        assert_eq!(std::fs::read_to_string(editor).unwrap(), "saved draft");
+    }
+
+    #[test]
     fn responsive_workspace_keeps_editor_contents_and_remembers_pane_widths() {
         use super::super::tests::runtime_for;
         let root = tempfile::tempdir().unwrap();
@@ -2193,6 +2548,92 @@ mod tests {
         assert!(runtime.find("explorer").is_some());
         assert!(runtime.find("terminal-pane").is_some());
         assert!(runtime.find("settings-search").is_some());
+    }
+
+    #[test]
+    fn a_small_window_with_large_ui_text_can_create_a_file_by_keyboard() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        state.config.fonts.ui_size = 24.0;
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.set_full_keyboard_access(true);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
+        runtime.frame(1.0);
+        press(
+            &mut runtime,
+            Key::Text("large.txt".into()),
+            Default::default(),
+        );
+        for _ in 0..3 {
+            press(&mut runtime, Key::Tab, Default::default());
+        }
+        runtime.settle_all();
+        runtime.frame(1.0);
+        let rect = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("operation-submit"))
+            .unwrap()
+            .rect;
+        assert!(
+            rect[1] >= 0.0 && rect[1] + rect[3] <= 360.0,
+            "focused Create control must be visible: {rect:?}"
+        );
+        press(&mut runtime, Key::Text(" ".into()), Default::default());
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Created")
+        });
+        assert_eq!(std::fs::read(root.path().join("large.txt")).unwrap(), b"");
+    }
+
+    #[test]
+    fn copied_items_outside_the_root_offer_an_explicit_reveal_action() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let source = root.path().join("notes.txt");
+        std::fs::write(&source, "copied notes").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.frame(1.0);
+        let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(1.0);
+        click(&mut runtime, "context-copy-file");
+        fill(
+            &mut runtime,
+            "operation-destination",
+            outside.path().to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Copied")
+        });
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(root.path())
+        );
+        click(&mut runtime, "explorer-reveal-result");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "notes.txt")
+        });
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(outside.path())
+        );
+        assert!(
+            runtime
+                .find(outside.path().join("notes.txt").to_str().unwrap())
+                .is_some()
+        );
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "copied notes");
     }
 
     #[test]

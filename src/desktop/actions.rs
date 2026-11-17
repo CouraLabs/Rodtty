@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 pub(super) enum AppAction {
+    CreateFile,
+    CreateFolder,
+    CopyFile,
+    RevealFileOperation,
     CommandPalette,
     NewTerminal,
     EndTerminal,
@@ -63,6 +67,30 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         }
     };
     for (id, title, shortcut, action) in [
+        (
+            "reveal-file-operation",
+            "Explorer: Reveal Last File Operation",
+            "",
+            AppAction::RevealFileOperation,
+        ),
+        (
+            "create-file",
+            "Explorer: New File…",
+            "",
+            AppAction::CreateFile,
+        ),
+        (
+            "create-folder",
+            "Explorer: New Folder…",
+            "",
+            AppAction::CreateFolder,
+        ),
+        (
+            "copy-file",
+            "Explorer: Copy Selected Item To…",
+            "",
+            AppAction::CopyFile,
+        ),
         (
             "new-terminal",
             "Terminal: New Tab",
@@ -279,6 +307,17 @@ impl State {
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
         match action {
+            AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
+                Some("No completed file operation")
+            }
+            AppAction::CreateFile | AppAction::CreateFolder | AppAction::CopyFile
+                if self.workspace.operation_busy =>
+            {
+                Some("A file operation is in progress")
+            }
+            AppAction::CopyFile if self.selected_entry().is_none() => {
+                Some("Select a file or folder first")
+            }
             AppAction::SaveEditor(None)
             | AppAction::CloseEditor(None)
             | AppAction::FindEditor
@@ -341,6 +380,35 @@ impl State {
         }
         self.workspace_menu = false;
         match action {
+            AppAction::CreateFile => {
+                self.begin_file_operation(crate::files::operations::FileOperation::CreateFile, tx)
+            }
+            AppAction::CreateFolder => {
+                self.begin_file_operation(crate::files::operations::FileOperation::CreateFolder, tx)
+            }
+            AppAction::CopyFile => {
+                if let Some(entry) = self.selected_entry() {
+                    self.begin_file_operation(
+                        crate::files::operations::FileOperation::Copy { source: entry.path },
+                        tx,
+                    );
+                }
+            }
+            AppAction::RevealFileOperation => {
+                if let Some(path) = self.workspace.operation_result.clone() {
+                    if self
+                        .workspace
+                        .directory
+                        .as_ref()
+                        .is_none_or(|root| !path.starts_with(root))
+                        && let Some(parent) = path.parent()
+                    {
+                        self.navigate(parent.to_owned());
+                    }
+                    self.workspace.layout.explorer = true;
+                    self.reveal_file_result(path, tx);
+                }
+            }
             AppAction::CommandPalette => self.open_palette(tx),
             AppAction::NewTerminal => {
                 tx.blur();

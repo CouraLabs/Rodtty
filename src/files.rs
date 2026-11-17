@@ -1,3 +1,4 @@
+pub mod operations;
 use anyhow::{Context, Result, bail};
 use similar::{ChangeTag, TextDiff};
 use std::{
