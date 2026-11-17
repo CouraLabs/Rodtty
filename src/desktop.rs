@@ -154,6 +154,7 @@ impl State {
             || self.palette.is_some()
             || self.workspace_menu
             || self.workspace.operation_context.is_some()
+            || self.tab_strips.context_open
     }
 
     fn active(&self) -> Option<&Session> {
@@ -866,6 +867,9 @@ pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>>
 }
 
 fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if state.tab_strips.context_open {
+        return true;
+    }
     if state.pending.is_some() {
         if event.key == Key::Escape {
             state.cancel_file_action();
@@ -1893,7 +1897,10 @@ mod tests {
                 .iter()
                 .any(|e| e.text.as_deref() == Some("›_  Term new-folder"))
         );
-        let full = "Application title 日本語 with preserved content ".repeat(8);
+        let full = format!(
+            "Application; title 日本語 with {};;",
+            "preserved content ".repeat(8)
+        );
         runtime.state.sessions[0]
             .send(format!("printf '\\033]2;{}\\007'\r", full).into_bytes())
             .unwrap();
@@ -2003,6 +2010,7 @@ mod tests {
             .map(|p| p.join("rodtty-shell"))
             .find(|p| p.is_file())
             .unwrap();
+        state.shell = Some(shell.clone());
         for _ in 0..5 {
             state.sessions.push(
                 Session::spawn(
@@ -2040,10 +2048,70 @@ mod tests {
         runtime.secondary_up(x, y);
         runtime.frame(0.0);
         assert!(runtime.popup_menu().is_some());
+        assert!(runtime.state.application_overlay_open());
+        runtime
+            .state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        runtime.paste("PASTE_BEHIND_TAB_MENU");
+        runtime.frame(0.0);
+        press(
+            &mut runtime,
+            Key::Text("KEY_BEHIND_TAB_MENU".into()),
+            Default::default(),
+        );
+        assert!(
+            runtime
+                .state
+                .active()
+                .unwrap()
+                .wait_for(
+                    "PASTE_BEHIND_TAB_MENU",
+                    std::time::Duration::from_millis(200)
+                )
+                .is_err()
+        );
+        runtime.resolve_popup(None).unwrap();
+        runtime.frame(0.0);
+        assert!(!runtime.state.application_overlay_open());
+        runtime.paste("PASTE_AFTER_TAB_MENU");
+        runtime.frame(0.0);
+        runtime
+            .state
+            .active()
+            .unwrap()
+            .wait_for("PASTE_AFTER_TAB_MENU", std::time::Duration::from_secs(10))
+            .unwrap();
+        let contents = runtime.state.active().unwrap().screen().contents();
+        assert!(!contents.contains("PASTE_BEHIND_TAB_MENU"));
+        assert!(!contents.contains("KEY_BEHIND_TAB_MENU"));
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(0.0);
         runtime.resolve_popup(Some("close")).unwrap();
         runtime.frame(0.0);
         assert!(matches!(runtime.state.pending, Some(Pending::Tab(id)) if id == closing));
         assert!(Arc::ptr_eq(&runtime.state.active().unwrap().state, &active));
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("cancel").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.state.pending.is_none());
+        let (x, y) = runtime.find("new-tab").unwrap();
+        assert!(x > last.rect[0] && x < 640.0 && y > header_height());
+        runtime.pointer_down(x, y);
+        assert_eq!(runtime.take_titlebar_action(), None);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert_eq!(runtime.state.sessions.len(), 6);
+        assert_eq!(runtime.state.active, 5);
+        assert_eq!(runtime.state.active().unwrap().cwd(), root.path());
     }
 
     #[test]

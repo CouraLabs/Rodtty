@@ -306,6 +306,32 @@ mod tests {
             rt.find("font-ui-option-Geist").is_none(),
             "font choices must stay below a tree context menu"
         );
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Default::default(),
+        });
+        frame(&mut rt);
+        if rt.find("font-ui-option-Geist").is_none() {
+            click(&mut rt, "font-ui-trigger");
+        }
+        let (x, y) = rt.find("settings-tab").unwrap();
+        rt.update(move |s, tx| {
+            super::tabs::context_menu(
+                s,
+                super::tabs::Target::Settings,
+                rune::PointerPress { x, y },
+                tx,
+            );
+        });
+        frame(&mut rt);
+        assert!(rt.popup_menu().is_some());
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "font choices must stay below a tab context menu"
+        );
+        rt.resolve_popup(None).unwrap();
+        frame(&mut rt);
+        assert!(!rt.state.application_overlay_open());
     }
 
     #[test]
