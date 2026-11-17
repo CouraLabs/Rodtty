@@ -1,0 +1,30 @@
+{
+  "active": 0,
+  "directories": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha"
+  ],
+  "host_pid": 822252,
+  "output": [
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta$ printf '\\033]0;T22 OLD TITLE\\007'; sleep 1; printf 'T22_OLD_%s\\n' OUTPUT\nT22_OLD_OUTPUT\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta$ ",
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=822309\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha$ "
+  ],
+  "passed": true,
+  "pids": [
+    822309
+  ],
+  "recent_output_retained": true,
+  "same_session_and_pid_on_reopen": true,
+  "session_ids": [
+    3,
+    2
+  ],
+  "single_fresh_preference_preserved_live_sessions": true,
+  "titles": [
+    "T22 OLD TITLE",
+    "\u203a_  Term alpha"
+  ],
+  "window_backend": "Xlib",
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

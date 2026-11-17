@@ -1,0 +1,62 @@
+[
+  {
+    "vendor": "rune",
+    "pinned_source": "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90",
+    "archive_sha256": null,
+    "patch_applies_to_pinned_original": true,
+    "patched_files_reproduced": [
+      "Cargo.toml",
+      "src/el/tx.rs",
+      "src/window/cpu_frame.rs",
+      "src/window/create.rs",
+      "src/window/events.rs",
+      "src/window/handle.rs",
+      "src/window/native.rs",
+      "src/window/platform_sync.rs",
+      "src/window/shell_requests.rs",
+      "src/window/spec.rs",
+      "src/window/win.rs",
+      "src/window.rs"
+    ],
+    "upstream_crlf_to_lf_normalization_required": [],
+    "patch_sha256": "aeca49cea3a9e325781087266ecca84e98694d4c7d5802481ea5f9a09b87d66c"
+  },
+  {
+    "vendor": "rune-kit",
+    "pinned_source": "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90",
+    "archive_sha256": null,
+    "patch_applies_to_pinned_original": true,
+    "patched_files_reproduced": [
+      "src/kit.rs",
+      "src/neutral.rs",
+      "src/syntax.rs"
+    ],
+    "upstream_crlf_to_lf_normalization_required": [
+      "src/syntax.rs"
+    ],
+    "patch_sha256": "2cffa616695561b4c84501a97ca768d6a1315a870794ad8fbdb6a4074aa945cf"
+  },
+  {
+    "vendor": "vte",
+    "pinned_source": "vte 0.15.0",
+    "archive_sha256": "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd",
+    "patch_applies_to_pinned_original": true,
+    "patched_files_reproduced": [
+      "src/lib.rs"
+    ],
+    "upstream_crlf_to_lf_normalization_required": [],
+    "patch_sha256": "240e0d025aa53feb912e74061bb16155e4028acb9fee88a958290f757a444995"
+  },
+  {
+    "vendor": "trash",
+    "pinned_source": "trash 5.3.0",
+    "archive_sha256": "1e13ed7a76ae8b9053f33493745ebb4cd2e5ee1cccd9823bb96ec97b78ec4844",
+    "patch_applies_to_pinned_original": true,
+    "patched_files_reproduced": [
+      "src/windows.rs",
+      "src/freedesktop.rs"
+    ],
+    "upstream_crlf_to_lf_normalization_required": [],
+    "patch_sha256": "7271429a3b6ed97bf54e58531cc5d920fcc989ba0fcf37cdd1f2ce3411beeed6"
+  }
+]

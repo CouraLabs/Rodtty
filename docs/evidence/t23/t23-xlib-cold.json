@@ -1,0 +1,33 @@
+{
+  "active": 0,
+  "cold_fresh_processes": true,
+  "directories": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha"
+  ],
+  "host_pid": 822412,
+  "old_commands_not_replayed": true,
+  "output": [
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=822418\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/beta$ ",
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=822422\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-xlib-restoration/native-restoration/alpha$ "
+  ],
+  "passed": true,
+  "pids": [
+    822418,
+    822422
+  ],
+  "previous_pids": [
+    822309
+  ],
+  "session_ids": [
+    1,
+    2
+  ],
+  "titles": [
+    "\u203a_  Term beta",
+    "\u203a_  Term alpha"
+  ],
+  "window_backend": "Xlib",
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

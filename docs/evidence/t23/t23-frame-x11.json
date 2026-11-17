@@ -1,0 +1,236 @@
+{
+  "appearance_changes_preserved_session": true,
+  "arch": "x86_64",
+  "custom_frame": {
+    "compositor_input": {
+      "compositor_initial": {
+        "client": [
+          1256,
+          779,
+          1080,
+          720
+        ],
+        "frame": [
+          1256,
+          779,
+          1080,
+          720
+        ],
+        "minimized": false,
+        "noBorder": false,
+        "pid": 820256
+      },
+      "header_double_click": true,
+      "header_drag": {
+        "after": [
+          1286,
+          809,
+          1080,
+          720
+        ],
+        "before": [
+          1256,
+          779,
+          1080,
+          720
+        ]
+      },
+      "initial_native_state": {
+        "decorated": false,
+        "maximized": false,
+        "minimized": false,
+        "position": [
+          1256,
+          779
+        ],
+        "scale": 1.0,
+        "size": [
+          1080,
+          720
+        ]
+      },
+      "input_driver": "KWin Wayland fake-input",
+      "maximize_restore": true,
+      "maximized_edges_inactive": true,
+      "minimize_compositor_ack": true,
+      "minimize_restored_via": "compositor activation",
+      "minimized_native_state": {
+        "decorated": false,
+        "dirty": true,
+        "maximized": false,
+        "minimized": true,
+        "position": [
+          1236,
+          759
+        ],
+        "scale": 1.0,
+        "size": [
+          1195,
+          835
+        ],
+        "unsaved_prompt": false
+      },
+      "native_cancel_kept_draft": true,
+      "native_custom_close_prompt": true,
+      "passed": true,
+      "requested_backend": "x11",
+      "resize": [
+        {
+          "after": [
+            1286,
+            809,
+            1105,
+            720
+          ],
+          "before": [
+            1286,
+            809,
+            1080,
+            720
+          ],
+          "edge": "east"
+        },
+        {
+          "after": [
+            1286,
+            809,
+            1105,
+            745
+          ],
+          "before": [
+            1286,
+            809,
+            1105,
+            720
+          ],
+          "edge": "south"
+        },
+        {
+          "after": [
+            1286,
+            809,
+            1130,
+            770
+          ],
+          "before": [
+            1286,
+            809,
+            1105,
+            745
+          ],
+          "edge": "southeast"
+        },
+        {
+          "after": [
+            1266,
+            789,
+            1150,
+            790
+          ],
+          "before": [
+            1286,
+            809,
+            1130,
+            770
+          ],
+          "edge": "northwest"
+        },
+        {
+          "after": [
+            1266,
+            774,
+            1150,
+            805
+          ],
+          "before": [
+            1266,
+            789,
+            1150,
+            790
+          ],
+          "edge": "north"
+        },
+        {
+          "after": [
+            1251,
+            774,
+            1165,
+            805
+          ],
+          "before": [
+            1266,
+            774,
+            1150,
+            805
+          ],
+          "edge": "west"
+        },
+        {
+          "after": [
+            1251,
+            759,
+            1180,
+            820
+          ],
+          "before": [
+            1251,
+            774,
+            1165,
+            805
+          ],
+          "edge": "northeast"
+        },
+        {
+          "after": [
+            1236,
+            759,
+            1195,
+            835
+          ],
+          "before": [
+            1251,
+            759,
+            1180,
+            820
+          ],
+          "edge": "southwest"
+        }
+      ],
+      "restore_geometry": [
+        1256,
+        779,
+        1080,
+        720
+      ],
+      "undecorated": true
+    },
+    "initial_native_state": {
+      "decorated": false,
+      "maximized": false,
+      "minimized": false,
+      "position": [
+        1256,
+        779
+      ],
+      "scale": 1.0,
+      "size": [
+        1080,
+        720
+      ]
+    }
+  },
+  "editor_saved": true,
+  "family_mode_changes": 27,
+  "os": "linux",
+  "output_after_appearance_change": true,
+  "output_while_closed": true,
+  "passed": true,
+  "reopened_from_second_launch": true,
+  "same_session": true,
+  "theme_families_preserved_session": 9,
+  "unsaved_close_prompt": true,
+  "window_backend": "Xlib",
+  "window_closed": true,
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

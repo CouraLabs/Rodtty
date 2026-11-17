@@ -1,0 +1,24 @@
+[
+  {
+    "file": "autosave-minimum-policy.png",
+    "source_commit": "78b0e8d7310d4ee18810b7193d209124f7304bb4",
+    "binary_sha256": "63c62fb8805d025a46a753a90f5ebac1fef3e9781180ace5427108de1056d6e0",
+    "sha256": "d1f952bd24068974640f8dae7bc64b21651883021042104557c0e4b6c792bf1a",
+    "size": [
+      640,
+      360
+    ],
+    "ui_size": 15
+  },
+  {
+    "file": "autosave-minimum-delay.png",
+    "source_commit": "78b0e8d7310d4ee18810b7193d209124f7304bb4",
+    "binary_sha256": "63c62fb8805d025a46a753a90f5ebac1fef3e9781180ace5427108de1056d6e0",
+    "sha256": "9daf8da0fb2aff994a90ba61d13c685ea33f4b7f0a799eae2df955e2a06aa6f3",
+    "size": [
+      640,
+      360
+    ],
+    "ui_size": 15
+  }
+]

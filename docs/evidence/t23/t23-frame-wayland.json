@@ -1,0 +1,227 @@
+{
+  "appearance_changes_preserved_session": true,
+  "arch": "x86_64",
+  "custom_frame": {
+    "compositor_input": {
+      "compositor_initial": {
+        "client": [
+          1256.111111111111,
+          778.9375,
+          1080.0000000000002,
+          720
+        ],
+        "frame": [
+          1256.111111111111,
+          778.9375,
+          1080.0000000000002,
+          720
+        ],
+        "minimized": false,
+        "noBorder": false,
+        "pid": 819664
+      },
+      "header_double_click": true,
+      "header_drag": {
+        "after": [
+          1286.1111111111113,
+          808.9375,
+          1080,
+          720
+        ],
+        "before": [
+          1256.1111111111113,
+          778.9375,
+          1080,
+          720
+        ]
+      },
+      "initial_native_state": {
+        "decorated": false,
+        "maximized": false,
+        "minimized": null,
+        "position": null,
+        "scale": 1.5,
+        "size": [
+          1620,
+          1080
+        ]
+      },
+      "input_driver": "KWin Wayland fake-input",
+      "maximize_restore": true,
+      "maximized_edges_inactive": true,
+      "minimize_compositor_ack": true,
+      "minimize_restored_via": "compositor activation",
+      "minimized_native_state": {
+        "decorated": false,
+        "dirty": true,
+        "maximized": false,
+        "minimized": null,
+        "position": null,
+        "scale": 1.5,
+        "size": [
+          1793,
+          1259
+        ],
+        "unsaved_prompt": false
+      },
+      "native_cancel_kept_draft": true,
+      "native_custom_close_prompt": true,
+      "passed": true,
+      "requested_backend": "wayland",
+      "resize": [
+        {
+          "after": [
+            1286.1111111111113,
+            808.9375,
+            1105.333333333333,
+            720
+          ],
+          "before": [
+            1286.1111111111113,
+            808.9375,
+            1080,
+            720
+          ],
+          "edge": "east"
+        },
+        {
+          "after": [
+            1286.1111111111113,
+            808.9375,
+            1105.333333333333,
+            745.3333333333335
+          ],
+          "before": [
+            1286.1111111111113,
+            808.9375,
+            1105.333333333333,
+            720
+          ],
+          "edge": "south"
+        },
+        {
+          "after": [
+            1286.1111111111113,
+            808.9375,
+            1130,
+            771.3333333333335
+          ],
+          "before": [
+            1286.1111111111113,
+            808.9375,
+            1105.333333333333,
+            745.3333333333335
+          ],
+          "edge": "southeast"
+        },
+        {
+          "after": [
+            1266.1111111111113,
+            788.9375,
+            1150,
+            791.3333333333335
+          ],
+          "before": [
+            1286.1111111111113,
+            808.9375,
+            1130,
+            771.3333333333335
+          ],
+          "edge": "northwest"
+        },
+        {
+          "after": [
+            1266.1111111111113,
+            772.9375,
+            1150,
+            807.3333333333335
+          ],
+          "before": [
+            1266.1111111111113,
+            788.9375,
+            1150,
+            791.3333333333335
+          ],
+          "edge": "north"
+        },
+        {
+          "after": [
+            1250.7777777777785,
+            772.9375,
+            1165.333333333333,
+            807.3333333333335
+          ],
+          "before": [
+            1266.1111111111113,
+            772.9375,
+            1150,
+            807.3333333333335
+          ],
+          "edge": "west"
+        },
+        {
+          "after": [
+            1250.7777777777785,
+            756.9375,
+            1180,
+            823.3333333333335
+          ],
+          "before": [
+            1250.7777777777785,
+            772.9375,
+            1165.333333333333,
+            807.3333333333335
+          ],
+          "edge": "northeast"
+        },
+        {
+          "after": [
+            1235.4444444444453,
+            756.9375,
+            1195.333333333333,
+            839.3333333333335
+          ],
+          "before": [
+            1250.7777777777785,
+            756.9375,
+            1180,
+            823.3333333333335
+          ],
+          "edge": "southwest"
+        }
+      ],
+      "restore_geometry": [
+        1256.1111111111113,
+        778.9375,
+        1080,
+        720
+      ],
+      "undecorated": true
+    },
+    "initial_native_state": {
+      "decorated": false,
+      "maximized": false,
+      "minimized": null,
+      "position": null,
+      "scale": 1.5,
+      "size": [
+        1620,
+        1080
+      ]
+    }
+  },
+  "editor_saved": true,
+  "family_mode_changes": 27,
+  "os": "linux",
+  "output_after_appearance_change": true,
+  "output_while_closed": true,
+  "passed": true,
+  "reopened_from_second_launch": true,
+  "same_session": true,
+  "theme_families_preserved_session": 9,
+  "unsaved_close_prompt": true,
+  "window_backend": "Wayland",
+  "window_closed": true,
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

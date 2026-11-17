@@ -1,0 +1,24 @@
+{
+  "appearance_changes_preserved_session": true,
+  "arch": "x86_64",
+  "family_mode_changes": 27,
+  "os": "linux",
+  "output_after_appearance_change": true,
+  "output_while_closed": true,
+  "passed": true,
+  "reopened_from_second_launch": true,
+  "same_session": true,
+  "theme_families_preserved_session": 9,
+  "trash": {
+    "cancel_retained_files_and_buffers": true,
+    "dirty_folder_save_as_preserved": true,
+    "discard_applied_after_success": true,
+    "host_trash_used": true,
+    "isolated_fixture_only": true,
+    "unrelated_dirty_buffer_preserved": true
+  },
+  "window_backend": "Xlib",
+  "window_closed": true,
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

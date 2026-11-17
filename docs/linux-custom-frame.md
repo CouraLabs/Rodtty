@@ -68,7 +68,7 @@ show [Wayland](assets/linux-custom-frame-wayland.png) and
 
 The runtime suite separately checks header-child exclusion, control ordering and
 full bounds at the 640×360 minimum, Settings access, and preserving an unsaved
-editor after custom close/Cancel. The integrated serial suite passed 89 tests; strict clippy, backend-only compilation,
+editor after custom close/Cancel. The original frame-slice serial suite passed 89 tests (historical); strict clippy, backend-only compilation,
 formatting and desktop builds passed. Wide/minimum light/dark workspace and
 Settings renders were visually inspected. Native Linux evidence was collected under KWin
-with Wayland at 150% scale and actual Xlib; other compositors have not been run.
+with Wayland at 150% scale and actual Xlib; other compositors have not been run. The later [integrated qualification](integrated-qualification.md#native-evidence) refreshes both frame/lifecycle runs on the complete feature integration and records the current full-suite gates.

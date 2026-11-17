@@ -1,71 +1,50 @@
 # Desktop implementation report
 
-Validation date: 2026-11-16. Tested host: Linux x86-64 with Rust/Cargo 1.100.0.
+Validated on 2026-11-17, Linux x86-64, Rust/Cargo 1.100.0. The final redesign qualification, all 88 story mappings, exact source freshness, screenshots, and pending platform work are recorded in [integrated qualification](integrated-qualification.md). Earlier feasibility and per-ticket reports remain historical evidence.
 
-## Implemented behavior
+## Delivered workspace
 
-The Rune desktop now combines the terminal with a collapsible file explorer and a lightweight editor. The explorer opens at the active terminal's host directory and keeps one chosen root while nested folders expand in place. Follow Terminal reveals the active directory within that root and offers an explicit root change outside it. Hidden-file, Git-ignore and Follow Terminal preferences live in owner Settings JSON. Pane sizes, visibility, active pane, explorer root/expansions/selection, regular editor tabs and terminal-tab order/last directories persist in `~/.rodtty/workspace-state.json`, separately from owner preferences in `~/.rodtty/settings.json`. Workspace changes save periodically and at window close or Quit; temporary previews, unsaved draft text and terminal-title overrides are excluded.
+The native Rust/Rune desktop uses app-drawn themed chrome, independent terminal/editor tab strips, and resizable explorer/terminal/editor panes. Linux/Windows controls are on the right and macOS controls on the left. Empty header space drags and double-clicks maximize/restore; native edges/corners resize. Custom close uses the same dirty-file and session decisions as menus and shortcuts. See [Linux](linux-custom-frame.md), [Windows](windows-custom-frame.md), and [macOS](macos-custom-frame.md) adapters and their native qualification boundaries.
 
-Reopening a running host reattaches the same sessions and recent output. After Quit or restart, saved terminal tabs start fresh shells in their last directories without replaying commands. Behavior settings offers a live, persisted and independently resettable one-fresh-terminal startup choice; it uses the new-terminal directory preference when restoring an existing workspace, while first launch retains the normal startup directory. Changing that preference leaves running sessions intact. Missing saved terminal or explorer folders visibly fall back to the startup folder; missing editor files report an explanation while the remaining files open. Dirty-file decisions still run before close or Quit.
+The explorer collapses first as space narrows. Below 880 points, terminal/editor become switchable views, with one-action return to the terminal from files or Settings. The minimum window is 640×360. Tabs, sessions, drafts, and remembered pane sizes survive these switches. Tabs support dragging, overflow scrolling, middle-click, context actions, full-title tooltips, file artwork, parent disambiguation, and dirty indicators. A running application's terminal title is authoritative; clearing it restores the terminal icon / Term / current last-folder label. Workspace state does not override titles.
 
-The workspace uses a compact folder header, pane visibility controls, Settings access, and a keyboard-navigable action menu. Infrequent session/window actions live in the menu or Command Palette. Terminal and editor tab strips belong to their respective panes, with a larger initial terminal share and thin draggable dividers. The explorer collapses before the terminal/editor split; below 880 points, terminal and editor become switchable views. Files can reveal the collapsed explorer, and every compact editor or Settings view has a one-action return to the terminal. Resizing does not discard open buffers, terminal sessions, or requested pane widths/visibility. The existing OS window decorations remain until the dedicated window-chrome slice.
+Appearance separates nine theme families from Light / Dark / System, defaulting to Catppuccin/System. All eighteen pairs style chrome, controls, ANSI defaults, syntax, selection, focus, and Git diff roles immediately; program-selected extended/truecolor output remains intact. One Dark Pro Light is labelled as a Rodtty adaptation. [Palette sources and notices](../assets/themes/README.md) describe all pairs. Bundled Geist/Geist Mono plus searchable installed families, verified monospace terminal filtering, previews, fallback, and independent UI/terminal/editor sizes are live. The editor follows the terminal family. [Font notices](../assets/fonts/README.md) distinguish bundled coverage from host fallback.
 
-Settings opens as an editor-pane tab beside the terminal. Its sections are searchable, existing command/history/scrollback preferences save immediately and reset individually, and Open Settings JSON edits the actual owner file. Valid external edits update the open app; invalid edits retain the last valid configuration and show an explanation. The storage migration preserves original files, existing destinations, history/startup behavior, and both old and new owner-instance locks. Native workspace lifecycle regression checks passed on [Wayland](evidence/settings-storage-wayland.json) and [X11](evidence/settings-storage-x11.json) with isolated storage roots; Windows/macOS native runtime checks remain pending.
+The explorer keeps a stable root with expandable folders, keyboard/type navigation, offline file artwork, Git badges, hidden/ignore filters, and optional Follow Terminal. Following outside the root offers an explicit change. SSH leaves the explorer on host files. Single-click opens a clean reusable preview; editing, double-click, Enter, or explicit Open keeps it. Single-click retention is configurable. Create/copy/rename/move/Trash share context-menu and palette actions. Collisions offer Replace / Keep Both / Cancel; successful moves remap descendant editor and workspace paths while preserving drafts. Trash offers unsaved Save As / Discard / Cancel; Save As preserves work outside the removed subtree. Permanent fallback always requires explicit confirmation. Failed work retains files and buffers; background worker activity leaves terminal input available.
 
-The editor provides file tabs, syntax highlighting, undo/redo, find/replace, and saving for UTF-8 text files up to 2 MiB. Saves preserve BOMs, line endings, and file permissions. External changes reload clean buffers automatically; dirty buffers keep their edits and offer conflict resolution. Closing a dirty file/window or quitting offers Save, Discard, or Cancel. Unsaved drafts are not recovered after an application crash.
+The UTF-8 editor retains syntax, undo/redo, find/replace, and version-protected asynchronous saves for files up to 2 MiB. BOM, mixed line endings, permissions, and external-change protection remain covered. Clean files reload; dirty files retain edits and offer conflict resolution. Dirty closure offers Save / Discard / Cancel before lifecycle policy. Explicit Save is default. Opt-in delay/focus-loss autosave uses the same protected boundary, defers behind operations and owner decisions, and resumes at a moved path without resurrecting a deleted source. Diff inspection stays in the file context and does not trigger focus-loss saving.
 
-Autosave remains opt-in through searchable Editor Settings: Explicit Save, After Delay, or Editor Focus Loss. Delay and policy persist in owner preferences and apply live. All policies use the version-protected asynchronous save worker; request generations reject stale completions and later edits remain dirty. File operations and pending owner decisions defer autosave, and failed/cancelled generations do not repeatedly reopen prompts. Diff inspection does not trigger focus-loss saving or mutate the Git index.
+Host-installed Git supplies read-only Current (buffer↔HEAD), Unstaged (disk↔index), and Staged (index↔HEAD) views, including linked worktrees, untracked files, staged renames, and unborn repositories. Inline/split/Auto modes and hunk navigation remain available; Auto follows actual editor width. Inspection neither saves nor stages and uses no optional Git locks or external text-conversion drivers. Filesystem and Git work stay off the UI thread. See [ADR-0006](adr/0006-preserve-file-versions-and-inspect-host-git.md).
 
-Read-only Git inspection uses the host-installed Git executable and supports linked worktrees, untracked files, staged renames, and repositories without a first commit. Current compares the editable buffer with HEAD; Unstaged compares disk with the index; Staged compares the index with HEAD. Inline and side-by-side views include hunk navigation and automatic layout selection. Diff inspection does not save the buffer or modify Git's index.
+## Preferences and lifetime
 
-Filesystem work and Git subprocesses run outside the UI thread. Version checks prevent delayed reload/save results from replacing newer editor text. See [ADR-0006](adr/0006-preserve-file-versions-and-inspect-host-git.md).
+Searchable Settings occupies a dedicated editor tab and includes Appearance, Behavior, Keyboard Shortcuts, Terminal, Editor, Files, and Bundled Commands. Individual resets (including separate autosave policy and delay), shortcut recording/conflicts/unbinding, and effective bindings in the palette/help are available. Right-click defaults to Context Menu with Paste as an alternative; copy-on-selection defaults off. Focused editor/Settings clipboard handling and terminal Ctrl+C interrupts remain intact.
 
-## Validation
+Owner preferences save immediately at `~/.rodtty/settings.json`. Valid external edits apply live where supported; invalid edits retain the last valid configuration and explain the problem. Migration preserves originals, existing destinations, history/startup behavior, and owner-instance locks. Bundled-command/history/startup configuration retains per-new-session snapshots; appearance does not change running environments.
 
-| Check | Result |
-| --- | --- |
-| Formatting, strict Clippy, native debug build of all binaries | Passed |
-| Unit/runtime tests | 37 passed, including responsive pane/menu controls, preserved drafts and widths, live typography/appearance, explorer hierarchy, and real read-only Git comparisons |
-| File/Git integration tests | 12 passed, including conflict protection, BOM/mixed line endings, permissions/symlinks, separate buffer/disk/index/HEAD comparisons, linked worktrees, and index immutability |
-| Terminal integration tests, including real Vim and prompt-history error regression | 16 passed |
-| Wayland native editor save, unsaved window-close prompt, output while closed, and same-session relaunch | [Passed](evidence/desktop-wayland.json) |
-| X11 native editor save, unsaved window-close prompt, output while closed, and same-session relaunch | [Passed](evidence/desktop-x11.json) |
-| Compact workspace native lifecycle on Wayland and X11 | [Wayland passed](evidence/compact-workspace-wayland.json), [X11/Xlib passed](evidence/compact-workspace-x11.json); same session, background output, appearance changes, editor save, and dirty-close prompt |
-| Windows x86-64 MSVC backend and test compilation, without desktop feature | Passed |
-| Apple Silicon macOS backend and test compilation, without desktop feature | Passed |
-| Windows/macOS native GUI builds, runtime, clipboard, and window lifecycle | Pending |
+Separate `~/.rodtty/workspace-state.json` stores regular editor order/active file, terminal order/last directories/active tab, explorer root/expansions/selection, and pane sizes/visibility/focus. Periodic/lifecycle writes do not rewrite owner preferences. Previews, unsaved text, replayable commands, and title overrides are excluded. Missing saved paths explain fallback while the remaining workspace opens.
 
-Reproduce the local checks with:
+Window close defaults to Keep sessions running, with Ask each time and Quit alternatives. Terminal close offers Confirm running / Always confirm / Close immediately; explicit Quit retains running-command confirmation. Reopening reattaches surviving sessions with exact processes and output. After Quit/restart, saved tabs create fresh shells in last directories without replaying commands. One fresh terminal is an independent live/resettable startup choice; first launch retains the startup-directory contract.
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo build --locked --bins
-cargo test --locked --all-targets -- --test-threads=1 --include-ignored
-```
+## Executed qualification
 
-The real Vim test requires an installed `vim`. Use a fresh `RODTTY_HOME` for each native lifecycle check in a logged-in desktop session:
+The final serial suite passed **179 tests, zero failed or ignored**: 121 application/runtime, 20 file operations, 12 files/Git, 3 lifecycle/storage, 20 PTY (including real Vim), and 3 isolated host Trash. Formatting, strict application Clippy, binary builds, backend all-target checks, and Windows/Apple desktop all-target metadata checks passed. [Gate evidence](evidence/t23/gates.json) lists actual commands, test names, hashes, and source boundaries.
+
+Final feature-source Linux Wayland and actual Xlib native checks passed for eight-direction resizing, drag, minimize/maximize/restore, dirty close, installed fonts/fullscreen PTY resizing, session policies, isolated Trash, background output, same-session relaunch, and live/cold restoration. [Native reports](integrated-qualification.md#native-evidence) record observed backends rather than requested environment labels. Clipboard uses the exact earlier guarded T14 reports, explicitly labelled with their source freshness; its final empty-selection integration guard is covered by the current runtime suite.
+
+The [visual matrix](integrated-qualification.md#visual-evidence) covers all eighteen appearances at 1440×900 and 640×360, representative terminal/tree/selected editor/Settings/palette and real Git versions/layouts. Files, index bytes, and Git status remained unchanged. Live System Light→Dark→Light is exercised against the existing open Rune runtime at both sizes; native mode cycling separately retains the same session. These are distinct checks.
+
+Use the [README validation commands](../README.md#validation). Set `TMPDIR` and `GIT_CEILING_DIRECTORIES` to the same target-local directory; build binaries before focused Session tests. Native profiles belong on the binary's filesystem so utility launchers hard-link rather than copy binaries:
 
 ```sh
-RODTTY_HOME=/tmp/rodtty-desktop-check target/debug/rodtty --workspace-check /tmp/rodtty-desktop-check.json
+export TMPDIR="$PWD/target/native-tmp"
+export GIT_CEILING_DIRECTORIES="$TMPDIR"
+mkdir -p "$TMPDIR"
+RODTTY_HOME="$PWD/target/native-owner" target/debug/rodtty --workspace-check /tmp/workspace-check.json
 ```
 
-The restoration lifecycle harness uses two invocations with the same isolated `RODTTY_HOME`: first `--restoration-check /absolute/path/live.json`, then `--restoration-check /absolute/path/cold.json --restoration-cold /absolute/path/live.json`. Each invocation exits through explicit Quit. The first checks exact session/shell-process identity, recent output and tab order after closing the window and relaunching while One fresh terminal is selected. The second checks fresh shell PIDs, saved directory order/active tab, absent old output and absent stale title overrides after the stopped host starts again. Place native profiles on the build filesystem so companion binaries can be hard-linked. Linux Wayland and Xlib are separate native checks; Windows/macOS require their own native execution.
+Restoration uses the same isolated owner root for `--restoration-check /absolute/live.json`, then `--restoration-check /absolute/cold.json --restoration-cold /absolute/live.json`. Both exit through explicit Quit. Linux Trash additionally requires an isolated `XDG_DATA_HOME`; Windows/macOS Trash checks require a disposable account marker. See the qualification report for exact reproduction.
 
-## Interface previews
+## Remaining platform work
 
-The compact workspace was visually inspected at 1440×900 and 640×360 in light and dark appearances across terminal, editor, Settings, and real Git comparisons. Menu, split, inline, staged, and unstaged render variants were also checked; the fixture file and Git index were byte-for-byte unchanged after all inspection renders.
-
-The workspace, terminal, Settings, and diff scenes can be rendered at wide and minimum sizes with `--scene`, `--snap`, `--size`, and `--theme`. The `real-diff` developer scene reads the first changed text file from an actual Git repository supplied with `--cwd`; it uses the normal read-only inspection boundary. Sample-content scenes remain labelled. Native lifecycle evidence is linked separately above.
-
-![Terminal, explorer, and syntax-highlighted editor](assets/workspace-preview.png)
-
-![Inline Git diff at minimum window size](assets/git-diff-inline.png)
-
-![Side-by-side Git diff](assets/git-diff-split.png)
-
-## Remaining validation and scope
-
-The owner authorized continuing implementation while Windows and macOS hardware is unavailable. Backend cross-compilation is useful evidence but does not establish native desktop compatibility. The prepared native CI workflow has not been published or executed from this working tree.
-
-This remains a development build. Native Windows/macOS testing, broader clipboard/IME and terminal conformance checks, installers, and packaging remain. The editor deliberately starts with text editing rather than language servers or debugging. Git write operations and browser/PWA remote access, including LAN/Tailscale/Cloudflare configuration, remain later work under the [product scope](product-scope.md).
+Windows/macOS native GUI linking/execution, controls, installed fonts, clipboard, Trash, and lifecycle remain pending under the accepted Linux-first authorization. Metadata checks exercise real platform cfg adapters and test targets but establish no runtime compatibility. Other Linux compositors and a positive case-insensitive-volume alias run remain unexecuted. CI is prepared but has not been published/executed by this work. Broader IME/terminal conformance, installers, crash draft recovery, remote access, graphical Git writes, language servers, and large/other-encoding files remain outside this delivery.
