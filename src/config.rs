@@ -84,6 +84,8 @@ pub struct Config {
     pub scrollback: usize,
     pub history: bool,
     pub fonts: FontPreferences,
+    /// Stable action IDs mapped to owner bindings; an empty string unbinds an action.
+    pub shortcuts: std::collections::BTreeMap<String, String>,
     pub explorer: ExplorerPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
@@ -116,6 +118,7 @@ impl Default for Config {
             scrollback: 10_000,
             history: true,
             fonts: FontPreferences::default(),
+            shortcuts: Default::default(),
             explorer: ExplorerPreferences::default(),
             extra: Default::default(),
         }
@@ -128,6 +131,9 @@ impl Config {
             bail!("scrollback must be between 100 and 100000 lines");
         }
         self.fonts.validate()?;
+        for binding in self.shortcuts.values() {
+            validate_shortcut(binding)?;
+        }
         let utilities = brush_coreutils_builtins::bundled_commands();
         for name in &self.disabled {
             if !utilities.contains_key(name) {
@@ -323,4 +329,65 @@ impl FontPreferences {
             list(&self.terminal_family, "Geist Mono"),
         )
     }
+}
+
+/// The preference format is shared with backend builds, without a desktop dependency.
+fn validate_shortcut(binding: &str) -> Result<()> {
+    if binding.is_empty() {
+        return Ok(());
+    }
+    let parts: Vec<_> = binding.split('+').map(str::trim).collect();
+    let key = parts.last().unwrap().to_ascii_lowercase();
+    let named = [
+        "enter",
+        "tab",
+        "escape",
+        "backspace",
+        "delete",
+        "insert",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "left",
+        "right",
+        "up",
+        "down",
+        "space",
+        "plus",
+        "comma",
+        "minus",
+        "contextmenu",
+        "printscreen",
+        "scrolllock",
+        "pause",
+        "mousemiddle",
+        "mouseback",
+        "mouseforward",
+    ];
+    let function = key
+        .strip_prefix('f')
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=24).contains(&n));
+    let mut seen = std::collections::BTreeSet::new();
+    let invalid_modifier = parts[..parts.len() - 1].iter().any(|m| {
+        let modifier = m.to_ascii_lowercase();
+        let modifier = if modifier == "cmd" {
+            "super"
+        } else {
+            modifier.as_str()
+        };
+        !["ctrl", "alt", "shift", "super", "mod"].contains(&modifier)
+            || !seen.insert(modifier.to_owned())
+    });
+    let modified_mouse = key.starts_with("mouse") && parts.len() != 1;
+    if !(key.chars().count() == 1 && !key.chars().any(char::is_control)
+        || named.contains(&key.as_str())
+        || function)
+        || invalid_modifier
+        || modified_mouse
+    {
+        bail!("invalid shortcut: {binding}");
+    }
+    Ok(())
 }

@@ -635,22 +635,6 @@ impl State {
         }
     }
     fn file_key(&mut self, id: u64, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if event.is_command('s') && !event.mods.shift {
-            self.dispatch(AppAction::SaveEditor(Some(id)), tx);
-            return true;
-        }
-        if event.is_command('f') && !event.mods.shift {
-            self.dispatch(AppAction::FindEditor, tx);
-            return true;
-        }
-        if event.is_command('h') && !event.mods.shift {
-            self.dispatch(AppAction::ReplaceEditor, tx);
-            return true;
-        }
-        if event.is_command('w') && !event.mods.shift {
-            self.dispatch(AppAction::CloseEditor(Some(id)), tx);
-            return true;
-        }
         if event.key == Key::Function(3) {
             self.find_editor(false, tx);
             return true;
@@ -1446,6 +1430,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 if tab.saving { "Saving…" } else { "Save" },
                 move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
             )
+            .help(s.shortcut_help("save-file", "Save file"))
             .h(26.0),
         );
     pane = pane.child(controls).child(

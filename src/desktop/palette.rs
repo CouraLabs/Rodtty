@@ -154,7 +154,7 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
                             .grow(1.0),
                     )
                     .child(
-                        text(command.shortcut)
+                        text(state.shortcut_label(command.id))
                             .font(ui_style(10.0, 400.0))
                             .color(a.muted()),
                     ),

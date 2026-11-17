@@ -127,6 +127,14 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     section,
                     "font size ui font family terminal font family installed monospace preview",
                 )
+        } else if section == "Keyboard Shortcuts" {
+            s.commands.iter().any(|c| {
+                matches(
+                    s,
+                    section,
+                    &format!("{} {} {}", c.id, c.title, s.shortcut_label(c.id)),
+                )
+            })
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
@@ -205,6 +213,9 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             group = group.child(sizes.child(buttons));
         }
         match section {
+            "Keyboard Shortcuts" => {
+                group = group.child(shortcuts::list(s, a));
+            }
             "Appearance" if matches(s, section, THEME_SEARCH) => {
                 use crate::config::Appearance as Mode;
                 group = group

@@ -20,6 +20,7 @@ mod tabs;
 use appearance::Appearance;
 mod file_operations;
 mod settings;
+mod shortcuts;
 use fonts::{label as ui_label, ui as ui_style};
 mod workspace;
 use actions::AppAction;
@@ -69,6 +70,7 @@ struct State {
     settings: bool,
     settings_open: bool,
     settings_query: TextEdit,
+    shortcut_recording: Option<shortcuts::Recording>,
     theme_family_picker: rune_kit::ComboboxState,
     settings_error: Option<String>,
     settings_seen: Option<Vec<u8>>,
@@ -134,6 +136,7 @@ impl State {
             settings: false,
             settings_open: false,
             settings_query: TextEdit::new(""),
+            shortcut_recording: None,
             theme_family_picker: Default::default(),
             settings_error: (!config_valid).then(|| message.clone()),
             settings_poll: std::time::Instant::now(),
@@ -152,7 +155,8 @@ impl State {
     }
 
     pub(super) fn application_overlay_open(&self) -> bool {
-        self.pending.is_some()
+        self.shortcut_recording.is_some()
+            || self.pending.is_some()
             || self.palette.is_some()
             || self.workspace_menu
             || self.workspace.operation_context.is_some()
@@ -549,11 +553,12 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
             .fill(a.hover_bg()),
         );
     }
-    tabs = tabs
-        .child(tabs::scroll_strip(list, state, true))
-        .child(button(a, "new-tab", "+", |s, tx| {
+    tabs = tabs.child(tabs::scroll_strip(list, state, true)).child(
+        button(a, "new-tab", "+", |s, tx| {
             s.dispatch(AppAction::NewTerminal, tx)
-        }));
+        })
+        .help(state.shortcut_help("new-terminal", "New terminal tab")),
+    );
     tabs
 }
 
@@ -568,7 +573,7 @@ fn workspace_menu_items() -> [(&'static str, &'static str, AppAction); 6] {
     ]
 }
 
-fn workspace_menu(a: &Appearance) -> El {
+fn workspace_menu(state: &State, a: &Appearance) -> El {
     let mut menu = col()
         .key("workspace-menu-popover")
         .w(276.0)
@@ -586,6 +591,7 @@ fn workspace_menu(a: &Appearance) -> El {
     for (key, title, action) in workspace_menu_items() {
         menu = menu.child(
             button(a, key, title, move |s, tx| s.dispatch(action, tx))
+                .help(state.action_help(action, title))
                 .w_full()
                 .justify_start()
                 .px(12.0),
@@ -624,6 +630,13 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
     let folder = state.workspace.directory.as_ref().unwrap_or(&cwd);
     let mut root = col()
         .key("root")
+        .pointer_buttons([rune::PointerButton::Back, rune::PointerButton::Forward])
+        .on_background_press_tx(|s: &mut State, tx| {
+            s.dispatch_mouse_shortcut(tx.button(), tx);
+        })
+        .on_middle_press(|s: &mut State, tx| {
+            s.dispatch_mouse_shortcut(rune::PointerButton::Middle, tx);
+        })
         .on_layout(|s: &mut State, r| s.workspace.operation_viewport = (r[2], r[3]))
         .w_full()
         .h_full()
@@ -682,11 +695,14 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                     button(a, "files", "Files", |s, tx| {
                         s.dispatch(AppAction::ToggleExplorer, tx)
                     })
-                    .help(if show_explorer {
-                        "Hide file explorer"
-                    } else {
-                        "Show file explorer"
-                    })
+                    .help(state.shortcut_help(
+                        "toggle-explorer",
+                        if show_explorer {
+                            "Hide file explorer"
+                        } else {
+                            "Show file explorer"
+                        },
+                    ))
                     .fill(if show_explorer {
                         a.hover_bg()
                     } else {
@@ -771,9 +787,9 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
             .child(el().grow(1.0))
             .child(
                 text(if state.message.is_empty() {
-                    "Ctrl+Shift+P  Actions"
+                    format!("{}  Actions", state.shortcut_label("command-palette"))
                 } else {
-                    &state.message
+                    state.message.clone()
                 })
                 .font(ui_label())
                 .color(a.muted())
@@ -822,13 +838,16 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
         root = root.child(dialog);
     }
     if state.workspace_menu {
-        root = root.child(workspace_menu(a));
+        root = root.child(workspace_menu(state, a));
     }
     if let Some(dialog) = file_operations::view(state, a) {
         root = root.child(dialog);
     }
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
+    }
+    if let Some(recorder) = shortcuts::recorder(state, a) {
+        root = root.child(recorder);
     }
     root = root.children(fonts::overlays(state, a, width));
     root = root.children(settings::overlays(state, a, width));
@@ -893,6 +912,9 @@ pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>>
 }
 
 fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if state.shortcut_recording.is_some() {
+        return state.record_shortcut(event, tx);
+    }
     if state.tab_strips.context_open {
         return true;
     }
@@ -911,16 +933,6 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if state.palette.is_some() {
         return state.palette_key(event, tx);
-    }
-    if (if cfg!(target_os = "macos") {
-        event.mods.cmd
-    } else {
-        event.mods.ctrl
-    }) && event.mods.shift
-        && event.key == Key::Command('p')
-    {
-        state.dispatch(AppAction::CommandPalette, tx);
-        return true;
     }
     if state.workspace_menu {
         let items = workspace_menu_items();
@@ -946,19 +958,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return true;
     }
-    let app_modifier = event.mods.cmd && (cfg!(target_os = "macos") || event.mods.shift);
-    if app_modifier {
-        let action = match event.key {
-            Key::Command('t') => AppAction::NewTerminal,
-            Key::Command('w') => AppAction::EndTerminal,
-            Key::Command('q') => AppAction::Quit,
-            Key::Command('e') => AppAction::ToggleExplorer,
-            Key::Command('c') => AppAction::CopyTerminal,
-            Key::Command('v') => AppAction::PasteTerminal,
-            Key::Command('f') => AppAction::FindTerminal,
-            _ => return false,
-        };
-        state.dispatch(action, tx);
+    if state.dispatch_shortcut(event, tx) {
         return true;
     }
     if tx.focused().is_some() {
