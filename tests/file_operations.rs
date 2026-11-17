@@ -32,7 +32,7 @@ fn replacing_a_destination_link_replaces_the_link_without_touching_its_referent(
         request
             .execute(Some((ticket, CollisionChoice::Replace)))
             .unwrap(),
-        OperationOutcome::Completed(_)
+        OperationOutcome::Completed { .. }
     ));
     assert!(!fs::symlink_metadata(&target).unwrap().is_symlink());
     assert_eq!(fs::read_to_string(&target).unwrap(), "source contents");
@@ -90,7 +90,7 @@ fn copying_a_folder_keeps_both_or_replaces_the_whole_target_instead_of_merging()
         .execute(Some((ticket, CollisionChoice::KeepBoth)))
         .unwrap()
     {
-        OperationOutcome::Completed(path) => path,
+        OperationOutcome::Completed { path, .. } => path,
         other => panic!("expected copy, got {other:?}"),
     };
     assert_eq!(copied, root.path().join("project.v2 copy 2"));
@@ -107,7 +107,7 @@ fn copying_a_folder_keeps_both_or_replaces_the_whole_target_instead_of_merging()
         request
             .execute(Some((ticket, CollisionChoice::Replace)))
             .unwrap(),
-        OperationOutcome::Completed(_)
+        OperationOutcome::Completed { .. }
     ));
     assert_eq!(
         fs::read_to_string(target.join("nested/new.txt")).unwrap(),
@@ -133,7 +133,7 @@ fn folder_copies_preserve_relative_dangling_and_cyclic_links_without_traversal()
     }
     assert!(matches!(
         copy(&source, &target).execute(None).unwrap(),
-        OperationOutcome::Completed(_)
+        OperationOutcome::Completed { .. }
     ));
     assert_eq!(
         fs::read_link(target.join("relative")).unwrap(),
@@ -218,7 +218,10 @@ fn a_read_only_source_folder_can_be_copied_with_its_permissions_preserved() {
     fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
     let result = copy(&source, &target).execute(None);
     fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(matches!(result.unwrap(), OperationOutcome::Completed(_)));
+    assert!(matches!(
+        result.unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
     assert_eq!(
         fs::read_to_string(target.join("file.txt")).unwrap(),
         "readable"
@@ -275,7 +278,10 @@ fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_u
     while start.elapsed() < Duration::from_secs(15) {
         for event in worker.drain() {
             if let Event::FileOperation { id: 42, result } = event {
-                assert!(matches!(result.unwrap(), OperationOutcome::Completed(_)));
+                assert!(matches!(
+                    result.unwrap(),
+                    OperationOutcome::Completed { .. }
+                ));
                 copied = true;
             }
         }

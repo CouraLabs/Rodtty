@@ -9,6 +9,7 @@ pub(super) enum AppAction {
     CreateFile,
     CreateFolder,
     CopyFile,
+    RevealFileOperation,
     CommandPalette,
     NewTerminal,
     EndTerminal,
@@ -64,6 +65,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         }
     };
     for (id, title, shortcut, action) in [
+        (
+            "reveal-file-operation",
+            "Explorer: Reveal Last File Operation",
+            "",
+            AppAction::RevealFileOperation,
+        ),
         (
             "create-file",
             "Explorer: New File…",
@@ -298,6 +305,9 @@ impl State {
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
         match action {
+            AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
+                Some("No completed file operation")
+            }
             AppAction::CreateFile | AppAction::CreateFolder | AppAction::CopyFile
                 if self.workspace.operation_busy =>
             {
@@ -380,6 +390,21 @@ impl State {
                         crate::files::operations::FileOperation::Copy { source: entry.path },
                         tx,
                     );
+                }
+            }
+            AppAction::RevealFileOperation => {
+                if let Some(path) = self.workspace.operation_result.clone() {
+                    if self
+                        .workspace
+                        .directory
+                        .as_ref()
+                        .is_none_or(|root| !path.starts_with(root))
+                        && let Some(parent) = path.parent()
+                    {
+                        self.navigate(parent.to_owned());
+                    }
+                    self.workspace.layout.explorer = true;
+                    self.reveal_file_result(path, tx);
                 }
             }
             AppAction::CommandPalette => self.open_palette(tx),

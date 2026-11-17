@@ -139,6 +139,13 @@ impl State {
         }
     }
 
+    pub(super) fn application_overlay_open(&self) -> bool {
+        self.pending.is_some()
+            || self.palette.is_some()
+            || self.workspace_menu
+            || self.workspace.operation_context.is_some()
+    }
+
     fn active(&self) -> Option<&Session> {
         self.sessions.get(self.active)
     }
@@ -751,11 +758,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     }
     root = root.children(fonts::overlays(state, a, width));
     root.on_paste(|s: &mut State, content, _| {
-        if s.pending.is_none()
-            && s.palette.is_none()
-            && !s.workspace_menu
-            && s.workspace.terminal_focus
-        {
+        if !s.application_overlay_open() && s.workspace.terminal_focus {
             s.paste(content);
         }
     })
@@ -1059,11 +1062,7 @@ pub fn run() -> Result<()> {
                 raw.split('(').next().unwrap_or("unknown").to_owned();
         })
         .on_ime(|s, event, _| {
-            if s.pending.is_some()
-                || s.palette.is_some()
-                || s.workspace_menu
-                || !s.workspace.terminal_focus
-            {
+            if s.application_overlay_open() || !s.workspace.terminal_focus {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {

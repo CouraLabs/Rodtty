@@ -31,7 +31,10 @@ pub struct Collision {
 }
 #[derive(Debug)]
 pub enum OperationOutcome {
-    Completed(PathBuf),
+    Completed {
+        request: OperationRequest,
+        path: PathBuf,
+    },
     Collision(Collision),
     Cancelled,
 }
@@ -148,7 +151,10 @@ impl OperationRequest {
             }
             return Err(error);
         }
-        Ok(OperationOutcome::Completed(target))
+        Ok(OperationOutcome::Completed {
+            request: self,
+            path: target,
+        })
     }
 }
 

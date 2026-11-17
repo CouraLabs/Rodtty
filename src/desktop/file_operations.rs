@@ -104,6 +104,7 @@ impl State {
             decision,
         }) {
             self.workspace.operation_busy = true;
+            self.workspace.operation_result = None;
             self.pending = None;
             self.workspace.operation_error = None;
             tx.blur();
@@ -142,8 +143,14 @@ impl State {
                 self.pending = Some(Pending::Operation(OperationPrompt::Collision(collision)));
                 tx.focus_when_shown("operation-cancel", false);
             }
-            Ok(OperationOutcome::Completed(path)) => {
-                self.message = format!("Created {}", path.display());
+            Ok(OperationOutcome::Completed { request, path }) => {
+                let verb = if matches!(request.operation, FileOperation::Copy { .. }) {
+                    "Copied"
+                } else {
+                    "Created"
+                };
+                self.message = format!("{verb} {}", path.display());
+                self.workspace.operation_result = Some(path.clone());
                 self.reveal_file_result(path, tx);
             }
             Ok(OperationOutcome::Cancelled) => self.message = "File operation cancelled.".into(),
@@ -214,7 +221,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     s.dispatch(action, tx);
                 })
                 .w_full()
-                .items_start()
+                .justify_start()
                 .opacity(if enabled { 1.0 } else { 0.45 }),
             );
         }

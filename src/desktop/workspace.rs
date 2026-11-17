@@ -63,6 +63,7 @@ pub(super) struct Workspace {
     pub entries: Vec<Entry>,
     pub(super) tree: TreeModel<TreeEntry>,
     pub(super) operation_busy: bool,
+    pub(super) operation_result: Option<PathBuf>,
     pub(super) operation_id: u64,
     pub(super) operation_name: TextEdit,
     pub(super) operation_destination: TextEdit,
@@ -119,6 +120,7 @@ impl Default for Workspace {
             entries: Vec::new(),
             tree: TreeModel::new().key("file-list"),
             operation_busy: false,
+            operation_result: None,
             operation_id: 0,
             operation_name: TextEdit::new(""),
             operation_destination: TextEdit::new(""),
@@ -2057,7 +2059,7 @@ mod tests {
         );
         click(&mut runtime, "operation-submit");
         wait_runtime(&mut runtime, |s| {
-            !s.workspace.operation_busy && s.message.starts_with("Created")
+            !s.workspace.operation_busy && s.message.starts_with("Copied")
         });
         assert_eq!(
             std::fs::read_to_string(destination.join("source/nested/file.txt")).unwrap(),
@@ -2353,6 +2355,92 @@ mod tests {
         assert!(runtime.find("explorer").is_some());
         assert!(runtime.find("terminal-pane").is_some());
         assert!(runtime.find("settings-search").is_some());
+    }
+
+    #[test]
+    fn a_small_window_with_large_ui_text_can_create_a_file_by_keyboard() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        state.config.fonts.ui_size = 24.0;
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.set_full_keyboard_access(true);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
+        runtime.frame(1.0);
+        press(
+            &mut runtime,
+            Key::Text("large.txt".into()),
+            Default::default(),
+        );
+        for _ in 0..3 {
+            press(&mut runtime, Key::Tab, Default::default());
+        }
+        runtime.settle_all();
+        runtime.frame(1.0);
+        let rect = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("operation-submit"))
+            .unwrap()
+            .rect;
+        assert!(
+            rect[1] >= 0.0 && rect[1] + rect[3] <= 360.0,
+            "focused Create control must be visible: {rect:?}"
+        );
+        press(&mut runtime, Key::Text(" ".into()), Default::default());
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Created")
+        });
+        assert_eq!(std::fs::read(root.path().join("large.txt")).unwrap(), b"");
+    }
+
+    #[test]
+    fn copied_items_outside_the_root_offer_an_explicit_reveal_action() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let source = root.path().join("notes.txt");
+        std::fs::write(&source, "copied notes").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.frame(1.0);
+        let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(1.0);
+        click(&mut runtime, "context-copy-file");
+        fill(
+            &mut runtime,
+            "operation-destination",
+            outside.path().to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Copied")
+        });
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(root.path())
+        );
+        click(&mut runtime, "explorer-reveal-result");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "notes.txt")
+        });
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(outside.path())
+        );
+        assert!(
+            runtime
+                .find(outside.path().join("notes.txt").to_str().unwrap())
+                .is_some()
+        );
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "copied notes");
     }
 
     #[test]
