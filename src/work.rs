@@ -24,6 +24,11 @@ pub struct Layout {
     pub editor: bool,
     pub files: Vec<PathBuf>,
     pub active_file: Option<PathBuf>,
+    /// Ordered last directories, never commands, labels, or process identities.
+    pub terminals: Vec<PathBuf>,
+    pub active_terminal: usize,
+    pub terminal_focus: bool,
+    pub selected_path: Option<PathBuf>,
 }
 impl Default for Layout {
     fn default() -> Self {
@@ -39,6 +44,10 @@ impl Default for Layout {
             editor: true,
             files: Vec::new(),
             active_file: None,
+            terminals: Vec::new(),
+            active_terminal: 0,
+            terminal_focus: true,
+            selected_path: None,
         }
     }
 }
