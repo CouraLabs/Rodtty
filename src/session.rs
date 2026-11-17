@@ -21,6 +21,7 @@ pub struct TerminalEvents {
     pub title: String,
     responses: Vec<Vec<u8>>,
     command_running: bool,
+    activity_tag: String,
 }
 
 impl vt100::Callbacks for TerminalEvents {
@@ -46,8 +47,15 @@ impl vt100::Callbacks for TerminalEvents {
                     }
                 }
             }
-            [b"133", b"C"] => self.command_running = true,
-            [b"133", b"A"] => self.command_running = false,
+            [b"777", b"rodtty", tag, phase]
+                if !self.activity_tag.is_empty() && *tag == self.activity_tag.as_bytes() =>
+            {
+                match *phase {
+                    b"C" => self.command_running = true,
+                    b"A" => self.command_running = false,
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -149,6 +157,7 @@ impl Session {
                 config.scrollback,
                 TerminalEvents {
                     command_running: true,
+                    activity_tag: profile.activity_tag.clone(),
                     ..Default::default()
                 },
             ),

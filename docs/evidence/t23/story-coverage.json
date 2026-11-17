@@ -912,7 +912,16 @@
       "native_reports": [],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::workspace::tests::double_clicking_a_symlink_retains_the_canonical_preview_and_persists_it"
+        ],
+        "native_reports": [],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 49,
@@ -948,7 +957,16 @@
       "native_reports": [],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::workspace::tests::double_clicking_a_symlink_retains_the_canonical_preview_and_persists_it"
+        ],
+        "native_reports": [],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 51,
@@ -1715,7 +1733,23 @@
       "native_reports": [],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 65,
@@ -1864,7 +1898,21 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "public_prompt_markers_cannot_hide_a_running_builtin",
+          "other_sessions_activity_markers_cannot_hide_a_running_builtin",
+          "command_confirmation_distinguishes_idle_builtin_foreground_background_interrupt_and_exit"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-session-policy.json",
+          "../review-fixes/review-fixes-xlib-session-policy.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 69,
@@ -1885,7 +1933,21 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "public_prompt_markers_cannot_hide_a_running_builtin",
+          "other_sessions_activity_markers_cannot_hide_a_running_builtin",
+          "command_confirmation_distinguishes_idle_builtin_foreground_background_interrupt_and_exit"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-session-policy.json",
+          "../review-fixes/review-fixes-xlib-session-policy.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 70,
@@ -2133,7 +2195,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 81,
@@ -2156,7 +2234,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 82,
@@ -2179,7 +2273,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 83,
@@ -2202,7 +2312,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 84,
@@ -2225,7 +2351,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 85,
@@ -2248,7 +2390,23 @@
       ],
       "visual_matrix": "appearance-matrix.json",
       "platform_limit": "Windows/macOS native GUI/runtime pending; real adapters and all-target metadata passed. Other Linux compositors and positive case-insensitive alias runtime pending.",
-      "clipboard_freshness": null
+      "clipboard_freshness": null,
+      "review_fix_evidence": {
+        "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+        "gate_evidence": "../review-fixes/gates.json",
+        "executed_tests": [
+          "desktop::restoration::tests::regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts",
+          "desktop::restoration::tests::cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible",
+          "desktop::restoration::tests::cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands"
+        ],
+        "native_reports": [
+          "../review-fixes/review-fixes-wayland-live.json",
+          "../review-fixes/review-fixes-wayland-cold.json",
+          "../review-fixes/review-fixes-xlib-live.json",
+          "../review-fixes/review-fixes-xlib-cold.json"
+        ],
+        "note": "Supplemental post-review evidence; original visual/native references remain historical."
+      }
     },
     {
       "story": 86,

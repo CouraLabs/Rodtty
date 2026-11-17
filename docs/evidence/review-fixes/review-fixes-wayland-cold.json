@@ -1,0 +1,50 @@
+{
+  "active": 0,
+  "cold_fresh_processes": true,
+  "directories": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/beta",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/alpha"
+  ],
+  "editor_files": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/alpha/retained.txt"
+  ],
+  "host_pid": 897406,
+  "old_commands_not_replayed": true,
+  "output": [
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/re\n/beta$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=897412\nrodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/beta$ ",
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/alpha$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=897416\nrodtty:~/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/alpha$ "
+  ],
+  "panes": {
+    "editor_share": 0.6100000143051147,
+    "editor_visible": true,
+    "explorer_revealed": true,
+    "explorer_visible": true,
+    "explorer_width": 310.0,
+    "terminal_focus": false
+  },
+  "passed": true,
+  "pids": [
+    897412,
+    897416
+  ],
+  "preview_omitted_on_cold_start": true,
+  "previous_pids": [
+    897317
+  ],
+  "regular_editor_and_panes_restored": true,
+  "regular_files": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/review-fixes/native-wayland-restoration/native-restoration/alpha/retained.txt"
+  ],
+  "session_ids": [
+    1,
+    2
+  ],
+  "titles": [
+    "\u203a_  Term beta",
+    "\u203a_  Term alpha"
+  ],
+  "window_backend": "Wayland",
+  "production_source_commit": "b5565f3a1ea9d2ee751315385fe4855ce61df25a",
+  "qualification_date": "2026-11-17",
+  "binary_sha256": "e8524d89c4427101ba9ccfc0bde0866bba08cadc69487a2aea2b56a1261ef9f6"
+}
