@@ -4814,6 +4814,104 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn autosave_does_not_preempt_removal_save_as_collision_or_cancel() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        if std::env::var_os("RODTTY_AUTOSAVE_REMOVAL_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "desktop::workspace::tests::autosave_does_not_preempt_removal_save_as_collision_or_cancel", "--nocapture"])
+                .env("RODTTY_AUTOSAVE_REMOVAL_CHILD", "1")
+                .env("XDG_DATA_HOME", root.path().join("data"))
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let source = root.path().join("draft.txt");
+        let target = root.path().join("occupied.txt");
+        std::fs::write(&source, "original").unwrap();
+        std::fs::write(&target, "existing target").unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"after_delay","delay_ms":100}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved draft");
+        runtime.update(|s, tx| {
+            s.workspace.tree.select(source.to_str().unwrap());
+            s.dispatch(AppAction::TrashFile, tx);
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+        click(&mut runtime, "removal-confirm");
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+        click(&mut runtime, "removal-save-as");
+        fill(
+            &mut runtime,
+            "removal-save-as-path",
+            target.to_str().unwrap(),
+        );
+        click(&mut runtime, "removal-save-as-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "existing target");
+        click(&mut runtime, "operation-cancel");
+        pump_autosave(&mut runtime, Duration::from_millis(200));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved draft");
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        assert!(runtime.state.workspace.removal.is_none());
+        fill(&mut runtime, "file-editor-1", "later edit");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "later edit");
+        fill(&mut runtime, "file-editor-1", "preserved by Save As");
+        runtime.update(|s, tx| {
+            s.workspace.tree.select(source.to_str().unwrap());
+            s.dispatch(AppAction::TrashFile, tx);
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-confirm");
+        click(&mut runtime, "removal-save-as");
+        let preserved = root.path().join("preserved.txt");
+        fill(
+            &mut runtime,
+            "removal-save-as-path",
+            preserved.to_str().unwrap(),
+        );
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "later edit");
+        click(&mut runtime, "removal-save-as-submit");
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.removal.is_none() && !s.workspace.operation_busy
+        });
+        assert!(!source.exists());
+        assert_eq!(
+            std::fs::read_to_string(&preserved).unwrap(),
+            "preserved by Save As"
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, preserved);
+        assert!(!runtime.state.workspace.tabs[0].dirty());
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert!(!source.exists());
+        let trash =
+            PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap()).join("Trash/files/draft.txt");
+        assert_eq!(std::fs::read_to_string(trash).unwrap(), "later edit");
+    }
+
     #[test]
     fn autosave_waits_for_rename_and_saves_the_new_path_without_recreating_the_source() {
         use super::super::tests::runtime_for;

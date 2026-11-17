@@ -65,7 +65,11 @@ impl State {
             }
         }
         // File operations and owner decisions retain their authority over saves.
-        if self.workspace.operation_busy || self.pending.is_some() || self.shutdown_saved {
+        if self.workspace.operation_busy
+            || self.workspace.removal.is_some()
+            || self.pending.is_some()
+            || self.shutdown_saved
+        {
             return false;
         }
         let due: Vec<_> = self
