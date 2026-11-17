@@ -87,10 +87,12 @@ pub enum Job {
     FileOperation {
         id: u64,
         request: files::operations::OperationRequest,
-        decision: Option<(
-            files::operations::Collision,
-            files::operations::CollisionChoice,
-        )>,
+        decision: Option<
+            Box<(
+                files::operations::Collision,
+                files::operations::CollisionChoice,
+            )>,
+        >,
     },
     Reload {
         id: u64,
@@ -197,7 +199,9 @@ impl Worker {
                         decision,
                     } => Event::FileOperation {
                         id,
-                        result: request.execute(decision).map_err(|e| format!("{e:#}")),
+                        result: request
+                            .execute(decision.map(|d| *d))
+                            .map_err(|e| format!("{e:#}")),
                     },
                     Job::Reload { id, revision, path } => Event::Reload {
                         id,

@@ -66,6 +66,7 @@ pub(super) struct Workspace {
     pub(super) tree: TreeModel<TreeEntry>,
     pub(super) operation_busy: bool,
     pub(super) removal: Option<super::removal::RemovalState>,
+    pub(super) operation_moving: bool,
     pub(super) operation_result: Option<PathBuf>,
     pub(super) operation_id: u64,
     pub(super) operation_name: TextEdit,
@@ -110,6 +111,11 @@ pub(super) struct Workspace {
     drag_width: f32,
     drag_share: f32,
 }
+impl Workspace {
+    pub(super) fn has_pending_opens(&self) -> bool {
+        !self.opening.is_empty()
+    }
+}
 impl Default for Workspace {
     fn default() -> Self {
         Self {
@@ -125,6 +131,7 @@ impl Default for Workspace {
             tree: TreeModel::new().key("file-list"),
             operation_busy: false,
             removal: None,
+            operation_moving: false,
             operation_result: None,
             operation_id: 0,
             operation_name: TextEdit::new(""),
@@ -368,6 +375,65 @@ impl State {
         self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
     }
 
+    /// Change only path references after a committed move. Keeping the TextEdit
+    /// and saved version retains selection, undo, encoding, and conflict checks.
+    pub(super) fn remap_moved_paths(&mut self, source: &std::path::Path, target: &std::path::Path) {
+        fn remap(path: &mut PathBuf, source: &std::path::Path, target: &std::path::Path) {
+            if let Ok(relative) = path.strip_prefix(source) {
+                *path = if relative.as_os_str().is_empty() {
+                    target.to_owned()
+                } else {
+                    target.join(relative)
+                };
+            }
+        }
+        let w = &mut self.workspace;
+        for tab in &mut w.tabs {
+            if tab.document.path.starts_with(source) {
+                remap(&mut tab.document.path, source, target);
+                tab.baseline += 1;
+                tab.revision += 1;
+                tab.disk_error = None;
+            } else if tab.document.path.starts_with(target) {
+                // Ignore scans from before replacement. The next new-path scan
+                // refreshes clean destinations and protects dirty destinations.
+                tab.baseline += 1;
+            }
+        }
+        for path in &mut w.layout.expanded_folders {
+            remap(path, source, target);
+        }
+        for path in [
+            &mut w.directory,
+            &mut w.layout.explorer_directory,
+            &mut w.layout.active_file,
+            &mut w.outside_root,
+            &mut w.pending_reveal,
+            &mut w.revealed_directory,
+            &mut w.restore_active,
+            &mut w.latest_activation,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            remap(path, source, target);
+        }
+        for path in &mut w.layout.files {
+            remap(path, source, target);
+        }
+        if let Some(root) = &w.directory {
+            w.address.replace_text(root.to_string_lossy());
+        }
+        // Old rows must not reintroduce old expansion keys before the next scan.
+        w.entries.clear();
+        w.tree.clear();
+        w.tree_errors.clear();
+        w.tree_dirty = true;
+        w.scan_token += 1;
+        w.last_scan = Instant::now() - Duration::from_secs(3);
+        self.invalidate_diff(true);
+    }
+
     pub(super) fn reveal_file_result(&mut self, path: PathBuf, tx: &mut Tx) {
         if let Some(root) = self.workspace.directory.clone()
             && path.starts_with(&root)
@@ -534,8 +600,8 @@ impl State {
     /// Common activation boundary: restoration and explicit Open keep a file;
     /// explorer inspection may reuse only a clean, idle temporary tab.
     pub(super) fn open_file_with_preview(&mut self, path: PathBuf, preview: bool) {
-        if self.workspace.removal.is_some() {
-            self.message = "Finish or cancel the deletion first.".into();
+        if self.workspace.removal.is_some() || self.workspace.operation_moving {
+            self.message = "Finish the current file operation first.".into();
             return;
         }
         self.workspace.latest_activation = Some(path.clone());
@@ -703,8 +769,8 @@ impl State {
         }
     }
     pub(super) fn save_file(&mut self, id: u64, overwrite: bool, after: Option<Action>) {
-        if self.workspace.removal.is_some() {
-            self.message = "Finish or cancel the deletion first.".into();
+        if self.workspace.removal.is_some() || self.workspace.operation_moving {
+            self.message = "Finish the current file operation first.".into();
             return;
         }
         let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id) else {
@@ -744,7 +810,8 @@ impl State {
         self.request_action(action, tx);
     }
     fn reload_external(&mut self, id: u64) {
-        if self.workspace.removal.is_some() {
+        if self.workspace.removal.is_some() || self.workspace.operation_moving {
+            self.message = "Finish the current file operation first.".into();
             return;
         }
         if let Some(tab) = self.workspace.tabs.iter().find(|t| t.id == id)
@@ -783,22 +850,6 @@ impl State {
         }
     }
     fn file_key(&mut self, id: u64, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if event.is_command('s') && !event.mods.shift {
-            self.dispatch(AppAction::SaveEditor(Some(id)), tx);
-            return true;
-        }
-        if event.is_command('f') && !event.mods.shift {
-            self.dispatch(AppAction::FindEditor, tx);
-            return true;
-        }
-        if event.is_command('h') && !event.mods.shift {
-            self.dispatch(AppAction::ReplaceEditor, tx);
-            return true;
-        }
-        if event.is_command('w') && !event.mods.shift {
-            self.dispatch(AppAction::CloseEditor(Some(id)), tx);
-            return true;
-        }
         if event.key == Key::Function(3) {
             self.find_editor(false, tx);
             return true;
@@ -1193,6 +1244,7 @@ impl State {
             }
         }
         if self.workspace.removal.is_none()
+            && !self.workspace.operation_moving
             && !self.workspace.scan_busy
             && self.workspace.last_scan.elapsed() > Duration::from_secs(1)
         {
@@ -1222,6 +1274,7 @@ impl State {
             }
         }
         if self.workspace.removal.is_none()
+            && !self.workspace.operation_moving
             && self.workspace.diff_pending.is_none()
             && self.workspace.layout.editor
             && self.workspace.last_diff.elapsed() > Duration::from_secs(2)
@@ -1652,6 +1705,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 if tab.saving { "Saving…" } else { "Save" },
                 move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
             )
+            .help(s.shortcut_help("save-file", "Save file"))
             .h(26.0),
         );
     pane = pane.child(controls).child(
@@ -3452,6 +3506,445 @@ mod tests {
             },
         );
         press(runtime, Key::Text(value.into()), Default::default());
+    }
+
+    #[test]
+    fn explorer_replace_refreshes_a_clean_destination_and_preserves_preview_identity() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let target = root.path().join("target.txt");
+        std::fs::write(&source, "source disk").unwrap();
+        std::fs::write(&target, "target disk").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, source.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 1);
+        runtime.update(|s, _| s.open_file(target.clone()));
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
+        let active = runtime.state.workspace.tabs[runtime.state.workspace.active].id;
+        assert!(runtime.state.workspace.tabs[0].preview);
+        runtime.update(|s, _| {
+            s.workspace.tree.select(source.to_str().unwrap());
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::RenameFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "target.txt");
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "operation-replace");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.workspace.tabs[1].edit.text == "source disk"
+        });
+        assert!(!source.exists());
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, target);
+        assert_eq!(runtime.state.workspace.tabs[0].id, 1);
+        assert!(runtime.state.workspace.tabs[0].preview);
+        assert_eq!(runtime.state.workspace.tabs[1].id, 2);
+        assert!(!runtime.state.workspace.tabs[1].dirty());
+        assert_eq!(
+            runtime.state.workspace.tabs[runtime.state.workspace.active].id,
+            active
+        );
+        assert_eq!(Layout::load(root.path()).unwrap().files, vec![target]);
+    }
+
+    #[test]
+    fn explorer_move_cancel_and_failure_leave_paths_tree_and_drafts_unchanged() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let target = root.path().join("target.txt");
+        std::fs::write(&source, "source disk").unwrap();
+        std::fs::write(&target, "target disk").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved source");
+        for fail in [false, true] {
+            runtime.update(|s, _| {
+                s.workspace.tree.select(source.to_str().unwrap());
+            });
+            runtime.update(|s, tx| s.dispatch(AppAction::RenameFile, tx));
+            runtime.frame(1.0);
+            fill(&mut runtime, "operation-name", "target.txt");
+            if fail {
+                fill(
+                    &mut runtime,
+                    "operation-destination",
+                    root.path().join("absent").to_str().unwrap(),
+                );
+            }
+            click(&mut runtime, "operation-submit");
+            wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+            if fail {
+                assert!(runtime.state.message.starts_with("File operation failed"));
+            } else {
+                click(&mut runtime, "operation-cancel");
+            }
+            assert_eq!(runtime.state.workspace.tabs[0].document.path, source);
+            assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved source");
+            assert_eq!(std::fs::read_to_string(&source).unwrap(), "source disk");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "target disk");
+            assert!(runtime.find(source.to_str().unwrap()).is_some());
+        }
+    }
+
+    #[test]
+    fn explorer_move_waits_for_pending_io_and_keeps_external_conflict_and_diff_protection() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let target = root.path().join("target.txt");
+        let other = root.path().join("other.txt");
+        std::fs::write(&source, "original version").unwrap();
+        std::fs::write(&other, "other file").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved source");
+        runtime.update(|s, _| {
+            s.workspace.tree.select(source.to_str().unwrap());
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::RenameFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "target.txt");
+        runtime.update(|s, tx| {
+            s.open_file(other.clone());
+            s.submit_file_operation(tx);
+            assert!(!s.workspace.operation_busy);
+            assert!(s.message.contains("Wait for open files and saves"));
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.has_pending_opens());
+        runtime.update(|s, tx| {
+            s.save_file(2, false, None);
+            s.submit_file_operation(tx);
+            assert!(!s.workspace.operation_busy);
+            assert!(s.message.contains("Wait for open files and saves"));
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[1].saving);
+        std::fs::write(&source, "external version").unwrap();
+        runtime.update(|s, tx| {
+            s.submit_file_operation(tx);
+            assert!(s.workspace.operation_moving);
+            s.save_file(1, false, None);
+            assert!(!s.workspace.tabs[0].saving);
+            s.open_file_with_preview(root.path().join("never-opened.txt"), true);
+            assert!(!s.workspace.has_pending_opens());
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, target);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved source");
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert!(matches!(
+            runtime.state.pending,
+            Some(Pending::File(FilePrompt::Conflict { id: 1, .. }))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "external version"
+        );
+        click(&mut runtime, "file-cancel");
+        runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+        runtime.update(|s, tx| s.dispatch(AppAction::Compare(Comparison::Current), tx));
+        assert!(matches!(
+            runtime.state.workspace.tabs[0].mode,
+            View::Diff(Comparison::Current)
+        ));
+        runtime.frame(1.0);
+        assert!(
+            runtime.find("file-editor-1").is_none(),
+            "moved diff remains read-only"
+        );
+    }
+
+    #[test]
+    fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let target = root.path().join("target.txt");
+        std::fs::write(&source, "source disk").unwrap();
+        std::fs::write(&target, "target disk").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.open_file(target.clone());
+        wait(&mut state, |s| s.workspace.tabs.len() == 2);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-2", "destination draft");
+        runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+        fill(&mut runtime, "file-editor-1", "source draft");
+        // Right-click selection exercises the shared Rename/Move context actions.
+        let (x, y) = runtime.find(source.to_str().unwrap()).unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(1.0);
+        click(&mut runtime, "context-move-file");
+        fill(&mut runtime, "operation-name", "target.txt");
+        // The entered destination may resolve to an already-open editor even
+        // when its spelling differs from that editor's canonical path.
+        std::fs::create_dir(root.path().join("destination")).unwrap();
+        fill(
+            &mut runtime,
+            "operation-destination",
+            root.path().join("destination/..").to_str().unwrap(),
+        );
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| {
+            matches!(
+                s.pending,
+                Some(Pending::Operation(
+                    file_operations::OperationPrompt::Collision(_)
+                ))
+            )
+        });
+        click(&mut runtime, "operation-replace");
+        assert!(
+            runtime
+                .state
+                .message
+                .contains("Destination has unsaved edits")
+        );
+        assert!(runtime.find("operation-keep-both").is_some());
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "source disk");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target disk");
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, source);
+        click(&mut runtime, "operation-keep-both");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        let both = root.path().join("target copy.txt");
+        assert!(!source.exists());
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, both);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "source draft");
+        assert_eq!(runtime.state.workspace.tabs[1].document.path, target);
+        assert_eq!(
+            runtime.state.workspace.tabs[1].edit.text,
+            "destination draft"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(std::fs::read_to_string(both).unwrap(), "source draft");
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "target disk");
+    }
+
+    #[test]
+    fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_staging_git() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.test",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-b", "main"]);
+        let source = root.path().join("source");
+        let target = root.path().join("moved");
+        std::fs::create_dir_all(source.join("nested")).unwrap();
+        std::fs::write(source.join("nested/dirty.txt"), "saved draft").unwrap();
+        std::fs::write(source.join("clean.txt"), "clean text").unwrap();
+        std::fs::create_dir(root.path().join("source-other")).unwrap();
+        std::fs::write(root.path().join("source-other/file.txt"), "unrelated").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "move fixture"]);
+        let index = std::fs::read(root.path().join(".git/index")).unwrap();
+        let mut state = state(root.path());
+        for name in [
+            "source/nested/dirty.txt",
+            "source/clean.txt",
+            "source-other/file.txt",
+        ] {
+            state.open_file(root.path().join(name));
+            let expected = state.workspace.tabs.len() + 1;
+            wait(&mut state, |s| s.workspace.tabs.len() == expected);
+        }
+        state.activate_editor(0);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "unsaved descendant");
+        let (anchor, focus) = (
+            runtime.state.workspace.tabs[0].edit.anchor,
+            runtime.state.workspace.tabs[0].edit.focus,
+        );
+        runtime.update(|s, _| {
+            s.workspace.tree.select(source.to_str().unwrap());
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::MoveFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "moved");
+        // The explorer may be rooted inside a moved folder. Keep its persisted
+        // root and expansions following the same committed outcome as editors.
+        runtime.update(|s, _| {
+            s.navigate(source.clone());
+            s.workspace.layout.expanded_folders = vec![source.join("nested")];
+        });
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(!source.exists());
+        assert_eq!(
+            runtime
+                .state
+                .workspace
+                .tabs
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(runtime.state.workspace.active, 0);
+        assert_eq!(
+            runtime.state.workspace.tabs[0].document.path,
+            target.join("nested/dirty.txt")
+        );
+        assert_eq!(
+            runtime.state.workspace.tabs[0].edit.text,
+            "unsaved descendant"
+        );
+        assert_eq!(
+            (
+                runtime.state.workspace.tabs[0].edit.anchor,
+                runtime.state.workspace.tabs[0].edit.focus
+            ),
+            (anchor, focus)
+        );
+        assert_eq!(
+            runtime.state.workspace.tabs[1].document.path,
+            target.join("clean.txt")
+        );
+        assert_eq!(runtime.state.workspace.tabs[1].edit.text, "clean text");
+        assert_eq!(
+            runtime.state.workspace.tabs[2].document.path,
+            root.path().join("source-other/file.txt")
+        );
+        let layout = Layout::load(root.path()).unwrap();
+        assert_eq!(layout.explorer_directory, Some(target.clone()));
+        assert!(layout.expanded_folders.contains(&target.join("nested")));
+        assert_eq!(layout.active_file, Some(target.join("nested/dirty.txt")));
+        assert_eq!(
+            layout.files,
+            vec![
+                target.join("nested/dirty.txt"),
+                target.join("clean.txt"),
+                root.path().join("source-other/file.txt")
+            ]
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+        press(
+            &mut runtime,
+            Key::Command('z'),
+            rune::Mods {
+                ctrl: true,
+                cmd: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "saved draft");
+        fill(&mut runtime, "file-editor-1", "saved after move");
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(
+            std::fs::read_to_string(target.join("nested/dirty.txt")).unwrap(),
+            "saved after move"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::Compare(Comparison::Current), tx));
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.diff_pending.is_none() && !s.workspace.diff_patch.is_empty()
+        });
+        assert!(
+            runtime
+                .state
+                .workspace
+                .diff_patch
+                .contains("saved after move")
+        );
+        assert_eq!(
+            std::fs::read(root.path().join(".git/index")).unwrap(),
+            index
+        );
+    }
+
+    #[test]
+    fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("draft.txt");
+        let target = root.path().join("renamed.txt");
+        std::fs::write(&source, b"\xef\xbb\xbffirst\r\nsecond\r\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        state
+            .config
+            .shortcuts
+            .insert("rename-file".into(), "F2".into());
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "draft\nsecond\n");
+        let id = runtime.state.workspace.tabs[0].id;
+        let cursor = (
+            runtime.state.workspace.tabs[0].edit.anchor,
+            runtime.state.workspace.tabs[0].edit.focus,
+        );
+        runtime.update(|s, _| {
+            s.workspace.tree.select(source.to_str().unwrap());
+        });
+        press(&mut runtime, Key::Function(2), Default::default());
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "renamed.txt");
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(!source.exists());
+        let tab = &runtime.state.workspace.tabs[0];
+        assert_eq!(tab.document.path, target);
+        assert_eq!(tab.id, id);
+        assert_eq!((tab.edit.anchor, tab.edit.focus), cursor);
+        assert_eq!(tab.edit.text, "draft\nsecond\n");
+        assert!(tab.dirty());
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"\xef\xbb\xbfdraft\r\nsecond\r\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+        let layout = Layout::load(root.path()).unwrap();
+        assert_eq!(layout.files, vec![target]);
     }
 
     #[test]

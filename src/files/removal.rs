@@ -53,10 +53,22 @@ impl RemovalPlan {
             context.set_delete_method(DeleteMethod::NsFileManager);
         }
         match context.delete(&self.path) {
-            Ok(()) => Ok(RemovalOutcome::Removed {
-                path: self.path,
-                permanent: false,
-            }),
+            Ok(()) => {
+                match fs::symlink_metadata(&self.path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(_) => bail!(
+                        "Trash returned success but the source path still exists. It may have been recreated. Editor buffers were retained; inspect the source and host Trash."
+                    ),
+                    Err(error) => {
+                        return Err(error)
+                            .context("Verify host Trash outcome; editor buffers were retained");
+                    }
+                }
+                Ok(RemovalOutcome::Removed {
+                    path: self.path,
+                    permanent: false,
+                })
+            }
             Err(error) => {
                 // A platform error is not evidence of successful removal. If the source
                 // changed, retain buffers and report the uncertain outcome explicitly.

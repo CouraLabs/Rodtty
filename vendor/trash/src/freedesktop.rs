@@ -600,6 +600,14 @@ fn move_items_no_replace(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result
 
     let needs_cross_device_copy = e.kind() == ErrorKind::CrossesDevices;
     if !needs_cross_device_copy {
+        // This invocation exclusively created an empty destination placeholder.
+        // A failed rename must not leave an untracked empty item in Trash.
+        // remove_dir refuses nonempty directories and never removes source data.
+        if fs::symlink_metadata(dst).is_ok_and(|metadata| metadata.is_dir()) {
+            let _ = fs::remove_dir(dst);
+        } else {
+            let _ = fs::remove_file(dst);
+        }
         return Err((src.to_owned(), e));
     }
 
