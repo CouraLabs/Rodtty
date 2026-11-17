@@ -9,6 +9,7 @@ use std::sync::Arc;
 /// still exist.
 #[cfg(target_os = "macos")]
 pub(super) struct Native {
+    pub(super) resize: Option<super::mac_resize::Gesture>,
     pub(super) pacing: Option<crate::platform::display_link::DisplayLink>,
     /// Reports when each drawable reached the screen, while tracing or for `shadow`.
     pub(super) present: Option<crate::frame::present_time::metal::LayerHook>,

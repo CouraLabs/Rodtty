@@ -148,6 +148,30 @@
 -
 -[lints]
 -workspace = true
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Anomaly
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
 --- a/src/el/tx.rs
 +++ b/src/el/tx.rs
 @@ -398,7 +398,7 @@
@@ -161,7 +185,15 @@
      pub fn minimize(&mut self) {
 --- a/src/window/create.rs
 +++ b/src/window/create.rs
-@@ -241,6 +241,7 @@
+@@ -218,6 +218,7 @@
+         let prime = if visible && panel.is_none() { native::Prime::launching() } else { native::Prime::Steady };
+         #[cfg(target_os = "macos")]
+         let native = Native {
++            resize: None,
+             pacing: crate::platform::display_link::DisplayLink::new(&window, self.frame_wake.clone()),
+             present,
+             present_log: hook_log,
+@@ -241,6 +242,7 @@
          #[cfg(not(any(target_os = "macos", target_os = "windows")))]
          let native = Native::default();
          self.win = Some(Win {
@@ -169,7 +201,7 @@
              a11y,
              native,
              first_frame: FirstFrame::opened(Instant::now()),
---- a/src/window/custom_frame.rs
+--- /dev/null
 +++ b/src/window/custom_frame.rs
 @@ -0,0 +1,36 @@
 +//! Only native frame mechanics; appearance and lifecycle remain application owned.
@@ -178,7 +210,7 @@
 +/// Window-local logical coordinates, independent of app zoom. Kept at the native
 +/// boundary so a Wayland request uses the original winit pointer seat and serial.
 +pub(super) fn resize_edge(window: &Window, border: f32, point: (f32, f32)) -> Option<ResizeDirection> {
-+    if !cfg!(target_os = "linux") || border <= 0.0 || window.is_decorated() || !window.is_resizable()
++    if !cfg!(any(target_os = "linux", target_os = "macos")) || border <= 0.0 || window.is_decorated() || !window.is_resizable()
 +        || window.is_maximized() || window.fullscreen().is_some() { return None; }
 +    let size = window.inner_size().to_logical::<f32>(window.scale_factor());
 +    let (x, y) = point;
@@ -210,19 +242,72 @@
 +}
 --- a/src/window/events.rs
 +++ b/src/window/events.rs
-@@ -521,6 +521,12 @@
+@@ -382,6 +382,8 @@
+                 self.secure_input.set(focused && self.life.uncovered() && rt.has_secure_focus());
+                 sync_chrome(rt, l, chrome, titlebar);
+                 if !focused {
++                    #[cfg(target_os = "macos")]
++                    { l.native.resize = None; }
+                     // `window_focus` wrote the composition into its field: the input method drops its copy.
+                     crate::platform::ime::cancel(&l.window);
+                     l.window.set_ime_allowed(false);
+@@ -488,6 +490,12 @@
+                 }
+             }
+             WindowEvent::CursorMoved { position, .. } => {
++                #[cfg(target_os = "macos")]
++                if let Some(resize) = &l.native.resize {
++                    resize.update(&l.window);
++                    l.request_redraw();
++                    return;
++                }
+                 rt.pointer_move(position.x as f32 / rt.input_scale(), position.y as f32 / rt.input_scale());
+                 // AppKit needs the drag session started inside this mouse-dragged event.
+                 if let Some(start) = rt.take_drag_out() {
+@@ -512,6 +520,13 @@
+                 l.request_redraw();
+             }
+             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
++                #[cfg(target_os = "macos")]
++                if state == ElementState::Released && let Some(resize) = l.native.resize.take() {
++                    resize.update(&l.window);
++                    self.control_click = false;
++                    l.request_redraw();
++                    return;
++                }
+                 if state == ElementState::Pressed {
+                     crate::marks::input_arrived(false);
+                     self.control_click = cfg!(target_os = "macos") && self.mods.control_key();
+@@ -521,6 +536,15 @@
                          (ElementState::Pressed, true) => rt.secondary_down(x, y),
                          (ElementState::Released, true) => rt.secondary_up(x, y),
                          (ElementState::Pressed, false) => {
 +                            // This must precede runtime dispatch/delayed shell work: Wayland
 +                            // resize needs winit's currently pressed seat/button serial.
 +                            if let Some(edge) = custom_frame::resize_edge(&l.window, l.resize_border, (x * rt.zoom(), y * rt.zoom())) {
++                                #[cfg(target_os = "macos")]
++                                { l.native.resize = mac_resize::Gesture::begin(&l.window, edge); }
++                                #[cfg(not(target_os = "macos"))]
 +                                let _ = l.window.drag_resize_window(edge);
 +                                return;
 +                            }
                              #[cfg(target_os = "macos")]
                              rt.set_native_titlebar_band(mac::native_titlebar_band(&l.window));
                              rt.pointer_down(x, y);
+@@ -531,7 +555,12 @@
+                                 Some(TitlebarAction::Drag) => {
+                                     let _ = l.window.drag_window();
+                                 }
+-                                Some(TitlebarAction::DoubleClick) => titlebar_double_click(&l.window),
++                                Some(TitlebarAction::DoubleClick) => {
++                                    // An opt-in app frame always maximizes/restores, independently
++                                    // of AppKit's titlebar minimize preference. Dispatch only once.
++                                    if l.resize_border > 0.0 { chrome::toggle_maximized(&l.window); }
++                                    else { titlebar_double_click(&l.window); }
++                                }
+                                 None => {}
+                             }
+                         }
 --- a/src/window/handle.rs
 +++ b/src/window/handle.rs
 @@ -173,6 +173,15 @@
@@ -241,6 +326,77 @@
      /// Borrow a raw native handle while alive. Platform thread restrictions still apply;
      /// do not retain an extracted pointer beyond the callback.
      pub fn with_raw_handle<R>(&self, f: impl for<'a> FnOnce(winit::raw_window_handle::WindowHandle<'a>) -> R) -> Result<R, String> {
+--- /dev/null
++++ b/src/window/mac_resize.rs
+@@ -0,0 +1,58 @@
++//! AppKit has no `drag_resize_window`. Track a border gesture on the UI thread.
++//! winit's NSView forwards mouseDragged outside its bounds while a button is down,
++//! and mouseUp sends the final move before release. Never derive screen deltas from
++//! view-local points: the view itself moves while resizing the west/south edges.
++use objc2_foundation::MainThreadMarker;
++use objc2_app_kit::NSEvent;
++use objc2_foundation::{NSPoint, NSRect, NSSize};
++use winit::window::{ResizeDirection, Window};
++use crate::platform::macos::ns_window;
++
++pub(super) struct Gesture {
++    edge: ResizeDirection,
++    frame: NSRect,
++    pointer: NSPoint,
++    min: NSSize,
++    max: NSSize,
++}
++
++impl Gesture {
++    pub(super) fn begin(window: &Window, edge: ResizeDirection) -> Option<Self> {
++        let _main = MainThreadMarker::new()?;
++        let ns = ns_window(window)?;
++        // SAFETY: AppKit main thread, live NSWindow. These values are global
++        // bottom-left screen points, independent of Retina scale and app zoom.
++        unsafe {
++            Some(Self { edge, frame: ns.frame(), pointer: NSEvent::mouseLocation(),
++                min: ns.minSize(), max: ns.maxSize() })
++        }
++    }
++
++    pub(super) fn update(&self, window: &Window) {
++        let Some(_main) = MainThreadMarker::new() else { return };
++        let Some(ns) = ns_window(window) else { return };
++        // SAFETY: global screen location on the AppKit main thread.
++        let pointer = unsafe { NSEvent::mouseLocation() };
++        let (dx, dy) = (pointer.x - self.pointer.x, pointer.y - self.pointer.y);
++        use ResizeDirection::*;
++        let west = matches!(self.edge, West | NorthWest | SouthWest);
++        let east = matches!(self.edge, East | NorthEast | SouthEast);
++        let north = matches!(self.edge, North | NorthWest | NorthEast);
++        let south = matches!(self.edge, South | SouthWest | SouthEast);
++        let mut frame = self.frame;
++        if west || east {
++            frame.size.width = (self.frame.size.width + if west { -dx } else { dx })
++                .clamp(self.min.width.max(1.0), self.max.width.max(self.min.width).max(1.0));
++            if west { frame.origin.x = self.frame.origin.x + self.frame.size.width - frame.size.width; }
++        }
++        if north || south {
++            frame.size.height = (self.frame.size.height + if south { -dy } else { dy })
++                .clamp(self.min.height.max(1.0), self.max.height.max(self.min.height).max(1.0));
++            if south { frame.origin.y = self.frame.origin.y + self.frame.size.height - frame.size.height; }
++        }
++        // Keep the opposite edge fixed even at the minimum. AppKit's origin is
++        // bottom-left: north grows upward; south moves the origin downward.
++        // winit's view frame notification delivers the resulting surface resize.
++        if ns.frame() != frame { ns.setFrame_display(frame, true); }
++    }
++}
+--- a/src/window/native.rs
++++ b/src/window/native.rs
+@@ -9,6 +9,7 @@
+ /// still exist.
+ #[cfg(target_os = "macos")]
+ pub(super) struct Native {
++    pub(super) resize: Option<super::mac_resize::Gesture>,
+     pub(super) pacing: Option<crate::platform::display_link::DisplayLink>,
+     /// Reports when each drawable reached the screen, while tracing or for `shadow`.
+     pub(super) present: Option<crate::frame::present_time::metal::LayerHook>,
 --- a/src/window/platform_sync.rs
 +++ b/src/window/platform_sync.rs
 @@ -1,7 +1,7 @@
@@ -282,10 +438,10 @@
  pub struct WindowOptions {
      pub transparent: bool,
      pub borderless: bool,
-+    /// App-owned frame hit band in logical window points. Linux only: resize begins
-+    /// in the immediate native mouse-down, using winit's pressed Wayland seat serial.
++    /// App-owned frame hit band in logical window points. Linux starts winit resize
++    /// in the native mouse-down with the pressed Wayland seat serial; macOS tracks
++    /// the native AppKit frame/global pointer until mouse-up on the main thread.
 +    /// Zero disables it. Ignored for decorated, maximized, fullscreen or fixed windows.
-+    /// macOS requires a separate AppKit resize adapter; winit does not support it.
 +    pub custom_frame_resize_border: f32,
      /// Clicks, and so hover, pass to whatever is below.
      pub click_through: bool,
@@ -319,11 +475,13 @@
      #[cfg_attr(not(any(target_os = "macos", all(unix, not(target_os = "ios"), not(target_os = "android")))), allow(dead_code))]
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -29,6 +29,7 @@
+@@ -29,6 +29,9 @@
  mod launch_drawables;
  #[cfg(target_os = "macos")]
  use launch_drawables::LaunchDrawables;
 +mod custom_frame;
++#[cfg(target_os = "macos")]
++mod mac_resize;
  mod chrome;
  use chrome::{frame_chrome, place_chrome, sync_chrome, titlebar_double_click};
  mod configure;

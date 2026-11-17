@@ -382,6 +382,8 @@ impl<S: 'static> Host<S> {
                 self.secure_input.set(focused && self.life.uncovered() && rt.has_secure_focus());
                 sync_chrome(rt, l, chrome, titlebar);
                 if !focused {
+                    #[cfg(target_os = "macos")]
+                    { l.native.resize = None; }
                     // `window_focus` wrote the composition into its field: the input method drops its copy.
                     crate::platform::ime::cancel(&l.window);
                     l.window.set_ime_allowed(false);
@@ -488,6 +490,12 @@ impl<S: 'static> Host<S> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                #[cfg(target_os = "macos")]
+                if let Some(resize) = &l.native.resize {
+                    resize.update(&l.window);
+                    l.request_redraw();
+                    return;
+                }
                 rt.pointer_move(position.x as f32 / rt.input_scale(), position.y as f32 / rt.input_scale());
                 // AppKit needs the drag session started inside this mouse-dragged event.
                 if let Some(start) = rt.take_drag_out() {
@@ -512,6 +520,13 @@ impl<S: 'static> Host<S> {
                 l.request_redraw();
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                #[cfg(target_os = "macos")]
+                if state == ElementState::Released && let Some(resize) = l.native.resize.take() {
+                    resize.update(&l.window);
+                    self.control_click = false;
+                    l.request_redraw();
+                    return;
+                }
                 if state == ElementState::Pressed {
                     crate::marks::input_arrived(false);
                     self.control_click = cfg!(target_os = "macos") && self.mods.control_key();
@@ -524,6 +539,9 @@ impl<S: 'static> Host<S> {
                             // This must precede runtime dispatch/delayed shell work: Wayland
                             // resize needs winit's currently pressed seat/button serial.
                             if let Some(edge) = custom_frame::resize_edge(&l.window, l.resize_border, (x * rt.zoom(), y * rt.zoom())) {
+                                #[cfg(target_os = "macos")]
+                                { l.native.resize = mac_resize::Gesture::begin(&l.window, edge); }
+                                #[cfg(not(target_os = "macos"))]
                                 let _ = l.window.drag_resize_window(edge);
                                 return;
                             }
@@ -537,7 +555,12 @@ impl<S: 'static> Host<S> {
                                 Some(TitlebarAction::Drag) => {
                                     let _ = l.window.drag_window();
                                 }
-                                Some(TitlebarAction::DoubleClick) => titlebar_double_click(&l.window),
+                                Some(TitlebarAction::DoubleClick) => {
+                                    // An opt-in app frame always maximizes/restores, independently
+                                    // of AppKit's titlebar minimize preference. Dispatch only once.
+                                    if l.resize_border > 0.0 { chrome::toggle_maximized(&l.window); }
+                                    else { titlebar_double_click(&l.window); }
+                                }
                                 None => {}
                             }
                         }

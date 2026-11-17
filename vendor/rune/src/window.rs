@@ -30,6 +30,8 @@ mod launch_drawables;
 #[cfg(target_os = "macos")]
 use launch_drawables::LaunchDrawables;
 mod custom_frame;
+#[cfg(target_os = "macos")]
+mod mac_resize;
 mod chrome;
 use chrome::{frame_chrome, place_chrome, sync_chrome, titlebar_double_click};
 mod configure;

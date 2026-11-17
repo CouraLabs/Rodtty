@@ -72,10 +72,10 @@ pub(crate) const DEFAULT_MIN_SIZE: (f32, f32) = (420.0, 400.0);
 pub struct WindowOptions {
     pub transparent: bool,
     pub borderless: bool,
-    /// App-owned frame hit band in logical window points. Linux only: resize begins
-    /// in the immediate native mouse-down, using winit's pressed Wayland seat serial.
+    /// App-owned frame hit band in logical window points. Linux starts winit resize
+    /// in the native mouse-down with the pressed Wayland seat serial; macOS tracks
+    /// the native AppKit frame/global pointer until mouse-up on the main thread.
     /// Zero disables it. Ignored for decorated, maximized, fullscreen or fixed windows.
-    /// macOS requires a separate AppKit resize adapter; winit does not support it.
     pub custom_frame_resize_border: f32,
     /// Clicks, and so hover, pass to whatever is below.
     pub click_through: bool,
