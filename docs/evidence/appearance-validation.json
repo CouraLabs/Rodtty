@@ -1,0 +1,835 @@
+{
+  "date": "2026-11-16",
+  "os": "Linux x86-64",
+  "rust": "1.100.0",
+  "implementation_commits": [
+    "fbd3158",
+    "3c286c6"
+  ],
+  "integration": "1e947ab",
+  "families": 9,
+  "appearances": 18,
+  "default": {
+    "family": "Catppuccin",
+    "appearance": "System"
+  },
+  "visual_matrix": {
+    "wide_explicit_light_dark": {
+      "size": [
+        1400,
+        1000
+      ],
+      "scenes": [
+        "workspace/editor",
+        "settings/previews",
+        "diff",
+        "command palette"
+      ],
+      "frames": 72
+    },
+    "narrow_system_light_dark": {
+      "size": [
+        680,
+        800
+      ],
+      "scenes": [
+        "workspace/editor",
+        "settings/previews",
+        "diff",
+        "command palette"
+      ],
+      "frames": 72
+    },
+    "explicit_editor_selection": {
+      "size": [
+        1400,
+        800
+      ],
+      "frames": 18
+    },
+    "narrow_open_theme_picker": {
+      "size": [
+        680,
+        800
+      ],
+      "frames": 18
+    },
+    "total": 180
+  },
+  "visual_review": [
+    "all18 workspace/editor colors",
+    "all18 Settings/previews and One Dark Pro adaptation label",
+    "all18 read-only diff syntax and insertion/deletion/word tints",
+    "all18 command palette and focused row",
+    "all18 selected editor text",
+    "all18 open compact searchable family picker",
+    "all9 families in System light/dark at narrow width"
+  ],
+  "runtime_behavior": [
+    "nine-family real pointer selection and search",
+    "eighteen known literal canvas values",
+    "light/dark JSON persistence and reopen",
+    "live System changes at680px and1400px",
+    "external JSON polling",
+    "independent family/appearance resets",
+    "normal/bright ANSI red in every appearance",
+    "program indexed196 and truecolor preserved",
+    "terminal selection preserved",
+    "editor/diff upstream keyword colors",
+    "Ayu light rendered text contrast",
+    "compact dropdown real search+selection"
+  ],
+  "native_lifecycle": {
+    "backends": [
+      "Wayland",
+      "Xlib"
+    ],
+    "family_mode_changes_per_backend": 27,
+    "same_terminal_session": true,
+    "continued_output": true,
+    "output_while_window_closed": true,
+    "second_launch_reattaches": true
+  },
+  "checks": {
+    "format": "passed",
+    "strict_clippy_all_targets": "passed",
+    "desktop_build_all_bins": "passed",
+    "backend_no_default_features_all_targets": "passed",
+    "documented_integration_suite": {
+      "passed": 103,
+      "failed": 0,
+      "ignored": 0,
+      "command": "cargo test --offline --locked --all-targets -- --test-threads=1 --include-ignored"
+    }
+  },
+  "palette_data_sha256": {
+    "assets/themes/catppuccin.json": "2d6fb6ff85443d0a4bcc28cbd24687af44cbc2ad08110c055556d968e9a33808",
+    "assets/themes/families.json": "3cf653e992b5771372c872687ffb29a0704edea566690232a0e4769728b24cd4"
+  },
+  "limits": [
+    "Windows and macOS native GUI runtime unavailable on this Linux host; their native checks remain pending.",
+    "Headless scene snapshots use labelled sample content; live session preservation is separately verified by native lifecycle reports."
+  ],
+  "frames": [
+    {
+      "name": "ayu-dark-diff.png",
+      "sha256": "a59566acb7cca6802415d2428f9b661a66e94ee2d8182bcf1e56b536d2ae7f8b"
+    },
+    {
+      "name": "ayu-dark-palette.png",
+      "sha256": "29b4926f954ae46bdbaa1c24e9772daee2aafe2ecb74a06a57484b8ba0ac0bbc"
+    },
+    {
+      "name": "ayu-dark-picker.png",
+      "sha256": "b0bc9455a1097e08b1cb3ac1cb3ba058af8ccd3a249ec8d23a26a83033051936"
+    },
+    {
+      "name": "ayu-dark-selection.png",
+      "sha256": "5998f88d2edb5e080f70e154b75083d381cccd74db8fb5260f426814b2c41dee"
+    },
+    {
+      "name": "ayu-dark-settings.png",
+      "sha256": "f0ee1a53e78c82baa2363ec1a328df30cca82b32ccb131b91d8069b9038bf6ce"
+    },
+    {
+      "name": "ayu-dark-workspace.png",
+      "sha256": "c2b4705c40782a633886246ae7cec27571c32dbe70dce94f32ee31f30a53f484"
+    },
+    {
+      "name": "ayu-light-diff.png",
+      "sha256": "aaeb93957aedaf621b519dcb6680f96d05497e872a040ce00eb6dd0679a4a576"
+    },
+    {
+      "name": "ayu-light-palette.png",
+      "sha256": "5a3bb94bd4be77cbabae1e6ccf8f348ed8aa6d62bec4a64bde934b86e72ce078"
+    },
+    {
+      "name": "ayu-light-picker.png",
+      "sha256": "69e4334b08ea1779bafb52984e42aab0191c619b403fbabb21eb597ad9349820"
+    },
+    {
+      "name": "ayu-light-selection.png",
+      "sha256": "f14749716d56342ef35bd6546f0620b332b058b7c69e7e7fb161d930b83b276e"
+    },
+    {
+      "name": "ayu-light-settings.png",
+      "sha256": "084559eac65401abf02e891aac6b8d3b84c40367f6e6a6b81abba76402b55ff0"
+    },
+    {
+      "name": "ayu-light-workspace.png",
+      "sha256": "6b032cd406ab6765e67ca96a256e8551616b525860575e61e133000f6f32d2fd"
+    },
+    {
+      "name": "ayu-system-dark-narrow-diff.png",
+      "sha256": "c828cdfe60cc6c89cb935d2973cc3ea640a3c1fcecabaec57d082ba69903b4d2"
+    },
+    {
+      "name": "ayu-system-dark-narrow-palette.png",
+      "sha256": "724f5a57ed222fbb8cbed89ba8b0d5632b3dc5f6f08fad243b1e873d84b48e1f"
+    },
+    {
+      "name": "ayu-system-dark-narrow-settings.png",
+      "sha256": "caac79963a2c04d8d8d7c57d6ff2d3b0faf85fe07f3a301fe8cd7a011609fcf3"
+    },
+    {
+      "name": "ayu-system-dark-narrow-workspace.png",
+      "sha256": "240113bf5036d630f6621a421744e9847c7054595be2bc5caedae44e09ed9413"
+    },
+    {
+      "name": "ayu-system-light-narrow-diff.png",
+      "sha256": "f0bb34532cb184e1bea170d9b00067653e5ecabe74cf9d8b6dd6f894c853e5f9"
+    },
+    {
+      "name": "ayu-system-light-narrow-palette.png",
+      "sha256": "ef2bf813fadf776c1dc0dd3898341e04fde8573603b9307c2b4fa746cd1b9fd4"
+    },
+    {
+      "name": "ayu-system-light-narrow-settings.png",
+      "sha256": "7549f29dc6e2aa65607f6583141c7b233b7fa18bbcc48e621966db1d13fe7ab1"
+    },
+    {
+      "name": "ayu-system-light-narrow-workspace.png",
+      "sha256": "39908c83d932df01b0e59e8e8c735dfc3c7a7a6353e8570d0360b8394565c884"
+    },
+    {
+      "name": "catppuccin-dark-diff.png",
+      "sha256": "52330a02466163dee3c93d559db6896ba2417fda101520440b1776d6eb6c3933"
+    },
+    {
+      "name": "catppuccin-dark-palette.png",
+      "sha256": "4c9275a8c4d092b864d2e07d2c601bf0c561e86c7d08c441ad00fc9c2492a185"
+    },
+    {
+      "name": "catppuccin-dark-picker.png",
+      "sha256": "f02851dc11a7d906a898cae89b41e6d56baa6daeac9823fd62865f7eabcd7762"
+    },
+    {
+      "name": "catppuccin-dark-selection.png",
+      "sha256": "ad35b7a04ed41ee42a1e39aff72007ecc28091807aa3fa922002b69b6d14248d"
+    },
+    {
+      "name": "catppuccin-dark-settings.png",
+      "sha256": "dfed2ec7e32566b67f4eff82778852b7da77862992c0c5d9172ff4c96b62769d"
+    },
+    {
+      "name": "catppuccin-dark-workspace.png",
+      "sha256": "76d89f348a9cab5629328552a1eae5b5319adaa32122a0ee3ba1cce941fda95d"
+    },
+    {
+      "name": "catppuccin-light-diff.png",
+      "sha256": "7171bda3a6df2afdbd5991f4c185eba706a3c71df886dad589d7be21a3ae3541"
+    },
+    {
+      "name": "catppuccin-light-palette.png",
+      "sha256": "d9a352d5832fccc40e2f5978270b55904f76fe855c1cdbd1181ef0531d6649fd"
+    },
+    {
+      "name": "catppuccin-light-picker.png",
+      "sha256": "e46df91457b53e98a40ba40b5253f7d75433cc2d4c4dcdd3f44de57aa2ea64ad"
+    },
+    {
+      "name": "catppuccin-light-selection.png",
+      "sha256": "00acf67489e19b90278b99ded7652baf20d7ce9990c57d9847c86dea56b7d568"
+    },
+    {
+      "name": "catppuccin-light-settings.png",
+      "sha256": "fdde51b82bc4581a6459700874ab555a3a5dba3c5f40c3dfef67bfe476ca9132"
+    },
+    {
+      "name": "catppuccin-light-workspace.png",
+      "sha256": "8307ce2d79dd411f3b2970fecf6e398f6c7f2f26af15403c90553d7176b0b6f0"
+    },
+    {
+      "name": "catppuccin-system-dark-narrow-diff.png",
+      "sha256": "c25632b65a564e14c2d398a83c7657260c57e01b606417cd2fc0ec692b4451a2"
+    },
+    {
+      "name": "catppuccin-system-dark-narrow-palette.png",
+      "sha256": "e62326a370d94f31816ac3e7112e5cf5fc9902d0595e6baaa5bc1c334c8336e6"
+    },
+    {
+      "name": "catppuccin-system-dark-narrow-settings.png",
+      "sha256": "71624cb0ed42cfed839c00cb2825acd940650caf07a470e43d40ac0239c64a59"
+    },
+    {
+      "name": "catppuccin-system-dark-narrow-workspace.png",
+      "sha256": "fd95f824209070a29de9a887b2aaa79068532bae10813de5928410c2ac21002e"
+    },
+    {
+      "name": "catppuccin-system-light-narrow-diff.png",
+      "sha256": "a7335289125d6ff27665307292e294796c686b9fb558218a1a583ac538854850"
+    },
+    {
+      "name": "catppuccin-system-light-narrow-palette.png",
+      "sha256": "27c79f34a8e81790d46a2757f168a537df5af00e3b330c6f0be0b1ee203a945a"
+    },
+    {
+      "name": "catppuccin-system-light-narrow-settings.png",
+      "sha256": "42f5ad5d751874e57c5031dc64d18d2d827b535e5bcaf124c107d074eab63b11"
+    },
+    {
+      "name": "catppuccin-system-light-narrow-workspace.png",
+      "sha256": "ff1f12a1ed04313c927e0fb8283d22ed5bf0cd48f3ba8d85a6973a52f3946e1b"
+    },
+    {
+      "name": "dracula-dark-diff.png",
+      "sha256": "2ef0e0bf18dd22ff018036b1ece934b6b5debd21a26fdb3f76061f6a97869a90"
+    },
+    {
+      "name": "dracula-dark-palette.png",
+      "sha256": "726b135d2c3fa61b7c812aa5197e0d0d6a0bcb62f403337e04bd994bcb5a541a"
+    },
+    {
+      "name": "dracula-dark-picker.png",
+      "sha256": "746c3a29cc70f1dbf25909bd48151262dc678afec959f7be7466fc832178fa89"
+    },
+    {
+      "name": "dracula-dark-selection.png",
+      "sha256": "6b177bd23fc257d6647e627ea2d31b93a38f9334446ec4d8b75439e31ea792bc"
+    },
+    {
+      "name": "dracula-dark-settings.png",
+      "sha256": "52b6895d7e7ee5e01b7117891875e5a6d3016c508f190f77b0ad8b1b2ab88d1b"
+    },
+    {
+      "name": "dracula-dark-workspace.png",
+      "sha256": "1ada9234a50591a4806cd04f58facbecaab601f562a9bcff40eebd02091826c8"
+    },
+    {
+      "name": "dracula-light-diff.png",
+      "sha256": "44b34a0fd29a21e00b61ad0a60a3d37c896e32e926eb2203b7184bbbc2316b08"
+    },
+    {
+      "name": "dracula-light-palette.png",
+      "sha256": "cc5a973ccc7a5bfc82b189f40ca70e545644d9c9ba7a79a769c00b76eec6f2ba"
+    },
+    {
+      "name": "dracula-light-picker.png",
+      "sha256": "f05bf8fdaf09da73dde422f67eae5ce8dfd6c0d00a5cae041d5dd39ebcdaad0e"
+    },
+    {
+      "name": "dracula-light-selection.png",
+      "sha256": "9560a94df34504960355a1066f4d6bc2c522fc92616ee6e5f065a1d82748f386"
+    },
+    {
+      "name": "dracula-light-settings.png",
+      "sha256": "29e840280b685328d7bd13da521a7e3b8f3e4e2fa4d816e122272fd4ffb2a3bc"
+    },
+    {
+      "name": "dracula-light-workspace.png",
+      "sha256": "dc8e952f50c435d5a52cadd92cca1748683a25acee8312c0a064d646d4620ff8"
+    },
+    {
+      "name": "dracula-system-dark-narrow-diff.png",
+      "sha256": "47f4ebeef9f3e723ba4db69fd82cc72e1540b74fa6fa476da43c4ec32843c106"
+    },
+    {
+      "name": "dracula-system-dark-narrow-palette.png",
+      "sha256": "28bf33cef41402f01c3c117a89dddbb4b56363e052b8db9c42e05b0c7f2a5139"
+    },
+    {
+      "name": "dracula-system-dark-narrow-settings.png",
+      "sha256": "8be30c816f09ff978fc54cfdc6dd703b777f0c2eb4b9af36b04c5eed9cca575f"
+    },
+    {
+      "name": "dracula-system-dark-narrow-workspace.png",
+      "sha256": "db834943ca518c9e6d857fe4c8127621375dadbebf41b64ff1a181b3936a0ce8"
+    },
+    {
+      "name": "dracula-system-light-narrow-diff.png",
+      "sha256": "21aee3d1819ee27234c3ceb60da979ae392b407e49484834d70749ba8ec28de0"
+    },
+    {
+      "name": "dracula-system-light-narrow-palette.png",
+      "sha256": "4860519f00797bf861822afa489b4ab1903cd5c6f45e4331f4ccdd7ad0167cd5"
+    },
+    {
+      "name": "dracula-system-light-narrow-settings.png",
+      "sha256": "840d8aeb9f1162354b1c2110bbf52b28a27e93f7a9b4b78203d5e8510e8ec26a"
+    },
+    {
+      "name": "dracula-system-light-narrow-workspace.png",
+      "sha256": "d26f9a151e2ff852da15559a48c492f51458991390ebc5568190447657b3597e"
+    },
+    {
+      "name": "gruvbox-dark-diff.png",
+      "sha256": "d28966b22961c90785cd705ead21ae3d7bf334cba5e257c7b037315e4421ba3e"
+    },
+    {
+      "name": "gruvbox-dark-palette.png",
+      "sha256": "7a40affa69b19bee8787e7faca15f073f720ade3cfc71cfdefef14db0ad94dc1"
+    },
+    {
+      "name": "gruvbox-dark-picker.png",
+      "sha256": "bfe4f81a408b5dd631987040e350e0a0262cfc0c0b33a3fd1b1a19963171d184"
+    },
+    {
+      "name": "gruvbox-dark-selection.png",
+      "sha256": "080c66ed20eb5a94b9cce51e38d550b0492ef0719c0901c72dda1b82218c5f5c"
+    },
+    {
+      "name": "gruvbox-dark-settings.png",
+      "sha256": "571cf333e080bcd021084a3225c9ff4f101125e4676023a4db81225b04b15ff7"
+    },
+    {
+      "name": "gruvbox-dark-workspace.png",
+      "sha256": "4ef7adaf4a9405fe5bcbbd9f46b91a9604d557102d227ebf4f303b373e3a537d"
+    },
+    {
+      "name": "gruvbox-light-diff.png",
+      "sha256": "6be4463c6d92835826c77afb73f504b6976be6f4da23d372a5884112452b8720"
+    },
+    {
+      "name": "gruvbox-light-palette.png",
+      "sha256": "6fe44a60a320df39763b40d200025b0d2c244f84b68de02525246cee737df639"
+    },
+    {
+      "name": "gruvbox-light-picker.png",
+      "sha256": "191ecc7736d3d626b69c8f305bafa1cf3ffd8419f432e1d517dd2828536ff671"
+    },
+    {
+      "name": "gruvbox-light-selection.png",
+      "sha256": "330a4329d34b4c81d18356223bc6e18f4ebacbfeddc989ed26bc0eba07d70866"
+    },
+    {
+      "name": "gruvbox-light-settings.png",
+      "sha256": "d7ce754f262bdb2b5da6bf9f7ebb52752072ba746accd4b0505197ec29de9c24"
+    },
+    {
+      "name": "gruvbox-light-workspace.png",
+      "sha256": "51bb7a80c4b64fe02385dc631b67d6b04aa9bfd5b4be68c107f170997f17f3e9"
+    },
+    {
+      "name": "gruvbox-system-dark-narrow-diff.png",
+      "sha256": "4f1fae47005c6adb6121443fc0c5237f2d60c8a614c851e0091ac00762aab3e3"
+    },
+    {
+      "name": "gruvbox-system-dark-narrow-palette.png",
+      "sha256": "ccbe7400331ddeeaddae7b88a874525ef0fb7d536e79a811549b6efea8c1076d"
+    },
+    {
+      "name": "gruvbox-system-dark-narrow-settings.png",
+      "sha256": "d43e4a196b1dbcffffdf979c936f6bccfb2a144a1d60151dcbbccee955c52faf"
+    },
+    {
+      "name": "gruvbox-system-dark-narrow-workspace.png",
+      "sha256": "da857b1f43d711252dea4cc0787ed1a6ac6bc7f49ecb405cfd70a3cd61bed03c"
+    },
+    {
+      "name": "gruvbox-system-light-narrow-diff.png",
+      "sha256": "165eb343ed236fbc07d02da04d700ca9a04f360ad920c5081552c5505ee998bd"
+    },
+    {
+      "name": "gruvbox-system-light-narrow-palette.png",
+      "sha256": "d06f6d4d490b91c6c3f5bfc1065e64b0d99193de339359bbe37480c61a1f35fa"
+    },
+    {
+      "name": "gruvbox-system-light-narrow-settings.png",
+      "sha256": "4f4988490f7b0680657a863592783394db205cf05ff640f76bedf22e9453ec32"
+    },
+    {
+      "name": "gruvbox-system-light-narrow-workspace.png",
+      "sha256": "c4b327653e7fc1281811e60b1f6fbe359bc294db9632c07b6b2af6d64acf655c"
+    },
+    {
+      "name": "night_owl-dark-diff.png",
+      "sha256": "5aaf05071ad844d8f7c388912779a7880d3ce496876c7d82bdf7855cc5890228"
+    },
+    {
+      "name": "night_owl-dark-palette.png",
+      "sha256": "000a347d66e30580cd1a9bff33e4ee09d1fda2c97d0b00d1fdb60518c6e21d0a"
+    },
+    {
+      "name": "night_owl-dark-picker.png",
+      "sha256": "b1d393adac42cf40fd28fc261479aed5c87222be340f2e45dbcba1ed12ee4dbc"
+    },
+    {
+      "name": "night_owl-dark-selection.png",
+      "sha256": "0a53d835ac601f83e4b1dffc175d1907265fe94dda3880263a86d4be0a972cc6"
+    },
+    {
+      "name": "night_owl-dark-settings.png",
+      "sha256": "f7965bab5c397ddae066a13eb5282c98e03c32f5fd782d435ae0021351601dc8"
+    },
+    {
+      "name": "night_owl-dark-workspace.png",
+      "sha256": "a08938c119f15cd82e86a24ef57ed9eefe144a73984d535eed85fba0539173b8"
+    },
+    {
+      "name": "night_owl-light-diff.png",
+      "sha256": "1cee3cfe52dd23b281304312ebfc8bb2da015bb7ea5a66c77d09c66471810c27"
+    },
+    {
+      "name": "night_owl-light-palette.png",
+      "sha256": "59193f1140f52735248b35594128f2c7eab2fd9e70b856af3ce21e0db304f83f"
+    },
+    {
+      "name": "night_owl-light-picker.png",
+      "sha256": "05e265725665fefc6decec927df81a713a4091387a27884157b8faf4cc9923d7"
+    },
+    {
+      "name": "night_owl-light-selection.png",
+      "sha256": "129e8dc037d90f8e747052a26474de7524f7646d8fe3d05b167f6dc24e9c5cd7"
+    },
+    {
+      "name": "night_owl-light-settings.png",
+      "sha256": "6b040e04315fa393f78ac944f74abb541ca4b2f876b2428dd7ae660ff84a200d"
+    },
+    {
+      "name": "night_owl-light-workspace.png",
+      "sha256": "d778bb22d66d5667fc7ed587c3d72084da07a15e09bd62663bed892202b10001"
+    },
+    {
+      "name": "night_owl-system-dark-narrow-diff.png",
+      "sha256": "3888494c7056f9ca4269d51bef008ca0e67f56cf682cadebd7e0b7ffaba841bc"
+    },
+    {
+      "name": "night_owl-system-dark-narrow-palette.png",
+      "sha256": "5ae2d8a1b8f90eecda425099fd58ea75de546153c894f70a187a4d9510f7276f"
+    },
+    {
+      "name": "night_owl-system-dark-narrow-settings.png",
+      "sha256": "a30ba3e358382bb7e383b381da9b1a4046e63251cb86d655bb7e842ba1c894b3"
+    },
+    {
+      "name": "night_owl-system-dark-narrow-workspace.png",
+      "sha256": "bdbdf954273f9446f6bd7849d69f31fa0903e1d0b73724e539a08c8cdef432cb"
+    },
+    {
+      "name": "night_owl-system-light-narrow-diff.png",
+      "sha256": "578dc72194a48aad4d519e2f68df406a8ce10d7a83a8e60e3be7746e3eaf53c7"
+    },
+    {
+      "name": "night_owl-system-light-narrow-palette.png",
+      "sha256": "9df57c6a6375095a581e27d93230493abeed8de3bf52cdfa45a445105c12af72"
+    },
+    {
+      "name": "night_owl-system-light-narrow-settings.png",
+      "sha256": "268fd2ba533e0b22caff632b9dbbc63d6cca8e51b440eda356a47146769c5bdd"
+    },
+    {
+      "name": "night_owl-system-light-narrow-workspace.png",
+      "sha256": "39c99e666f75d26de86571dec557c995bee48ae7f8c99fbede39696e302de4f8"
+    },
+    {
+      "name": "nord-dark-diff.png",
+      "sha256": "f9083a097bae7d614320b955af48004e39ef83cfde147afd53d917fb51d4f5b3"
+    },
+    {
+      "name": "nord-dark-palette.png",
+      "sha256": "912697bf4c6d99bb774c80e65be00a5ea410d1800eeaac4d25d47a9a9df0b269"
+    },
+    {
+      "name": "nord-dark-picker.png",
+      "sha256": "49d2eaf031a3f3892e2bb7f126ff596556c9d66e5953876153ee40bb1b131b38"
+    },
+    {
+      "name": "nord-dark-selection.png",
+      "sha256": "b9b3f32603da3340b53f618981295c78b12ac0ccc0246ba743860f57f978dee0"
+    },
+    {
+      "name": "nord-dark-settings.png",
+      "sha256": "b5196a6b8ac8375442b92ee520d21b1c43a1afbc40828a4f96e472148c9f8fb1"
+    },
+    {
+      "name": "nord-dark-workspace.png",
+      "sha256": "36e5009daa2fe70e67007813251fbcefc20516fb985f38d469ba574e3dedda67"
+    },
+    {
+      "name": "nord-light-diff.png",
+      "sha256": "b29ee23a771688d88364afd7e151465523aa3f67d5011f0465ecc1f1e6d94781"
+    },
+    {
+      "name": "nord-light-palette.png",
+      "sha256": "b8ace264725bd3af7c31b4030ce32e170c4c442205affd3b52506e924ba81965"
+    },
+    {
+      "name": "nord-light-picker.png",
+      "sha256": "70feea3dd9ab52c83f24aedce5f1a0dacb6efc36018b47a2feaf3c4876da6251"
+    },
+    {
+      "name": "nord-light-selection.png",
+      "sha256": "a8b088ccdfcbaaa8ddf9414d59648deafb094bc03b0e41fff81fdad2d200a651"
+    },
+    {
+      "name": "nord-light-settings.png",
+      "sha256": "0c8fe0d7ff3c6e7532b225530e8fdea436bcda824b26aa6132efec975065c535"
+    },
+    {
+      "name": "nord-light-workspace.png",
+      "sha256": "0435334952dc2d3a455ef65654b1d547da30aa19a23d1f362953e4c91a8fb317"
+    },
+    {
+      "name": "nord-system-dark-narrow-diff.png",
+      "sha256": "005cfd766019a2f9a9f4fafc869e6fcb842bbc86b53a42ab736224621f3f8a67"
+    },
+    {
+      "name": "nord-system-dark-narrow-palette.png",
+      "sha256": "8e67e8cdb7d88fbaab0797ab87ad2eb431141a2909632895f0ca106757dfc4f9"
+    },
+    {
+      "name": "nord-system-dark-narrow-settings.png",
+      "sha256": "b7ca18b123db40a6efb2c942ec89fba9bcd5ed751df36757ccbe33159cd45349"
+    },
+    {
+      "name": "nord-system-dark-narrow-workspace.png",
+      "sha256": "99bd5e7ca317aa30cddb03db1a9a4c0c01555838acade6d1b8b0d5a5a6df4075"
+    },
+    {
+      "name": "nord-system-light-narrow-diff.png",
+      "sha256": "53d78b59c8e155c37d561aaab1b7bb3af48dd56046879ee3bed2d543a52a7a92"
+    },
+    {
+      "name": "nord-system-light-narrow-palette.png",
+      "sha256": "feed55f61f6c634ea1508cd6d9f6119d51f626b08bfd6cb38a3b468f56b3d1e5"
+    },
+    {
+      "name": "nord-system-light-narrow-settings.png",
+      "sha256": "fb8faa0b5c6b9e67bff69c1115a8fc06d68418d59247ecee4177335eff153550"
+    },
+    {
+      "name": "nord-system-light-narrow-workspace.png",
+      "sha256": "a92c80ba19c7d3d79816d68ace5eaa75f9511786ae4e4324c090288ac26838af"
+    },
+    {
+      "name": "one_dark_pro-dark-diff.png",
+      "sha256": "1d7e8833a52784240a43f1e60a74e03982517625bf7721d99f79d3960faf05c0"
+    },
+    {
+      "name": "one_dark_pro-dark-palette.png",
+      "sha256": "6d53b28191ef6e8b3a0301487ac5ccad8e58e415f1e4c8c41725aade3c4840a2"
+    },
+    {
+      "name": "one_dark_pro-dark-picker.png",
+      "sha256": "c1d289fe7753d225267121db9a51cd2125f9a71cced6770f55412585ad3c78d9"
+    },
+    {
+      "name": "one_dark_pro-dark-selection.png",
+      "sha256": "62a993b21e9bd6e9614aec4834d87cff4a79358e3f0bd396a1707d25db4e038b"
+    },
+    {
+      "name": "one_dark_pro-dark-settings.png",
+      "sha256": "4d1d3b5f6fd0289e552166b4a2af17804c90e6d1349df9609c100deb7ac28e44"
+    },
+    {
+      "name": "one_dark_pro-dark-workspace.png",
+      "sha256": "777e5688818c9ce66fafe33d55e777799c2fc7d65345f61d882c9f6a100b2eb0"
+    },
+    {
+      "name": "one_dark_pro-light-diff.png",
+      "sha256": "7efb2b49ba19f2c6a75140c1e98f26492230e1b0dbf370d14b5a5c58dcad351d"
+    },
+    {
+      "name": "one_dark_pro-light-palette.png",
+      "sha256": "e56087502b6f6ea2a6dab13dd34229a082d92b4911aa1e980e95637768e5e22e"
+    },
+    {
+      "name": "one_dark_pro-light-picker.png",
+      "sha256": "064ebcd688601662ec35b4069540c3fce5ae267acda10ec31b79cbee5da4d0e0"
+    },
+    {
+      "name": "one_dark_pro-light-selection.png",
+      "sha256": "aaeded97927f0a356430524a924c27cf9e4080c259404db1d9b50d05be00575b"
+    },
+    {
+      "name": "one_dark_pro-light-settings.png",
+      "sha256": "546728fcad77fab3d75dcb7a7907f33851056cb7992dd0f1f0603724e64ec706"
+    },
+    {
+      "name": "one_dark_pro-light-workspace.png",
+      "sha256": "bbbb68d4d507e1763576ecb3b318ce5cfe224cf81b7e8c5595f0d4376a55d573"
+    },
+    {
+      "name": "one_dark_pro-system-dark-narrow-diff.png",
+      "sha256": "74747b8755ee862e0202d4eef469bf575e5c68d94cc41923425ac5ea7450d3b1"
+    },
+    {
+      "name": "one_dark_pro-system-dark-narrow-palette.png",
+      "sha256": "f854b5621abf21aa98092309bafde6e66c9e78e3b3574b65f7f21f0641e4aa86"
+    },
+    {
+      "name": "one_dark_pro-system-dark-narrow-settings.png",
+      "sha256": "fe9ba96beb2d8e7875557cef7684e34963887685df3616f3f56bfef8e695d86f"
+    },
+    {
+      "name": "one_dark_pro-system-dark-narrow-workspace.png",
+      "sha256": "e881c29ca7beba09f5d91675efe92edd4be3e2672ece4ae073bb9c8aab59700b"
+    },
+    {
+      "name": "one_dark_pro-system-light-narrow-diff.png",
+      "sha256": "85363d2b989581d408f8c5bbe269931bf32baaff73902dea30adb6d8b33c2fcb"
+    },
+    {
+      "name": "one_dark_pro-system-light-narrow-palette.png",
+      "sha256": "f132c880763662b6c104e8c15f695abac94126eb30405de82c3d7c6bd72ad964"
+    },
+    {
+      "name": "one_dark_pro-system-light-narrow-settings.png",
+      "sha256": "104e7a1abdd41b63965227a99370c0f598eaa3cf8c5828327b11f98e53fcf0cf"
+    },
+    {
+      "name": "one_dark_pro-system-light-narrow-workspace.png",
+      "sha256": "22a48a28e3e8ddef8c00050c8603dd3204fb7f28a944dd08ba8c2e16cbd65826"
+    },
+    {
+      "name": "solarized-dark-diff.png",
+      "sha256": "f990950de3a1b07fff4e493d2b07229fd2261cd1b95c167621001167b9b929a3"
+    },
+    {
+      "name": "solarized-dark-palette.png",
+      "sha256": "09ef2c37fdf609b95f89787a3c76416fe90475c01f582c117262e764bc5a9913"
+    },
+    {
+      "name": "solarized-dark-picker.png",
+      "sha256": "eccc5291096a48afd5f4b50e18eec182998b649e7fac572e514ef87d87ce03ed"
+    },
+    {
+      "name": "solarized-dark-selection.png",
+      "sha256": "203c3301dd67ae9360bebf0a0ffed73f39b3e0b53a33a32855dd371bd44aa43b"
+    },
+    {
+      "name": "solarized-dark-settings.png",
+      "sha256": "5b734ae5099caf1e6b7970f2a2f5d84a4b062e73de94c63f67b00b19a8ec6081"
+    },
+    {
+      "name": "solarized-dark-workspace.png",
+      "sha256": "7111c7b411a3105d8c0bec3e725496bed22772c2191f02ef5786521f337fb53b"
+    },
+    {
+      "name": "solarized-light-diff.png",
+      "sha256": "5692e8ccd1a8edee1cacea9bdedc5ea64c9dcf06cc19b1924b0221ebe35a8ad1"
+    },
+    {
+      "name": "solarized-light-palette.png",
+      "sha256": "fcb7617009c09b19a019e4186073ae653c628006bd5faaa7cd427b29ce2d1def"
+    },
+    {
+      "name": "solarized-light-picker.png",
+      "sha256": "0185bb6a46bc3d7d99af48e5a33ef6d3622fccf93b74a0930fc54c56d04eac6f"
+    },
+    {
+      "name": "solarized-light-selection.png",
+      "sha256": "e610ed4b0b0e942d4334119a29f222ecd93c7e7c06dc4d0e6a86c2ec2ae11d79"
+    },
+    {
+      "name": "solarized-light-settings.png",
+      "sha256": "249140557bf7d0a4b5e816569ad6c723a0e26734c019dc19e13ea2de5294e407"
+    },
+    {
+      "name": "solarized-light-workspace.png",
+      "sha256": "1fb7b2b77785078d94c38a9a08e91fb111fdc2df5620b835c90feeb3fdd05e68"
+    },
+    {
+      "name": "solarized-system-dark-narrow-diff.png",
+      "sha256": "85bd75d391c8c777441e75668fb57ec2ec8f1483d8bf411e05ac0416ee7593bb"
+    },
+    {
+      "name": "solarized-system-dark-narrow-palette.png",
+      "sha256": "e350f82d81f1b031b75340ada7389092f282716d5c2151f5d404cc7fd909a22e"
+    },
+    {
+      "name": "solarized-system-dark-narrow-settings.png",
+      "sha256": "e0b6f8d99aeaff7d384e381f77350a580be0ab2bef31f2af2f123f216c96170f"
+    },
+    {
+      "name": "solarized-system-dark-narrow-workspace.png",
+      "sha256": "d3f327a4932399398dd2a009fc653f7e6c7fd75fc98715723573dfcb79389709"
+    },
+    {
+      "name": "solarized-system-light-narrow-diff.png",
+      "sha256": "f72fc4a2125cc1685aae3ad9f30f9086bebe243c11f22aae4acbf25b30fa829c"
+    },
+    {
+      "name": "solarized-system-light-narrow-palette.png",
+      "sha256": "d5b60e8c0b6e3036818681ebf2b6d1bcd1e04852a5a042d0e1a07f1b7b06791b"
+    },
+    {
+      "name": "solarized-system-light-narrow-settings.png",
+      "sha256": "4b243d134cedf50cf98e8bd96e26041d95aad984ca85d5a2e7a70654940b0a32"
+    },
+    {
+      "name": "solarized-system-light-narrow-workspace.png",
+      "sha256": "d4ac8d9840525b79742cd0d944e1a3a7db32e0dc74aff3d957a55a5f5a943dbc"
+    },
+    {
+      "name": "tokyo_night-dark-diff.png",
+      "sha256": "20fbe2304674a96175cde02d826aeebc6d354f1edcd263b3b65d664db4bd7204"
+    },
+    {
+      "name": "tokyo_night-dark-palette.png",
+      "sha256": "bfef8e912571e81aadc49d8fe8bd7510554352ba2a4f2492323befe43c7f355d"
+    },
+    {
+      "name": "tokyo_night-dark-picker.png",
+      "sha256": "80392687bbb6fa32399ffaa2aef5d2ce8b147e0f80b2a981593fa66ea0632d12"
+    },
+    {
+      "name": "tokyo_night-dark-selection.png",
+      "sha256": "c543e2c0aef0d06fd2b0785a8b36b2492ba630da11393ab0844cdba83b950b89"
+    },
+    {
+      "name": "tokyo_night-dark-settings.png",
+      "sha256": "c4efea5d5f15f448f70da60008a04bd2da2520e087913687652f1630764ffd26"
+    },
+    {
+      "name": "tokyo_night-dark-workspace.png",
+      "sha256": "9efda35c816529503987bd17030b065c1292f05c202d46ab1767e807d9703bdf"
+    },
+    {
+      "name": "tokyo_night-light-diff.png",
+      "sha256": "9fbbc5decfad16fe16f2405d011140844f65edf645b5bf3048481bd67dabca71"
+    },
+    {
+      "name": "tokyo_night-light-palette.png",
+      "sha256": "19cdcf8e885fbe584672ce395845843f79a4751768fec03d313b33cc90d918b3"
+    },
+    {
+      "name": "tokyo_night-light-picker.png",
+      "sha256": "4038d3368f2c5d0f28070c0d999eec46ae29dda5fce9e151f48b2633aa762361"
+    },
+    {
+      "name": "tokyo_night-light-selection.png",
+      "sha256": "0abcd7237da10f17ef6d1e77c639d6e8e1233379bd4926cdb6ec96baa1372ee5"
+    },
+    {
+      "name": "tokyo_night-light-settings.png",
+      "sha256": "04c4e21e53c5556c3795e4d6b38bffbc47d3a34f615ff055b43505944c386b70"
+    },
+    {
+      "name": "tokyo_night-light-workspace.png",
+      "sha256": "29aa29c6618db7db63eff3f6036ed74a71d00bc320cd381f04672a131141c585"
+    },
+    {
+      "name": "tokyo_night-system-dark-narrow-diff.png",
+      "sha256": "8917d4f03b85a31c14bdc57195e351d3f257b82ac6a3342f2c4509c763c28764"
+    },
+    {
+      "name": "tokyo_night-system-dark-narrow-palette.png",
+      "sha256": "ba2d4de7c4baaee80bcd0fc310b5db2d5eb5d673e4f165e94c8988ab6d575a3d"
+    },
+    {
+      "name": "tokyo_night-system-dark-narrow-settings.png",
+      "sha256": "31ff7e7563e427aae8810fbf79a454488287521d753ed6a2dfcfd14a4f1a6adc"
+    },
+    {
+      "name": "tokyo_night-system-dark-narrow-workspace.png",
+      "sha256": "0603387207e6993a153a8fee513a8bee5fa5e584237212ddedf1c5a108c85edf"
+    },
+    {
+      "name": "tokyo_night-system-light-narrow-diff.png",
+      "sha256": "46932581ce7fa498c7c94330c8cde4f93cc69bdfa8586b9bf0df34bd00198807"
+    },
+    {
+      "name": "tokyo_night-system-light-narrow-palette.png",
+      "sha256": "d551c95120b13179d2f8254e984bb23e22457815759f15ee9500062f65794229"
+    },
+    {
+      "name": "tokyo_night-system-light-narrow-settings.png",
+      "sha256": "afceb9344a8a8d5b8194eaedcc3c5b7ddb87fb2db391189132417b42c9658d9b"
+    },
+    {
+      "name": "tokyo_night-system-light-narrow-workspace.png",
+      "sha256": "5a45ad37564a0242aef7854e1c812f93f3e0992bd2161801e3ca15802af7860c"
+    }
+  ]
+}
