@@ -3279,6 +3279,13 @@ mod tests {
             assert!(s.message.contains("Wait for open files and saves"));
         });
         wait_runtime(&mut runtime, |s| !s.workspace.has_pending_opens());
+        runtime.update(|s, tx| {
+            s.save_file(2, false, None);
+            s.submit_file_operation(tx);
+            assert!(!s.workspace.operation_busy);
+            assert!(s.message.contains("Wait for open files and saves"));
+        });
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[1].saving);
         std::fs::write(&source, "external version").unwrap();
         runtime.update(|s, tx| {
             s.submit_file_operation(tx);
@@ -3531,7 +3538,7 @@ mod tests {
 
     #[test]
     fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
-        use super::super::tests::runtime_for;
+        use super::super::tests::{press, runtime_for};
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("draft.txt");
         let target = root.path().join("renamed.txt");
@@ -3545,6 +3552,10 @@ mod tests {
         open(&mut state, &source);
         state.toggle_files();
         wait(&mut state, |s| !s.workspace.scan_busy);
+        state
+            .config
+            .shortcuts
+            .insert("rename-file".into(), "F2".into());
         let mut runtime = runtime_for(state);
         fill(&mut runtime, "file-editor-1", "draft\nsecond\n");
         let id = runtime.state.workspace.tabs[0].id;
@@ -3555,7 +3566,7 @@ mod tests {
         runtime.update(|s, _| {
             s.workspace.tree.select(source.to_str().unwrap());
         });
-        runtime.update(|s, tx| s.dispatch(AppAction::RenameFile, tx));
+        press(&mut runtime, Key::Function(2), Default::default());
         runtime.frame(1.0);
         fill(&mut runtime, "operation-name", "renamed.txt");
         click(&mut runtime, "operation-submit");
