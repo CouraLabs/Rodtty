@@ -286,6 +286,14 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 group = group
                     .child(text("Autosave").font(ui_label()).color(a.ink()))
                     .child(choices)
+                    .child(button(
+                        a,
+                        "reset-autosave-policy",
+                        "Reset autosave policy",
+                        |s, _| {
+                            s.save_config(|c| c.autosave.policy = AutosavePolicy::default());
+                        },
+                    ))
                     .child(
                         text(format!("Autosave delay: {} ms", s.config.autosave.delay_ms))
                             .font(ui_label())
@@ -303,6 +311,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .child(button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
                                 s.save_config(|c| {
                                     c.autosave.delay_ms = (c.autosave.delay_ms + 100).min(60_000)
+                                });
+                            }))
+                            .child(button(a, "reset-autosave-delay", "Reset delay", |s, _| {
+                                s.save_config(|c| {
+                                    c.autosave.delay_ms =
+                                        config::AutosavePreferences::default().delay_ms
                                 });
                             }))
                             .child(button(a, "reset-autosave", "Reset Autosave", |s, _| {
@@ -1306,9 +1320,9 @@ mod tests {
                 assert_canvas(&runtime(root.path()), canvas);
             }
             click(&mut rt, "appearance-system");
-            for size in [(680.0, 800.0), (1400.0, 1000.0)] {
+            for size in [(640.0, 360.0), (1440.0, 900.0)] {
                 rt.set_viewport(size, 1.0);
-                for (host_dark, canvas) in [(false, light), (true, dark)] {
+                for (host_dark, canvas) in [(false, light), (true, dark), (false, light)] {
                     rt.set_system_dark(host_dark);
                     for _ in 0..45 {
                         rt.frame(1.0 / 60.0);
@@ -1317,6 +1331,7 @@ mod tests {
                     assert!(rt.find("theme-family-trigger").is_some());
                 }
             }
+            rt.set_system_dark(true);
             // External JSON changes enter through the actual file polling boundary.
             let mut external = Config::load(root.path()).unwrap();
             external.appearance = crate::config::Appearance::Light;
@@ -1678,6 +1693,21 @@ mod tests {
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
         assert_eq!(saved["autosave"]["policy"], "editor_focus_loss");
+        click(&mut runtime, "reset-autosave-delay");
+        let saved = Config::load(root.path()).unwrap();
+        assert_eq!(
+            saved.autosave.policy,
+            crate::config::AutosavePolicy::EditorFocusLoss
+        );
+        assert_eq!(saved.autosave.delay_ms, 1000);
+        click(&mut runtime, "less-autosave-delay");
+        click(&mut runtime, "reset-autosave-policy");
+        let saved = Config::load(root.path()).unwrap();
+        assert_eq!(
+            saved.autosave.policy,
+            crate::config::AutosavePolicy::Explicit
+        );
+        assert_eq!(saved.autosave.delay_ms, 900);
         click(&mut runtime, "reset-autosave");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())

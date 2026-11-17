@@ -1,0 +1,34 @@
+{
+  "active": 0,
+  "cold_fresh_processes": true,
+  "directories": [
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/beta",
+    "/home/rodrigo/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/alpha"
+  ],
+  "host_pid": 821697,
+  "old_commands_not_replayed": true,
+  "output": [
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/beta$ pr\nintf 'T22_PID=%s\\n' \"$$\"\nT22_PID=821703\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/beta$ ",
+    "rodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/alpha$ printf 'T22_PID=%s\\n' \"$$\"\nT22_PID=821707\nrodtty:~/Projects/CouraLabs/Rodtty/target/t23/native-wayland-restoration/native-restoration/alpha$ "
+  ],
+  "passed": true,
+  "pids": [
+    821703,
+    821707
+  ],
+  "previous_pids": [
+    821617,
+    821613
+  ],
+  "session_ids": [
+    1,
+    2
+  ],
+  "titles": [
+    "\u203a_  Term beta",
+    "\u203a_  Term alpha"
+  ],
+  "window_backend": "Wayland",
+  "production_source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "qualification_date": "2026-11-17"
+}

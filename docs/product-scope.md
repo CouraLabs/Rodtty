@@ -1,14 +1,22 @@
 # Rodtty product scope
 
-This document records agreed product behavior. The terminal, explorer, UTF-8 editor, and read-only Git diff implementation are recorded in `docs/desktop-implementation.md`. Native Windows/macOS validation remains pending; the initial terminal evidence is retained in `docs/feasibility-report.md`.
+This document records agreed product behavior. [Integrated qualification](integrated-qualification.md) maps all 88 redesign stories to executed evidence and explicit pending native checks. The terminal, explorer, UTF-8 editor, and read-only Git diff implementation are recorded in `docs/desktop-implementation.md`. Native Windows/macOS validation remains pending; the initial terminal evidence is retained in `docs/feasibility-report.md`.
 
 ## Desktop first release
 
 - Native Rust and Rune applications for Windows, macOS, and Linux.
 - The terminal is the main screen and supports full interactive terminal applications.
+- App-drawn themed chrome provides native drag, edge/corner resize, minimize, maximize/restore, and lifecycle-aware close. Windows/Linux controls are on the right; macOS controls are on the left. Linux Wayland and Xlib checks are executed; Windows/macOS native execution remains pending.
+- Nine light/dark theme pairs plus live System appearance, defaulting to Catppuccin/System. One Dark Pro Light is explicitly a Rodtty adaptation. Bundle Geist and Geist Mono; provide searchable installed UI and verified monospace terminal families, previews, fallback, and independent UI/terminal/editor sizes. The editor follows the terminal family.
+- Separate draggable/scrollable terminal and editor tab strips, context menus, middle-click closure, and full-title tooltips. Application-supplied terminal titles are authoritative; clearing restores the terminal-icon / Term / last-folder fallback. No manual title override is stored.
+- A hierarchical, keyboard-navigable explorer with offline file artwork, Git badges, hidden/ignore filters, stable root, and optional Follow Terminal. Single-click previews are reused only when clean and idle; editing or explicit Open keeps a regular tab. Single-click retention is configurable.
+- Create, copy, rename, move, and Trash actions share context-menu/palette behavior. Collisions offer Replace / Keep Both / Cancel. Successful moves preserve descendant buffers and remap paths; deletion offers Save As outside the removed subtree / Discard / Cancel for unsaved work. Permanent fallback always requires an explicit decision.
+- Searchable Settings covers Appearance, Behavior, Keyboard Shortcuts, Terminal, Editor, Files, and Bundled Commands, with individual resets. Owner preferences live at `~/.rodtty/settings.json`; valid external edits apply live where supported, invalid edits retain the last valid settings, and migration preserves originals and existing destinations. Workspace JSON remains separate.
+- Configurable shortcut recording/conflicts/unbinding/reset and a command palette show effective bindings. Terminal right-click offers context menu or paste; copy-on-selection defaults off. Platform copy/paste preserves Ctrl+C interrupts.
+- Explicit Save is default; opt-in delayed/focus-loss autosave uses the same version-protected asynchronous save boundary. Pending file operations and owner decisions defer autosave; successful path changes direct later saves to the new path.
 - Multiple terminal tabs, each with its own session, current directory, environment, and processes.
 - Desktop-window close defaults to keeping terminal sessions running and accessible on reopening; Behavior settings also offers Ask each time and Quit Rodtty. Closing a terminal tab ends its session, with Confirm when commands are running (default), Always confirm and Close immediately policies. Quit Rodtty ends all sessions and retains confirmation for running commands, including when selected as the window-close policy. Computer restarts begin fresh sessions. See ADR-0004.
-- Bash-style command syntax; Brush is a candidate pending validation. See ADR-0003.
+- Bash-style command syntax through the pinned Brush implementation, validated on Linux; complete Bash script compatibility is not promised. See ADR-0003.
 - New tabs inherit the active terminal's directory by default, with explorer-folder and specified-absolute-folder alternatives. They start with the host environment plus Rodtty-specific startup configuration. Use an explicitly supplied directory for the first session, otherwise the launcher's directory, falling back to home. Other shell configuration files are sourced only when explicitly requested.
 - Reopening a kept-running host retains the same terminal sessions, processes and recent output. After Quit or restart, restore terminal-tab order and last directories using fresh shells without replaying commands. Behavior settings also offers one fresh terminal using the new-tab directory choice; first launch retains the startup-directory contract. Regular editor tabs, explorer root/expansions/selection and pane layout restore from separate workspace JSON. Missing paths show an explanation and leave the rest of the workspace accessible; temporary previews, application-title overrides and unsaved drafts are excluded.
 - Provide command/path completion, saved command history, history search, text selection, clipboard copy/paste, and searchable scrollback. History is shared per owner and can be disabled. Scrollback has a configurable size limit.
@@ -52,7 +60,7 @@ Revisit a dependency that fails these checks. Use validation results to establis
 
 ## Open decisions
 
-- Final shell implementation and supported utility list, following technical validation.
+- Release utility support and platform compatibility beyond the Linux development qualification.
 - Supported operating-system versions and architectures, following technical validation.
 - Remote tunnel provisioning, authentication, and concurrent-client behavior before the remote phase.
 

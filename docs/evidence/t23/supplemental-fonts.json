@@ -1,0 +1,61 @@
+{
+  "source_commit": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "settings": {
+    "theme_family": "catppuccin",
+    "appearance": "dark",
+    "fonts": {
+      "ui_family": "Adwaita Sans",
+      "terminal_family": "Adwaita Mono",
+      "ui_size": 15,
+      "terminal_size": 20,
+      "editor_size": 18
+    }
+  },
+  "frames": [
+    {
+      "file": "font-minimum-terminal.png",
+      "sha256": "7eaecf454bde2abd6e7b9fd22f6b21a6796978130509cf9cbe482944d582e07f",
+      "scene": "preview",
+      "size": [
+        640,
+        360
+      ]
+    },
+    {
+      "file": "font-minimum-editor.png",
+      "sha256": "c5faa93ebc9f1557e6128f82ad10bac04814e34ad4ff5376c60ec1ac79a63fd0",
+      "scene": "workspace",
+      "size": [
+        640,
+        360
+      ]
+    },
+    {
+      "file": "font-minimum-ui-picker.png",
+      "sha256": "617f5a9b32d1b335f283aa5de92339c27e75460c32513af6604dab439eea44d0",
+      "scene": "settings",
+      "size": [
+        640,
+        360
+      ]
+    },
+    {
+      "file": "font-minimum-terminal-picker.png",
+      "sha256": "68c6e34478bed6c0f0da853fc2e344014f8439eef770053b399a55aa562ede9b",
+      "scene": "settings",
+      "size": [
+        640,
+        360
+      ]
+    },
+    {
+      "file": "appearance-minimum-controls.png",
+      "sha256": "88f594039bc9bae65a76b51aa41ccda0904f7dfba6d848dd0e566b7f0dcf2ae7",
+      "scene": "settings",
+      "size": [
+        640,
+        360
+      ]
+    }
+  ]
+}

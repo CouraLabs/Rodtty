@@ -26,7 +26,7 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 
 - Terminal tabs run independent Brush sessions with native PTYs and a terminal-state parser.
 - Commands on the inherited host PATH remain available. Bash-style syntax is the target; complete Bash script compatibility is not promised.
-- The searchable Settings editor tab enables/disables bundled utilities and configures history and scrollback, with individual reset controls. Changes apply to new sessions.
+- The searchable Settings editor tab covers Appearance, Behavior, Keyboard Shortcuts, Terminal, Editor, Files, and Bundled Commands, with individual reset controls. Bundled-command, history, and scrollback changes apply to new sessions; appearance and applicable behavior changes apply live.
 - Enabled utilities run through native launchers as external processes, supporting concurrent pipelines. Disabled names report an error instead of falling back to a host utility in the managed environment.
 - The terminal displays ANSI colors, Unicode, alternate-screen applications, and a cursor; supports resizing, selection, clipboard paste/copy, and scrollback search.
 - Window close defaults to **Keep sessions running**, with **Ask each time** and **Quit Rodtty** alternatives in Behavior settings. Relaunching Rodtty or using its tray entry reopens the same sessions and retained output. Terminal-tab close defaults to confirming commands in progress; **Always confirm** and **Close immediately** are alternatives. Explicit Quit, including the window-close Quit policy, confirms running commands. Dirty editors keep their Save / Discard / Cancel decision. A computer restart creates fresh sessions.
@@ -35,7 +35,7 @@ Select **Files** to open the explorer at the active terminal's directory. Expand
 
 The compact header shows the active host folder, **Files**, **Terminal**, **Editor**, Settings, and the workspace menu (**···**). The menu contains the Command Palette, terminal search, session ending, window closing, and Quit. Terminal and editor tabs have separate strips above their panes.
 
-Double-click a file, or select it and press Enter, to open an editor tab beside the terminal. Drag the thin pane dividers to resize the explorer and editor; the terminal occupies the larger initial share. Header controls hide or show panes. As the window narrows, the explorer collapses first; **Files** reveals it temporarily. Below 880 points, **Terminal** and **Editor** switch views, and **‹ Terminal** returns from any editor or Settings tab in one action. Open files, running sessions, and remembered pane widths remain intact. Widening restores requested pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
+Single-click a file to preview it; double-click, Enter, or editing keeps it as a regular editor tab beside the terminal. Drag the thin pane dividers to resize the explorer and editor; the terminal occupies the larger initial share. Header controls hide or show panes. As the window narrows, the explorer collapses first; **Files** reveals it temporarily. Below 880 points, **Terminal** and **Editor** switch views, and **‹ Terminal** returns from any editor or Settings tab in one action. Open files, running sessions, and remembered pane widths remain intact. Widening restores requested pane visibility. Regular editor tabs, pane state, explorer root/expansions/selection, and terminal order/directories restore on reopening. Surviving sessions reattach; after Quit or restart, fresh shells open in their saved directories without replaying commands. Behavior also offers one fresh terminal. Missing paths explain the fallback; previews, draft text, and title overrides are excluded.
 
 The editor provides syntax highlighting, undo/redo, find/replace, and save. It edits UTF-8 files up to 2 MiB, preserves BOMs and line endings, and checks for external changes approximately once a second. Clean buffers reload automatically; dirty buffers retain their edits and offer Reload or Keep edits. A conflicting save requires explicit Overwrite. Closing a dirty tab/window or quitting offers Save / Discard / Cancel.
 
@@ -65,7 +65,7 @@ Untracked files appear as additions. **Auto** selects inline or split diffs base
 | Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z in the editor | Undo / redo |
 | Ctrl/Cmd+W in the editor | Close file, with an unsaved-change prompt |
 
-On macOS, Command replaces Ctrl+Shift for application shortcuts; Control continues to send terminal control characters. The mouse wheel scrolls retained output, and dragging selects visible terminal cells. Advanced mouse-reporting protocols are not yet implemented.
+These are defaults. Settings → Keyboard Shortcuts searches actions, records keyboard or mouse bindings, shows conflicts, and offers unbind and per-action reset. Menus, tooltips, help, and palette labels show effective bindings. On macOS, Command replaces Ctrl+Shift for application shortcuts; Control continues to send terminal control characters. The mouse wheel scrolls retained output, and dragging selects visible terminal cells. Terminal Settings configures right-click as Context Menu (default) or Paste, plus Copy on Selection (default off), with separate resets. Copy/Paste follows the focused terminal or editor; Ctrl+C continues to interrupt terminal programs. Advanced mouse-reporting protocols are not yet implemented.
 
 The Actions control also opens the command palette. Type to filter actions, use Up/Down to select, Enter to execute, and Escape or an outside click to dismiss. The palette shows current shortcuts and explains unavailable actions. Dismissing it returns focus to the previous workspace control; save, close, and quit actions retain their existing confirmation flows.
 
@@ -73,15 +73,17 @@ The Actions control also opens the command palette. Type to filter actions, use 
 
 Owner preferences live at `~/.rodtty/settings.json` on every desktop platform. Settings opens beside the terminal and saves UI changes immediately; Open Settings JSON edits that actual file in the editor. Valid external edits apply automatically within the open app, with command/history/scrollback changes taking effect for new sessions. Invalid JSON keeps the last valid preferences active and reports the problem without replacing the file. Unrecognized preference fields are preserved when existing controls save.
 
-Settings → Editor offers Explicit Save (the default), After Delay, and Editor Focus Loss, with a configurable delay from 100 to 60,000 milliseconds (default 1,000) and Reset Autosave. These choices persist in the `autosave` preferences object and apply immediately. Focus-loss saving follows leaving the file for the terminal, Settings, another file, or hiding the editor; inspecting its Git diff stays within that file. Autosave uses the same external-change protection as Save. Conflicts preserve edits and offer the usual resolution; cancelling a save, close, or removal decision suspends autosave for those edits until you edit again or change the policy.
+Settings → Editor offers Explicit Save (the default), After Delay, and Editor Focus Loss, with a configurable delay from 100 to 60,000 milliseconds (default 1,000) and independent Reset autosave policy / Reset delay controls plus Reset Autosave for both. These choices persist in the `autosave` preferences object and apply immediately. Focus-loss saving follows leaving the file for the terminal, Settings, another file, or hiding the editor; inspecting its Git diff stays within that file. Autosave uses the same external-change protection as Save. Conflicts preserve edits and offer the usual resolution; cancelling a save, close, or removal decision suspends autosave for those edits until you edit again or change the policy.
 
-Appearance defaults to Catppuccin with System brightness. Settings → Appearance offers Light (Latte), Dark (Mocha), and System with live palette previews and independent resets. System follows host appearance changes; explicit Light or Dark stays fixed. Changes apply across controls, terminal defaults and ANSI colors, editor highlighting, and Git diffs without replacing running sessions. Extended indexed colors and truecolor requested by terminal programs remain unchanged. Palette source and MIT attribution are bundled in [assets/themes](assets/themes/README.md).
+Appearance defaults to Catppuccin with System brightness. Settings → Appearance separates a searchable family selector from Light / Dark / System, with live light/dark previews and independent resets. The nine families are Catppuccin (Latte/Mocha), Dracula (Alucard/Dracula), Tokyo Night (Light/Night), Nord, Gruvbox (medium), One Dark Pro (**Light is a labelled Rodtty adaptation**), Night Owl (Light Owl/Night Owl), Ayu, and Solarized. System follows host appearance changes; explicit Light or Dark stays fixed. Changes apply across controls, terminal defaults and ANSI colors, editor highlighting, and Git diffs without replacing running sessions. Extended indexed colors and truecolor requested by terminal programs remain unchanged. Palette source and MIT attribution are bundled in [assets/themes](assets/themes/README.md).
 
-`~/.rodtty/workspace-state.json` separately stores pane layout and saved file paths; workspace activity does not rewrite preferences and unsaved drafts are not stored. Existing platform-directory `config.toml`, `workspace.toml`, optional `startup.sh`, and shared history migrate once while preserving originals and existing destinations. Launch coordination also retains the old owner lock so surviving sessions are reopened safely. Run `rodtty --paths` to locate these files. Set `RODTTY_HOME` to isolate all storage and coordination for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
+`~/.rodtty/workspace-state.json` separately stores regular editor tabs, terminal-tab order/last directories, pane state, and explorer root/expansions/selection; workspace activity does not rewrite preferences and unsaved drafts are not stored. Existing platform-directory `config.toml`, `workspace.toml`, optional `startup.sh`, and shared history migrate once while preserving originals and existing destinations. Launch coordination also retains the old owner lock so surviving sessions are reopened safely. Run `rodtty --paths` to locate these files. Set `RODTTY_HOME` to isolate all storage and coordination for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
 
 Behavior preferences apply immediately from Settings or valid external JSON edits; each control has its own reset. Running sessions retain their command/history/startup snapshots. Shell activity markers distinguish an idle prompt from foreground commands and shell builtins, while preserving owner PS0 and PROMPT_COMMAND hooks. Known background jobs also require confirmation. Brush jobs without a PID remain conservatively protected until the next prompt refresh (for example, after `wait`); asynchronous completion alone does not clear that protection. See [session policy validation](docs/session-policy-validation.md).
 
 With history enabled, commands append to the shared history file at each prompt. New sessions load saved history; sessions already running retain their own recall list. The pinned Brush version does not support Bash's `history -n` incremental import.
+
+This partial example illustrates selected preferences; Settings writes the complete configuration.
 
 ```json
 {
@@ -120,6 +122,8 @@ and are also available under Files in Settings. Root and expanded folders live i
 `workspace-state.json`; refresh retains expansion and selection. File and Git scans
 run on the file worker, with loading and folder errors shown in the explorer.
 
+Create File, Create Folder, Copy, Rename, Move, and Move to Trash share explorer context-menu and command-palette actions. Name collisions offer Replace, Keep Both, or Cancel. Successful rename/move remaps open descendant tabs, preserving edits and selection; failures retain the old paths and buffers. Pending operations defer autosave, which resumes against the committed destination.
+
 Move to Trash is available in the explorer context menu and command palette.
 Files settings provides a live, resettable confirmation preference
 (`explorer.confirm_deletion`, default `true`). Permanent deletion always requires
@@ -133,18 +137,22 @@ available; owner decisions remain modal and affected editor work stays protected
 Linux draws the complete themed window frame and right-side controls. Empty header
 space drags the window; double-click maximizes/restores it; all edges/corners resize.
 Custom close follows the same unsaved-file and session lifecycle as menu closure.
-See [the custom-frame implementation and native checks](docs/linux-custom-frame.md).
+See [Linux native checks](docs/linux-custom-frame.md), [the Windows adapter](docs/windows-custom-frame.md), and [the macOS adapter](docs/macos-custom-frame.md). Native Windows/macOS GUI execution remains pending; their all-target metadata checks do not establish runtime compatibility.
 
 ## Validation
 
 ```sh
 cargo fmt --all -- --check
+export CARGO_TARGET_DIR="$PWD/target/qualification"
+export TMPDIR="$CARGO_TARGET_DIR/tmp"
+export GIT_CEILING_DIRECTORIES="$TMPDIR"
+mkdir -p "$TMPDIR"
+cargo build --locked --bins
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --all-targets -- --test-threads=1
-cargo test --locked --test terminal real_vim_accepts_keyboard_input_and_saves_a_file -- --ignored
+cargo test --locked --all-targets -- --test-threads=1 --include-ignored
 ```
 
-The last check requires an installed `vim`. CI defines native Linux, Windows, and macOS jobs. Those jobs have not run until the workflow is published and executed.
+The serial suite includes the real Vim check and requires an installed `vim`. The matching Git ceiling prevents isolated non-repository fixtures under `target/` from inheriting this repository. See [integrated qualification](docs/integrated-qualification.md) for the exact executed gates, visual matrix, and platform limits. CI defines native Linux, Windows, and macOS jobs. Those jobs have not run until the workflow is published and executed.
 
 Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery; `file-collision` previews the explicit collision choices; `tree` reads nested folders from the actual host startup location):
 
@@ -175,7 +183,7 @@ not qualify their runtime behavior.
 
 `--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. `--font-check <report.json>` also discovers native fonts, changes UI and terminal families and UI, terminal and editor sizes live, checks the full-screen application sees the updated PTY dimensions, and verifies unsaved editor work and the terminal session survive. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
 
-Settings provides independent UI, terminal and editor font sizes (defaults: 13px, 14px and 14px), with immediate application and reset. These are saved in the `fonts` object of `settings.json`. The editor follows the terminal family; unavailable saved families fall back to the bundled Geist faces.
+Settings offers searchable installed UI and verified monospace terminal family selectors, keyboard navigation, previews, and independent family resets. The bundled Geist and Geist Mono defaults remain available offline; installed inventory is discovered per launch. Settings also provides independent UI, terminal and editor font sizes (defaults: 13px, 14px and 14px), with immediate application and reset. These are saved in the `fonts` object of `settings.json`. The editor follows the terminal family; unavailable saved families fall back to the bundled Geist faces.
 
 ## Design documents
 

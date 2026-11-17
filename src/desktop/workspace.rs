@@ -2531,21 +2531,36 @@ pub(super) fn host_tree_demo(s: &mut State) {
     let root = s.directory.clone();
     s.workspace.layout.explorer = true;
     s.workspace.layout.expanded_folders = vec![root.join("src"), root.join("src/desktop")];
-    match crate::files::list_tree(
-        &root,
-        &s.workspace.layout.expanded_folders,
-        false,
-        &[],
-        None,
-    ) {
-        Ok(listing) => {
+    s.workspace.layout.hidden = s.config.explorer.show_hidden;
+    s.workspace.layout.follow = s.config.explorer.follow_terminal;
+    let listing = (|| -> anyhow::Result<_> {
+        let repo = crate::git::inspect(&root)?;
+        let ignored = if s.config.explorer.respect_ignore {
+            repo.as_ref()
+                .map(crate::git::ignored)
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let listing = crate::files::list_tree(
+            &root,
+            &s.workspace.layout.expanded_folders,
+            s.config.explorer.show_hidden,
+            &ignored,
+            None,
+        )?;
+        Ok((listing, repo))
+    })();
+    match listing {
+        Ok((listing, repo)) => {
             s.workspace.directory = Some(listing.root.clone());
             s.workspace
                 .address
                 .replace_text(listing.root.to_string_lossy());
             s.workspace.entries = listing.entries;
             s.workspace.tree_errors = listing.errors;
-            s.workspace.repo = crate::git::inspect(&listing.root).ok().flatten();
+            s.workspace.repo = repo;
             s.rebuild_tree();
             s.workspace
                 .tree
@@ -5141,6 +5156,75 @@ mod tests {
     }
 
     #[test]
+    fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_descendant() {
+        use super::super::tests::runtime_for;
+        for policy in ["after_delay", "editor_focus_loss"] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            let destination = root.path().join("moved");
+            std::fs::create_dir_all(source.join("nested")).unwrap();
+            let path = source.join("nested/draft.txt");
+            let preview = root.path().join("preview.txt");
+            std::fs::write(&path, "original descendant").unwrap();
+            std::fs::write(&preview, "preview contents").unwrap();
+            let mut state = state(root.path());
+            state.open_file_with_preview(path.clone(), true);
+            wait(&mut state, |s| s.workspace.tabs.len() == 1);
+            let mut runtime = runtime_for(state);
+            fill(&mut runtime, "file-editor-1", "retained draft");
+            runtime.update(|s, _| s.open_file_with_preview(preview.clone(), true));
+            wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
+            assert!(!runtime.state.workspace.tabs[0].preview);
+            assert!(runtime.state.workspace.tabs[1].preview);
+            runtime.update(|s, tx| {
+                s.save_config(|c| {
+                    c.autosave.policy = if policy == "after_delay" {
+                        crate::config::AutosavePolicy::AfterDelay
+                    } else {
+                        crate::config::AutosavePolicy::EditorFocusLoss
+                    };
+                    c.autosave.delay_ms = 100;
+                });
+                s.dispatch(AppAction::ActivateEditor(0), tx);
+                s.toggle_files();
+            });
+            wait_runtime(&mut runtime, |s| !s.workspace.scan_busy);
+            fill(&mut runtime, "file-editor-1", "draft after folder move");
+            runtime.update(|s, tx| {
+                s.workspace.tree.select(source.to_str().unwrap());
+                s.dispatch(AppAction::MoveFile, tx);
+            });
+            runtime.frame(0.0);
+            fill(&mut runtime, "operation-name", "moved");
+            pump_autosave(&mut runtime, Duration::from_millis(150));
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                "original descendant"
+            );
+            click(&mut runtime, "operation-submit");
+            wait_runtime(&mut runtime, |s| {
+                !s.workspace.operation_busy && !s.workspace.tabs[0].dirty()
+            });
+            assert!(!source.exists());
+            assert_eq!(
+                std::fs::read_to_string(destination.join("nested/draft.txt")).unwrap(),
+                "draft after folder move"
+            );
+            assert_eq!(
+                runtime.state.workspace.tabs[0].document.path,
+                destination.join("nested/draft.txt")
+            );
+            assert!(runtime.state.workspace.tabs[1].preview);
+            assert_eq!(
+                std::fs::read_to_string(preview).unwrap(),
+                "preview contents"
+            );
+            pump_autosave(&mut runtime, Duration::from_millis(150));
+            assert!(!source.exists());
+        }
+    }
+
+    #[test]
     fn autosave_external_conflict_keeps_edits_and_cancel_does_not_repeat_the_prompt() {
         use super::super::tests::runtime_for;
         let root = tempfile::tempdir().unwrap();
@@ -5538,6 +5622,95 @@ mod tests {
     }
 
     #[test]
+    fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_without_writes() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        git(&["init", "-b", "main"]);
+        std::fs::write(root.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::write(root.path().join("tracked.rs"), "head\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "tree fixture",
+        ]);
+        std::fs::write(root.path().join("tracked.rs"), "index\n").unwrap();
+        git(&["add", "tracked.rs"]);
+        std::fs::write(root.path().join("tracked.rs"), "disk\n").unwrap();
+        std::fs::create_dir(root.path().join("ignored")).unwrap();
+        std::fs::write(root.path().join("ignored/cache"), "ignored\n").unwrap();
+        std::fs::write(root.path().join(".hidden"), "hidden\n").unwrap();
+        std::fs::write(root.path().join("untracked.rs"), "untracked\n").unwrap();
+        let index = std::fs::read(root.path().join(".git/index")).unwrap();
+        for show_all in [false, true] {
+            let mut state = State::with_root(root.path().into());
+            state.directory = root.path().into();
+            state.config.explorer.respect_ignore = !show_all;
+            state.config.explorer.show_hidden = show_all;
+            host_tree_demo(&mut state);
+            let runtime = runtime_for(state);
+            for name in ["ignored", ".hidden"] {
+                assert_eq!(
+                    runtime
+                        .find(root.path().join(name).to_str().unwrap())
+                        .is_some(),
+                    show_all,
+                    "{name}"
+                );
+            }
+            for label in [
+                if show_all { "Hidden ✓" } else { "Hidden" },
+                if show_all { "Ignore" } else { "Ignore ✓" },
+            ] {
+                assert!(
+                    runtime
+                        .elements()
+                        .iter()
+                        .any(|e| e.text.as_deref() == Some(label)),
+                    "missing {label}"
+                );
+            }
+            for badge in ["MM", "??"] {
+                assert!(
+                    runtime
+                        .elements()
+                        .iter()
+                        .any(|e| e.text.as_deref() == Some(badge)),
+                    "missing {badge}"
+                );
+            }
+        }
+        assert_eq!(
+            std::fs::read(root.path().join(".git/index")).unwrap(),
+            index
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("tracked.rs")).unwrap(),
+            "disk\n"
+        );
+    }
+
+    #[test]
     fn explorer_controls_filter_real_git_ignores_and_persist_owner_preferences() {
         use super::super::tests::runtime_for;
         let root = tempfile::tempdir().unwrap();
@@ -5896,12 +6069,19 @@ mod tests {
         };
         git(&["init", "-b", "main"]);
         let path = root.path().join("notes.txt");
-        std::fs::write(&path, "head\n").unwrap();
+        let context = (0..80)
+            .map(|n| format!("unchanged {n}\n"))
+            .collect::<String>();
+        let head = format!("head\n{context}TAIL_HEAD\n");
+        let staged = format!("index\n{context}TAIL_INDEX\n");
+        let disk = format!("disk\n{context}TAIL_DISK\n");
+        let buffer = format!("buffer\n{context}TAIL_BUFFER\n");
+        std::fs::write(&path, &head).unwrap();
         git(&["add", "notes.txt"]);
         git(&["commit", "-m", "fixture"]);
-        std::fs::write(&path, "index\n").unwrap();
+        std::fs::write(&path, &staged).unwrap();
         git(&["add", "notes.txt"]);
-        std::fs::write(&path, "disk\n").unwrap();
+        std::fs::write(&path, &disk).unwrap();
         let index_path = root.path().join(".git/index");
         let index_before = std::fs::read(&index_path).unwrap();
         std::fs::write(
@@ -5911,7 +6091,7 @@ mod tests {
         .unwrap();
         let mut state = state(root.path());
         open(&mut state, &path);
-        state.workspace.tabs[0].edit.replace_text("buffer\n");
+        state.workspace.tabs[0].edit.replace_text(&buffer);
         let mut runtime = runtime_for(state);
         for (control, old, new) in [
             ("diff-current", "head", "buffer"),
@@ -5973,8 +6153,24 @@ mod tests {
         assert_eq!(runtime.state.workspace.diff.mode(), DiffMode::Unified);
         assert!(runtime.find("diff-next").is_some());
         assert!(runtime.find("return-terminal").is_some());
-        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "buffer\n");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "disk\n");
+        // Drive actual hunk buttons and inspect clipped rendered text, rather than
+        // asserting the diff model's private navigation cursor.
+        click(&mut runtime, "diff-next");
+        click(&mut runtime, "diff-next");
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let visible_text = |rt: &rune::Runtime<State>, text: &str| {
+            rt.elements().iter().any(|e| {
+                e.text.as_deref() == Some(text) && e.visible[2] > 0.0 && e.visible[3] > 0.0
+            })
+        };
+        assert!(visible_text(&runtime, "@@ -79,4 +79,4 @@"));
+        click(&mut runtime, "diff-prev");
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(visible_text(&runtime, "head"));
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, buffer);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), disk);
         assert_eq!(std::fs::read(index_path).unwrap(), index_before);
     }
 

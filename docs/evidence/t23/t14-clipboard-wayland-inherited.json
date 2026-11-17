@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "owner_mime_forms_snapshotted": 2,
+  "native_copy_exact_unicode": true,
+  "native_paste_real_pty_exact_utf8": true,
+  "same_session": true,
+  "window_backend": "Wayland",
+  "owner_clipboard_exact_after_provider_cleanup": true,
+  "evidence_freshness": "Original guarded public T14 final report. Native probes ran on the worker clipboard implementation before its independent Autosave4add integration merge and root empty-selection guard. Nonempty Copy/Paste code unchanged; final union runtime passed. Not rerun for T23.",
+  "final_integrated_runtime_blank_selection_guard": "e36d9a8c66b84b5a6c54a4cc8bb6bc5810297feb",
+  "worker_delivery_commit": "7a05d0721e3ee26c24c6e2564b5214b73b5d7ef4",
+  "native_source_commit": "Not embedded in original fixture report; worker delivery commit identifies the delivered implementation, not the probe binary revision."
+}
