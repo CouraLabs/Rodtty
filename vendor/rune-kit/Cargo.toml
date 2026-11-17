@@ -1,0 +1,19 @@
+[package]
+name = "rune-kit"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+rune = { path = "../rune", default-features = false }
+rune-highlights = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
+rune-mermaid = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90", optional = true }
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
+unicode-segmentation = "1.13"
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+
+[features]
+markdown = ["dep:pulldown-cmark"]
+mermaid = ["markdown", "dep:rune-mermaid"]
+frame-profile = ["rune/frame-profile"]

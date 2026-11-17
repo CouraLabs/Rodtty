@@ -779,6 +779,7 @@ fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> 
         )
     };
     rune_kit::Combobox::new(key, state, &options, move |s: &mut State| {
+        s.theme_family_picker.close();
         if terminal {
             &mut s.font_terminal
         } else {

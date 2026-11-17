@@ -1,0 +1,333 @@
+[
+  {
+    "cache": "catppuccin-LICENSE",
+    "repository": "catppuccin/palette",
+    "source_path": "LICENSE",
+    "git_blob_sha": "006383b861d7a9b11ebbaf84ec679b0e3c189bac",
+    "git_tree_sha": "07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd",
+    "source_url": "https://github.com/catppuccin/palette/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/catppuccin/palette/git/blobs/006383b861d7a9b11ebbaf84ec679b0e3c189bac"
+  },
+  {
+    "cache": "catppuccin-palette.json",
+    "repository": "catppuccin/palette",
+    "source_path": "palette.json",
+    "git_blob_sha": "2a5d25cb0b00033bb049d11ab12c8bed478bf4e8",
+    "git_tree_sha": "07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd",
+    "source_url": "https://github.com/catppuccin/palette/blob/HEAD/palette.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/catppuccin/palette/git/blobs/2a5d25cb0b00033bb049d11ab12c8bed478bf4e8"
+  },
+  {
+    "cache": "dracula-LICENSE",
+    "repository": "dracula/dracula-theme",
+    "source_path": "LICENSE",
+    "git_blob_sha": "539c60a65b75495af04d3a28f887d89b50d919b2",
+    "git_tree_sha": "8d33e5492b56740c4857c5ebe7c5d5ab4040caf1",
+    "source_url": "https://github.com/dracula/dracula-theme/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/dracula/dracula-theme/git/blobs/539c60a65b75495af04d3a28f887d89b50d919b2"
+  },
+  {
+    "cache": "dracula-README.md",
+    "repository": "dracula/dracula-theme",
+    "source_path": "README.md",
+    "git_blob_sha": "a737b59ff9e4944f0eac8a95a7defecfefb066c1",
+    "git_tree_sha": "8d33e5492b56740c4857c5ebe7c5d5ab4040caf1",
+    "source_url": "https://github.com/dracula/dracula-theme/blob/HEAD/README.md",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/dracula/dracula-theme/git/blobs/a737b59ff9e4944f0eac8a95a7defecfefb066c1"
+  },
+  {
+    "cache": "dracula-vscode-LICENSE",
+    "repository": "dracula/visual-studio-code",
+    "source_path": "LICENSE",
+    "git_blob_sha": "dcaf6d7f61eea6f51ad273171a53458f4be58f36",
+    "git_tree_sha": "b50e62e320906d5f57a8bf05fd6ddf23b890d6dd",
+    "source_url": "https://github.com/dracula/visual-studio-code/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/dracula/visual-studio-code/git/blobs/dcaf6d7f61eea6f51ad273171a53458f4be58f36"
+  },
+  {
+    "cache": "dracula-vscode.yml",
+    "repository": "dracula/visual-studio-code",
+    "source_path": "src/dracula.yml",
+    "git_blob_sha": "5cb6ff53702ff076e368cece3b88bd2154974b97",
+    "git_tree_sha": "b50e62e320906d5f57a8bf05fd6ddf23b890d6dd",
+    "source_url": "https://github.com/dracula/visual-studio-code/blob/HEAD/src/dracula.yml",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/dracula/visual-studio-code/git/blobs/5cb6ff53702ff076e368cece3b88bd2154974b97"
+  },
+  {
+    "cache": "tokyonight-LICENSE",
+    "repository": "enkia/tokyo-night-vscode-theme",
+    "source_path": "LICENSE.txt",
+    "git_blob_sha": "c89cbda467899735e73d6f5b69d3395113101054",
+    "git_tree_sha": "7c0f11eaef322f293621ca7befe462214b7ea468",
+    "source_url": "https://github.com/enkia/tokyo-night-vscode-theme/blob/HEAD/LICENSE.txt",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/enkia/tokyo-night-vscode-theme/git/blobs/c89cbda467899735e73d6f5b69d3395113101054"
+  },
+  {
+    "cache": "tokyonight-light.json",
+    "repository": "enkia/tokyo-night-vscode-theme",
+    "source_path": "themes/tokyo-night-light-color-theme.json",
+    "git_blob_sha": "ff41c78231e9477095c76c13b187db77d7acd01d",
+    "git_tree_sha": "7c0f11eaef322f293621ca7befe462214b7ea468",
+    "source_url": "https://github.com/enkia/tokyo-night-vscode-theme/blob/HEAD/themes/tokyo-night-light-color-theme.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/enkia/tokyo-night-vscode-theme/git/blobs/ff41c78231e9477095c76c13b187db77d7acd01d"
+  },
+  {
+    "cache": "tokyonight-dark.json",
+    "repository": "enkia/tokyo-night-vscode-theme",
+    "source_path": "themes/tokyo-night-color-theme.json",
+    "git_blob_sha": "b663cb050c1278a5a81b428a9dea0fee9e24b0f4",
+    "git_tree_sha": "7c0f11eaef322f293621ca7befe462214b7ea468",
+    "source_url": "https://github.com/enkia/tokyo-night-vscode-theme/blob/HEAD/themes/tokyo-night-color-theme.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/enkia/tokyo-night-vscode-theme/git/blobs/b663cb050c1278a5a81b428a9dea0fee9e24b0f4"
+  },
+  {
+    "cache": "nord-vscode-LICENSE",
+    "repository": "nordtheme/nord",
+    "source_path": "license",
+    "git_blob_sha": "996f8fb61226844c6bbd2167a8b1a118be10609f",
+    "git_tree_sha": "1cef71605416a222e57225b544540ce0fcec18d4",
+    "source_url": "https://github.com/nordtheme/nord/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/nord/git/blobs/996f8fb61226844c6bbd2167a8b1a118be10609f"
+  },
+  {
+    "cache": "nord-LICENSE",
+    "repository": "nordtheme/nord",
+    "source_path": "license",
+    "git_blob_sha": "996f8fb61226844c6bbd2167a8b1a118be10609f",
+    "git_tree_sha": "1cef71605416a222e57225b544540ce0fcec18d4",
+    "source_url": "https://github.com/nordtheme/nord/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/nord/git/blobs/996f8fb61226844c6bbd2167a8b1a118be10609f"
+  },
+  {
+    "cache": "nord.scss",
+    "repository": "nordtheme/nord",
+    "source_path": "src/nord.scss",
+    "git_blob_sha": "83e7da1e818460032f8b80d1e9df202d014b8466",
+    "git_tree_sha": "1cef71605416a222e57225b544540ce0fcec18d4",
+    "source_url": "https://github.com/nordtheme/nord/blob/HEAD/src/nord.scss",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/nord/git/blobs/83e7da1e818460032f8b80d1e9df202d014b8466"
+  },
+  {
+    "cache": "nord-vscode-LICENSE",
+    "repository": "nordtheme/visual-studio-code",
+    "source_path": "license",
+    "git_blob_sha": "996f8fb61226844c6bbd2167a8b1a118be10609f",
+    "git_tree_sha": "8ead09822c02d0d49d0f764104505e5a34d3689f",
+    "source_url": "https://github.com/nordtheme/visual-studio-code/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/visual-studio-code/git/blobs/996f8fb61226844c6bbd2167a8b1a118be10609f"
+  },
+  {
+    "cache": "nord-dark.json",
+    "repository": "nordtheme/visual-studio-code",
+    "source_path": "themes/nord-color-theme.json",
+    "git_blob_sha": "c67473a7b6c4f9c804b2090fee3a779496996818",
+    "git_tree_sha": "8ead09822c02d0d49d0f764104505e5a34d3689f",
+    "source_url": "https://github.com/nordtheme/visual-studio-code/blob/HEAD/themes/nord-color-theme.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/visual-studio-code/git/blobs/c67473a7b6c4f9c804b2090fee3a779496996818"
+  },
+  {
+    "cache": "nord-LICENSE",
+    "repository": "nordtheme/visual-studio-code",
+    "source_path": "license",
+    "git_blob_sha": "996f8fb61226844c6bbd2167a8b1a118be10609f",
+    "git_tree_sha": "8ead09822c02d0d49d0f764104505e5a34d3689f",
+    "source_url": "https://github.com/nordtheme/visual-studio-code/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/nordtheme/visual-studio-code/git/blobs/996f8fb61226844c6bbd2167a8b1a118be10609f"
+  },
+  {
+    "cache": "gruvbox-README.md",
+    "repository": "morhetz/gruvbox",
+    "source_path": "README.md",
+    "git_blob_sha": "008de69c071f2b783b8822739e0d6258dbde18c4",
+    "git_tree_sha": "ef8864bb42bf244f0295d1c5a403b27e3d139695",
+    "source_url": "https://github.com/morhetz/gruvbox/blob/HEAD/README.md",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/morhetz/gruvbox/git/blobs/008de69c071f2b783b8822739e0d6258dbde18c4"
+  },
+  {
+    "cache": "gruvbox.vim",
+    "repository": "morhetz/gruvbox",
+    "source_path": "colors/gruvbox.vim",
+    "git_blob_sha": "66246fba24fd49eeb50dd833094d272f0bbab640",
+    "git_tree_sha": "ef8864bb42bf244f0295d1c5a403b27e3d139695",
+    "source_url": "https://github.com/morhetz/gruvbox/blob/HEAD/colors/gruvbox.vim",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/morhetz/gruvbox/git/blobs/66246fba24fd49eeb50dd833094d272f0bbab640"
+  },
+  {
+    "cache": "onedarkpro-LICENSE",
+    "repository": "Binaryify/OneDark-Pro",
+    "source_path": "LICENSE.txt",
+    "git_blob_sha": "92225c7acdd47c23bcad8831b5e3caab4598404a",
+    "git_tree_sha": "75c80ab18d90655e05ad837bb8d89f5e68d5ce53",
+    "source_url": "https://github.com/Binaryify/OneDark-Pro/blob/HEAD/LICENSE.txt",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/Binaryify/OneDark-Pro/git/blobs/92225c7acdd47c23bcad8831b5e3caab4598404a"
+  },
+  {
+    "cache": "onedarkpro-dark.json",
+    "repository": "Binaryify/OneDark-Pro",
+    "source_path": "themes/OneDark-Pro.json",
+    "git_blob_sha": "c13833d2c871edf8fd5fc79e41d65c33577ccd66",
+    "git_tree_sha": "75c80ab18d90655e05ad837bb8d89f5e68d5ce53",
+    "source_url": "https://github.com/Binaryify/OneDark-Pro/blob/HEAD/themes/OneDark-Pro.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/Binaryify/OneDark-Pro/git/blobs/c13833d2c871edf8fd5fc79e41d65c33577ccd66"
+  },
+  {
+    "cache": "nightowl-LICENSE",
+    "repository": "sdras/night-owl-vscode-theme",
+    "source_path": "LICENSE.md",
+    "git_blob_sha": "e1de2ebbb6c9de263842a913f6e57e9905645708",
+    "git_tree_sha": "cc291eba7976b20d7c66bde6883c27b902196b07",
+    "source_url": "https://github.com/sdras/night-owl-vscode-theme/blob/HEAD/LICENSE.md",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sdras/night-owl-vscode-theme/git/blobs/e1de2ebbb6c9de263842a913f6e57e9905645708"
+  },
+  {
+    "cache": "nightowl-light.json",
+    "repository": "sdras/night-owl-vscode-theme",
+    "source_path": "themes/Night Owl-Light-color-theme.json",
+    "git_blob_sha": "e2f9bf33d327af2a92da936115f5c832f147f2f8",
+    "git_tree_sha": "cc291eba7976b20d7c66bde6883c27b902196b07",
+    "source_url": "https://github.com/sdras/night-owl-vscode-theme/blob/HEAD/themes/Night Owl-Light-color-theme.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sdras/night-owl-vscode-theme/git/blobs/e2f9bf33d327af2a92da936115f5c832f147f2f8"
+  },
+  {
+    "cache": "nightowl-dark.json",
+    "repository": "sdras/night-owl-vscode-theme",
+    "source_path": "themes/Night Owl-color-theme.json",
+    "git_blob_sha": "729b426531cb574f5d9c8dd425209c83a8103056",
+    "git_tree_sha": "cc291eba7976b20d7c66bde6883c27b902196b07",
+    "source_url": "https://github.com/sdras/night-owl-vscode-theme/blob/HEAD/themes/Night Owl-color-theme.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sdras/night-owl-vscode-theme/git/blobs/729b426531cb574f5d9c8dd425209c83a8103056"
+  },
+  {
+    "cache": "ayu-v7.3.2-LICENSE",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "license",
+    "git_blob_sha": "d2c9832320bb394d44e11d1a3c38f869e51b8634",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/d2c9832320bb394d44e11d1a3c38f869e51b8634"
+  },
+  {
+    "cache": "ayu-light.yaml",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "themes/light.yaml",
+    "git_blob_sha": "b178736e6cc34ba143789d43d2016b9e728a7108",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/themes/light.yaml",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/b178736e6cc34ba143789d43d2016b9e728a7108"
+  },
+  {
+    "cache": "ayu-dark.yaml",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "themes/dark.yaml",
+    "git_blob_sha": "175ae7f1a5b010722daacd379a3bb5e925ef7000",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/themes/dark.yaml",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/175ae7f1a5b010722daacd379a3bb5e925ef7000"
+  },
+  {
+    "cache": "ayu-README.md",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "README.md",
+    "git_blob_sha": "8960305de5950670c77cee31ccd5cb3dc6886111",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/README.md",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/8960305de5950670c77cee31ccd5cb3dc6886111"
+  },
+  {
+    "cache": "ayu-LICENSE",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "license",
+    "git_blob_sha": "d2c9832320bb394d44e11d1a3c38f869e51b8634",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/license",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/d2c9832320bb394d44e11d1a3c38f869e51b8634"
+  },
+  {
+    "cache": "ayu-colors.ts",
+    "repository": "ayu-theme/ayu-colors",
+    "source_path": "src/colors.ts",
+    "git_blob_sha": "7c4483eddf31bfdbd72d5c83a8507ede39b07b3c",
+    "git_tree_sha": "c6e86054896ef10c69ba899dc11fdad0e004d4d3",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/HEAD/src/colors.ts",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/ayu-theme/ayu-colors/git/blobs/7c4483eddf31bfdbd72d5c83a8507ede39b07b3c"
+  },
+  {
+    "cache": "solarized-xresources",
+    "repository": "altercation/solarized",
+    "source_path": "xresources/solarized",
+    "git_blob_sha": "059748b9ec668b757bbefd3dbc0bf25a9f348bcb",
+    "git_tree_sha": "62f656a02f93c5190a8753159e34b385588d5ff3",
+    "source_url": "https://github.com/altercation/solarized/blob/HEAD/xresources/solarized",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/altercation/solarized/git/blobs/059748b9ec668b757bbefd3dbc0bf25a9f348bcb"
+  },
+  {
+    "cache": "solarized-LICENSE",
+    "repository": "altercation/solarized",
+    "source_path": "xresources/LICENSE",
+    "git_blob_sha": "ee08d7e44f15108ef5359550399dad55955b56ca",
+    "git_tree_sha": "62f656a02f93c5190a8753159e34b385588d5ff3",
+    "source_url": "https://github.com/altercation/solarized/blob/HEAD/xresources/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/altercation/solarized/git/blobs/ee08d7e44f15108ef5359550399dad55955b56ca"
+  },
+  {
+    "cache": "solarized.vim",
+    "repository": "altercation/solarized",
+    "source_path": "vim-colors-solarized/colors/solarized.vim",
+    "git_blob_sha": "70f52238a9f9abf0b20a2085a4aa6ac5b80212f0",
+    "git_tree_sha": "62f656a02f93c5190a8753159e34b385588d5ff3",
+    "source_url": "https://github.com/altercation/solarized/blob/HEAD/vim-colors-solarized/colors/solarized.vim",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/altercation/solarized/git/blobs/70f52238a9f9abf0b20a2085a4aa6ac5b80212f0"
+  },
+  {
+    "cache": "ayu-v7.3.2-dark.ts",
+    "repository": "ayu-theme/ayu-colors",
+    "revision": "b0a0ad47792ef7e9e70f272798dcd7fce357bd0c",
+    "source_path": "src/dark.ts",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c/src/dark.ts"
+  },
+  {
+    "cache": "ayu-v7.3.2-light.ts",
+    "repository": "ayu-theme/ayu-colors",
+    "revision": "b0a0ad47792ef7e9e70f272798dcd7fce357bd0c",
+    "source_path": "src/light.ts",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c/src/light.ts"
+  },
+  {
+    "cache": "ayu-v7.3.2-LICENSE",
+    "repository": "ayu-theme/ayu-colors",
+    "revision": "b0a0ad47792ef7e9e70f272798dcd7fce357bd0c",
+    "source_path": "license",
+    "source_url": "https://github.com/ayu-theme/ayu-colors/blob/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c/license"
+  }
+]
