@@ -4,7 +4,7 @@ use winit::window::{ResizeDirection, Window};
 /// Window-local logical coordinates, independent of app zoom. Kept at the native
 /// boundary so a Wayland request uses the original winit pointer seat and serial.
 pub(super) fn resize_edge(window: &Window, border: f32, point: (f32, f32)) -> Option<ResizeDirection> {
-    if !cfg!(target_os = "linux") || border <= 0.0 || window.is_decorated() || !window.is_resizable()
+    if !cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) || border <= 0.0 || window.is_decorated() || !window.is_resizable()
         || window.is_maximized() || window.fullscreen().is_some() { return None; }
     let size = window.inner_size().to_logical::<f32>(window.scale_factor());
     let (x, y) = point;

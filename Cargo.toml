@@ -37,6 +37,7 @@ read-fonts = { version = "0.41", optional = true }
 nix = { version = "0.31", features = ["signal", "process"] }
 
 [patch.crates-io]
+vte = { path = "vendor/vte" }
 wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
 winit = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
 parley_engine = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }

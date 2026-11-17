@@ -72,10 +72,10 @@ pub(crate) const DEFAULT_MIN_SIZE: (f32, f32) = (420.0, 400.0);
 pub struct WindowOptions {
     pub transparent: bool,
     pub borderless: bool,
-    /// App-owned frame hit band in logical window points. Linux only: resize begins
-    /// in the immediate native mouse-down, using winit's pressed Wayland seat serial.
+    /// App-owned frame hit band in logical window points. Linux/Windows start winit
+    /// resize in native mouse-down (preserving the Wayland seat serial); macOS tracks
+    /// the native AppKit frame/global pointer until mouse-up on the main thread.
     /// Zero disables it. Ignored for decorated, maximized, fullscreen or fixed windows.
-    /// macOS requires a separate AppKit resize adapter; winit does not support it.
     pub custom_frame_resize_border: f32,
     /// Clicks, and so hover, pass to whatever is below.
     pub click_through: bool,
@@ -159,6 +159,14 @@ impl WindowOptions {
             .with_decorations(!self.borderless)
             .with_visible(visible)
             .with_window_level(if self.always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+        #[cfg(target_os = "windows")]
+        if self.borderless && self.custom_frame_resize_border > 0.0 {
+            use winit::platform::windows::WindowAttributesExtWindows;
+            // The pinned winit shadow path adds a visible 1px OS border via
+            // WM_NCCALCSIZE. Disable only that opt-in path for app-drawn frames;
+            // leave winit's native sizing styles intact for AeroSnap/restore.
+            attrs = attrs.with_undecorated_shadow(false);
+        }
         if let Some((w, h)) = self.max_size { attrs = attrs.with_max_inner_size(LogicalSize::new(w, h)); }
         if let Some((x, y)) = self.position { attrs = attrs.with_position(PhysicalPosition::new(x, y)); }
         if let Some((w, h)) = self.physical_size { attrs = attrs.with_inner_size(PhysicalSize::new(w, h)); }

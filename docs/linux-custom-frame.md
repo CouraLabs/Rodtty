@@ -16,9 +16,11 @@ windows and fixed/decorated windows. Native resize cursors track all eight
 edge/corner directions. The band uses logical window points independently of app
 zoom, and winit continues to enforce the minimum window size.
 
-Windows/macOS keep their native decorations until their separate adapters opt in
-to the shared app frame. winit resize is unsupported on macOS; no Mac resize
-implementation or Windows/Mac native runtime validation is claimed here.
+[Windows](windows-custom-frame.md) now opts into the shared winit resize adapter
+and right-side controls; native Windows execution remains pending.
+[macOS](macos-custom-frame.md) now uses its own AppKit resize adapter and left
+controls; native Mac execution remains pending. No Windows/Mac native runtime
+validation is claimed by this Linux evidence.
 
 ## Native validation
 
