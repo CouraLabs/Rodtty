@@ -118,6 +118,16 @@ and are also available under Files in Settings. Root and expanded folders live i
 `workspace-state.json`; refresh retains expansion and selection. File and Git scans
 run on the file worker, with loading and folder errors shown in the explorer.
 
+Move to Trash is available in the explorer context menu and command palette.
+Files settings provides a live, resettable confirmation preference
+(`explorer.confirm_deletion`, default `true`). Permanent deletion always requires
+an explicit decision after the host Trash fails. Unsaved files, including open
+folder descendants, offer Save As, Discard, or Cancel. Save As must preserve work
+outside the removed item; existing destinations require a fresh collision
+choice. Files, editor tabs, and restored workspace paths change only after the
+selected worker operation succeeds. Background file work keeps terminal input
+available; owner decisions remain modal and affected editor work stays protected.
+
 Linux draws the complete themed window frame and right-side controls. Empty header
 space drags the window; double-click maximizes/restores it; all edges/corners resize.
 Custom close follows the same unsaved-file and session lifecycle as menu closure.
@@ -151,6 +161,15 @@ This opens a window, runs a command, closes the window while output continues, r
 `--frame-check <report.json>` is driven by the isolated KWin native input harness described in the custom-frame report. It exercises actual pointer resize/drag/controls, compositor/native state, dirty-close cancellation and the lifecycle below.
 
 `--session-policy-check <report.json>` additionally exercises native Ask/Cancel/Keep/Quit policies, dirty Save/close/reopen, tab policies, all three new-tab directory modes, immutable command snapshots, background output and same-session relaunch.
+
+`--trash-check <report.json>` additionally checks actual host Trash and the native
+window/worker dirty-folder Save As, Discard and Cancel flow. Use a fresh
+`RODTTY_HOME`, `TMPDIR` under the binary's target directory, and a matching
+`GIT_CEILING_DIRECTORIES`. On Linux, set `XDG_DATA_HOME` to a directory inside that
+isolated `RODTTY_HOME`; the check never reads the owner's Trash. Windows/macOS
+checks require a disposable OS account and `RODTTY_DISPOSABLE_TRASH_ACCOUNT=1`.
+Native Windows/macOS execution remains pending; metadata compilation alone does
+not qualify their runtime behavior.
 
 `--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. `--font-check <report.json>` also discovers native fonts, changes UI and terminal families and UI, terminal and editor sizes live, checks the full-screen application sees the updated PTY dimensions, and verifies unsaved editor work and the terminal session survive. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
 

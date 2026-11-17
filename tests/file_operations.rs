@@ -726,3 +726,83 @@ fn distinct_case_differing_hardlinks_still_require_a_collision_decision() {
     assert_eq!(fs::read_to_string(source).unwrap(), "shared inode");
     assert_eq!(fs::read_to_string(target).unwrap(), "shared inode");
 }
+
+#[test]
+fn save_as_preserves_unsaved_text_outside_removal_and_requires_fresh_collision_consent() {
+    use rodtty::files::Document;
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("remove-me");
+    fs::create_dir(&folder).unwrap();
+    let source = folder.join("notes.txt");
+    fs::write(&source, "saved source").unwrap();
+    let target = root.path().join("preserved.txt");
+    fs::write(&target, "existing destination").unwrap();
+    let request = OperationRequest {
+        operation: FileOperation::SaveAs {
+            document: Document::open(&source).unwrap(),
+            text: "unsaved work".into(),
+            removing: folder.clone(),
+            protected: Vec::new(),
+        },
+        target: target.clone(),
+    };
+    let ticket = collision(request.clone());
+    fs::write(&target, "external edit").unwrap();
+    let ticket = match request
+        .clone()
+        .execute(Some((ticket, CollisionChoice::Replace)))
+        .unwrap()
+    {
+        OperationOutcome::Collision(ticket) => ticket,
+        other => panic!("expected fresh collision decision: {other:?}"),
+    };
+    assert_eq!(fs::read_to_string(&target).unwrap(), "external edit");
+    let saved = match request
+        .execute(Some((ticket, CollisionChoice::KeepBoth)))
+        .unwrap()
+    {
+        OperationOutcome::SavedAs(document) => document,
+        other => panic!("expected saved work: {other:?}"),
+    };
+    assert_eq!(saved.path, root.path().join("preserved copy.txt"));
+    assert_eq!(fs::read_to_string(saved.path).unwrap(), "unsaved work");
+    assert_eq!(fs::read_to_string(source).unwrap(), "saved source");
+    assert_eq!(fs::read_to_string(target).unwrap(), "external edit");
+}
+
+#[cfg(unix)]
+#[test]
+fn save_as_rejects_aliases_inside_removal_and_destinations_open_in_other_editors() {
+    use rodtty::files::Document;
+    let root = tempfile::tempdir().unwrap();
+    let removing = root.path().join("work");
+    fs::create_dir(&removing).unwrap();
+    let source = removing.join("notes.txt");
+    fs::write(&source, "saved original").unwrap();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&removing, &alias).unwrap();
+    let protected = root.path().join("open.txt");
+    fs::write(&protected, "unrelated saved version").unwrap();
+    for (target, phrase) in [
+        (alias.join("preserved.txt"), "outside"),
+        (protected.clone(), "another editor"),
+    ] {
+        let result = OperationRequest {
+            operation: FileOperation::SaveAs {
+                document: Document::open(&source).unwrap(),
+                text: "unsaved work".into(),
+                removing: removing.clone(),
+                protected: vec![protected.clone()],
+            },
+            target,
+        }
+        .execute(None);
+        assert!(result.unwrap_err().to_string().contains(phrase));
+    }
+    assert_eq!(fs::read_to_string(&source).unwrap(), "saved original");
+    assert_eq!(
+        fs::read_to_string(&protected).unwrap(),
+        "unrelated saved version"
+    );
+    assert!(!removing.join("preserved.txt").exists());
+}
