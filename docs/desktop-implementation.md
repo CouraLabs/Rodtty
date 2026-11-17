@@ -14,6 +14,8 @@ Settings opens as an editor-pane tab beside the terminal. Its sections are searc
 
 The editor provides file tabs, syntax highlighting, undo/redo, find/replace, and saving for UTF-8 text files up to 2 MiB. Saves preserve BOMs, line endings, and file permissions. External changes reload clean buffers automatically; dirty buffers keep their edits and offer conflict resolution. Closing a dirty file/window or quitting offers Save, Discard, or Cancel. Unsaved drafts are not recovered after an application crash.
 
+Autosave remains opt-in through searchable Editor Settings: Explicit Save, After Delay, or Editor Focus Loss. Delay and policy persist in owner preferences and apply live. All policies use the version-protected asynchronous save worker; request generations reject stale completions and later edits remain dirty. File operations and pending owner decisions defer autosave, and failed/cancelled generations do not repeatedly reopen prompts. Diff inspection does not trigger focus-loss saving or mutate the Git index.
+
 Read-only Git inspection uses the host-installed Git executable and supports linked worktrees, untracked files, staged renames, and repositories without a first commit. Current compares the editable buffer with HEAD; Unstaged compares disk with the index; Staged compares the index with HEAD. Inline and side-by-side views include hunk navigation and automatic layout selection. Diff inspection does not save the buffer or modify Git's index.
 
 Filesystem work and Git subprocesses run outside the UI thread. Version checks prevent delayed reload/save results from replacing newer editor text. See [ADR-0006](adr/0006-preserve-file-versions-and-inspect-host-git.md).

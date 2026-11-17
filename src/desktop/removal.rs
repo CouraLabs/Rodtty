@@ -234,6 +234,19 @@ impl State {
         if self.workspace.operation_busy {
             return;
         }
+        if let Some(path) = self
+            .workspace
+            .removal
+            .as_ref()
+            .and_then(|r| r.plan.as_ref())
+            .map(|p| &p.path)
+        {
+            for tab in &mut self.workspace.tabs {
+                if tab.document.path.starts_with(path) {
+                    tab.autosave.suspend(tab.revision);
+                }
+            }
+        }
         self.workspace.removal = None;
         self.pending = None;
         self.workspace.operation_error = None;
