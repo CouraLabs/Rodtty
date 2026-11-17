@@ -37,6 +37,27 @@ pub(super) fn terminal_menu(s: &mut State, point: rune::PointerPress, tx: &mut T
     });
 }
 
+impl State {
+    /// Target the terminal action explicitly. A palette's exiting modal must not
+    /// capture the asynchronous paste, and a later focus/session change cancels it.
+    pub(super) fn request_terminal_paste(&mut self, tx: &mut Tx) {
+        let Some(id) = self.active().map(Session::id) else {
+            return;
+        };
+        tx.read_clipboard(move |s: &mut State, content, tx| {
+            let (_, visible, _) = workspace::pane_visibility(s, s.workspace.body_width);
+            if visible
+                && s.workspace.terminal_focus
+                && tx.focused().is_none()
+                && !s.application_overlay_open()
+                && s.active().is_some_and(|session| session.id() == id)
+            {
+                s.paste(content.text());
+            }
+        });
+    }
+}
+
 /// Exercise the actual asynchronous host clipboard worker and a real terminal session.
 /// The external native harness preserves arbitrary offered MIME data, verifies the copy,
 /// and supplies only the public fixture below; owner clipboard contents never enter reports.
@@ -59,10 +80,17 @@ pub(super) fn native_check(
     handle.update(move |s, tx| {
         let _ = id_tx.send(s.active().unwrap().id());
         s.selection = Some(((0, 0), (0, 11)));
-        s.dispatch(AppAction::CopyTerminal, tx);
+        tx.blur();
     });
     let id = id_rx.recv_timeout(Duration::from_secs(10))?;
     std::fs::write(report.with_extension("ready.json"), b"{\"phase\":\"copy\"}")?;
+    let copy = report.with_extension("copy.json");
+    let start = Instant::now();
+    while !copy.exists() && start.elapsed() < Duration::from_secs(30) {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    anyhow::ensure!(copy.exists(), "external native activation timed out");
+    handle.update(|s, tx| s.dispatch(AppAction::CopyTerminal, tx));
     let input = report.with_extension("input.json");
     let start = Instant::now();
     while !input.exists() && start.elapsed() < Duration::from_secs(30) {
@@ -82,7 +110,7 @@ pub(super) fn native_check(
     handle.update(|s, tx| s.dispatch(AppAction::PasteTerminal, tx));
     wait_app(handle, |s| {
         let output = s.with_screen(vt100::Screen::contents);
-        output.contains("4f 6c c3 a1 20 e4 b8 96 e7 95 8c 20 f0 9f a6 80")
+        output.contains("4f 6c c3 a1 20 e4 b8 96 e7 95 8c 20 f0 9f 90 9a")
             && output.contains("CLIPBOARD_PASTE_DONE")
     })?;
     wait_app(handle, move |s| {

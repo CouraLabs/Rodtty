@@ -128,11 +128,14 @@ int main() {
         auto command = QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
         QJsonObject now; bool readable = content(now);
         const auto fixture = QString::fromUtf8("Olá 世界 🦀").toUtf8();
-        bool is_fixture = QByteArray::fromBase64(now.value("text/plain").toString().toLatin1()) == fixture;
-        QJsonObject result{{"clipboard_access", readable}, {"is_fixture", is_fixture}};
+        const auto paste_fixture = QString::fromUtf8("Olá 世界 🐚").toUtf8();
+        const auto plain = QByteArray::fromBase64(now.value("text/plain").toString().toLatin1());
+        bool copy_fixture = plain == fixture;
+        bool is_fixture = copy_fixture || plain == paste_fixture;
+        QJsonObject result{{"clipboard_access", readable}, {"is_fixture", is_fixture}, {"is_copy_fixture", copy_fixture}};
         if (command.contains("snapshot") && readable) { saved = now; result.insert("content", saved); }
         if (command.contains("set_fixture") && is_fixture && !saved.isEmpty()) {
-            const auto encoded = QString::fromLatin1(fixture.toBase64());
+            const auto encoded = QString::fromLatin1(paste_fixture.toBase64());
             publish(device, QJsonObject{{"text/plain", encoded}, {"text/plain;charset=utf-8", encoded}});
             result.insert("fixture_set", true);
         }

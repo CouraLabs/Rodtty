@@ -9,6 +9,7 @@ Shared actions are driven through AppHandle; physical bindings/menu routing are
 covered by Rune runtime tests. Windows/macOS native execution remains pending.
 """
 import argparse
+import ctypes
 import importlib.util
 import json
 import os
@@ -20,11 +21,9 @@ import time
 
 
 class Owner:
-    def __init__(self, binary):
-        env = os.environ.copy()
+    def __init__(self, binary, env=None):
         self.process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
         assert self.process.stdout.readline().strip() == 'ready', 'native clipboard reader failed'
-
 
     def command(self, command):
         self.process.stdin.write(json.dumps(command) + '\n')
@@ -35,6 +34,21 @@ class Owner:
     def close(self):
         self.process.stdin.close()
         self.process.wait(10)
+
+
+def x_selection_empty():
+    x = ctypes.CDLL('libX11.so.6')
+    x.XOpenDisplay.restype = ctypes.c_void_p
+    x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x.XInternAtom.restype = ctypes.c_ulong
+    x.XGetSelectionOwner.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    x.XGetSelectionOwner.restype = ctypes.c_ulong
+    x.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    display = x.XOpenDisplay(None)
+    assert display, 'native X11 display unavailable'
+    empty = x.XGetSelectionOwner(display, x.XInternAtom(display, b'CLIPBOARD', 0)) == 0
+    x.XCloseDisplay(display)
+    return empty
 
 
 def main():
@@ -56,6 +70,7 @@ def main():
     owner = None
     process = None
     restored = False
+    x_reader = None
     with tempfile.TemporaryDirectory(prefix='rodtty-native-clipboard-') as directory:
         directory = Path(directory)
         helper = directory / 'clipboard-owner'
@@ -73,7 +88,16 @@ def main():
             saved = initial.pop('content')  # Never include owner payloads in a report/log.
             assert initial['clipboard_access'] and saved, 'refusing test writes: native all-MIME snapshot unavailable'
             result['owner_mime_forms_snapshotted'] = len(saved)
-            for suffix in ['', '.ready.json', '.input.json']:
+            if args.backend == 'x11':
+                assert x_selection_empty(), 'refusing Xlib test writes: existing X selection needs a full snapshot'
+                result['x_selection_initially_empty'] = True
+                x_helper = directory / 'xlib-clipboard'
+                flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'Qt6Widgets'], text=True).split()
+                subprocess.run(['c++', '-std=c++17', '-fPIC', '-pie', str(Path(__file__).with_name('xlib-clipboard-probe.cpp')), '-o', str(x_helper), *flags], check=True)
+                x_env = os.environ.copy()
+                x_env['QT_QPA_PLATFORM'] = 'xcb'
+                x_reader = Owner(x_helper, env=x_env)
+            for suffix in ['', '.ready.json', '.copy.json', '.input.json']:
                 (report if not suffix else report.with_suffix(suffix)).unlink(missing_ok=True)
             env = os.environ.copy()
             env['RODTTY_HOME'] = str(directory / 'owner')
@@ -86,14 +110,19 @@ def main():
                 while not report.with_suffix('.ready.json').exists():
                     assert process.poll() is None and time.monotonic() < deadline, 'native app did not reach copy checkpoint'
                     time.sleep(.025)
+                compositor.pid = process.pid
+                activated = compositor.query('if(target) workspace.activeWindow=target;')
+                assert activated['target'], 'native clipboard app has no compositor window'
+                time.sleep(.3)
+                report.with_suffix('.copy.json').write_text('{"activated":true}')
                 deadline = time.monotonic() + 15
                 while True:
-                    observed = owner.command({})
-                    if observed['clipboard_access'] and observed['is_fixture']:
+                    observed = (x_reader or owner).command({})
+                    if observed['clipboard_access'] and observed['is_copy_fixture']:
                         break
                     assert time.monotonic() < deadline, 'native copy differs from exact Unicode fixture'
                     time.sleep(.025)
-                assert owner.command({'set_fixture': True}).get('fixture_set'), 'clipboard fixture ownership changed'
+                assert (x_reader or owner).command({'set_fixture': True}).get('fixture_set'), 'clipboard fixture ownership changed'
                 report.with_suffix('.input.json').write_text('{"copy_verified":true}')
                 assert process.wait(30) == 0, 'native app clipboard check failed'
             native = json.loads(report.read_text())
@@ -106,6 +135,10 @@ def main():
             if process and process.poll() is None:
                 process.terminate()
                 process.wait(10)
+            if x_reader:
+                x_reader.close()
+                result['x_selection_restored_empty'] = x_selection_empty()
+                result['passed'] = result['passed'] and result['x_selection_restored_empty']
             if owner and saved:
                 restored = owner.command({'restore': True, 'verify': saved}).get('original_forms_match', False)
                 # Let the manager request/retain every restored form while this
