@@ -30,6 +30,7 @@ pub(super) enum View {
 pub(super) struct Tab {
     pub id: u64,
     pub document: Document,
+    pub preview: bool,
     pub edit: TextEdit,
     pub mode: View,
     pub external: Option<TextFile>,
@@ -87,7 +88,8 @@ pub(super) struct Workspace {
     pub(super) last_scan: Instant,
     pub(super) last_follow: Option<PathBuf>,
     next_id: u64,
-    opening: Vec<PathBuf>,
+    opening: Vec<(PathBuf, bool)>,
+    latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
     restore_editor: Option<bool>,
     pub diff: DiffState,
@@ -145,6 +147,7 @@ impl Default for Workspace {
             last_follow: None,
             next_id: 1,
             opening: Vec::new(),
+            latest_activation: None,
             restore_active: None,
             restore_editor: None,
             diff: DiffState::default(),
@@ -454,31 +457,54 @@ impl State {
     }
 
     pub(super) fn open_file(&mut self, path: PathBuf) {
+        self.open_file_with_preview(path, false);
+    }
+
+    pub(super) fn preview_tree_selection(&mut self) {
+        if let Some(entry) = self.selected_entry().filter(|e| !e.directory) {
+            self.open_file_with_preview(entry.path, !self.config.single_click_keeps_open);
+        }
+    }
+
+    /// Common activation boundary: restoration and explicit Open keep a file;
+    /// explorer inspection may reuse only a clean, idle temporary tab.
+    pub(super) fn open_file_with_preview(&mut self, path: PathBuf, preview: bool) {
+        self.workspace.latest_activation = Some(path.clone());
         if let Some(i) = self
             .workspace
             .tabs
             .iter()
             .position(|tab| tab.document.path == path)
         {
-            self.activate_editor(i);
+            if !preview {
+                self.workspace.tabs[i].preview = false;
+            }
+            self.show_editor(i, !preview);
             return;
         }
-        if self.workspace.opening.contains(&path) {
+        if let Some((_, temporary)) = self.workspace.opening.iter_mut().find(|(p, _)| p == &path) {
+            *temporary &= preview;
             return;
         }
         if self.io(Job::Open(path.clone())) {
-            self.workspace.opening.push(path);
+            self.workspace.opening.push((path, preview));
             self.message = "Opening file…".into();
         }
     }
     pub(super) fn activate_editor(&mut self, index: usize) {
+        self.show_editor(index, true);
+    }
+
+    fn show_editor(&mut self, index: usize, focus: bool) {
         self.settings = false;
         self.workspace.explorer_revealed = false;
         self.workspace.terminal_focus = false;
         self.workspace.active = index;
         self.workspace.layout.editor = true;
         if let Some(tab) = self.workspace.tabs.get_mut(index) {
-            tab.edit.focused = tab.mode == View::Edit;
+            // Preview inspection keeps tree focus for continued keyboard
+            // browsing. Explicit Open and tab activation focus the editor.
+            tab.edit.focused = focus && tab.mode == View::Edit;
         }
         self.invalidate_diff(true);
     }
@@ -488,11 +514,13 @@ impl State {
         workspace.layout.files = workspace
             .tabs
             .iter()
+            .filter(|t| !t.preview)
             .map(|t| t.document.path.clone())
             .collect();
         workspace.layout.active_file = workspace
             .tabs
             .get(workspace.active)
+            .filter(|t| !t.preview)
             .map(|t| t.document.path.clone());
         if let Err(e) = workspace.layout.save(&self.root) {
             self.message = format!("Could not save workspace: {e:#}");
@@ -600,6 +628,9 @@ impl State {
             self.message = "This file is still being saved.".into();
             return;
         }
+        // Explicit saving expresses intent to keep the file and prevents a
+        // later inspection from replacing the tab while its save is queued.
+        tab.preview = false;
         tab.saving = true;
         tab.after_save = after;
         let job = Job::Save {
@@ -659,6 +690,7 @@ impl State {
     fn changed_editor(&mut self, id: u64) {
         if let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id) {
             tab.revision += 1;
+            tab.preview = false;
         }
     }
     fn file_key(&mut self, id: u64, event: &KeyEvent, tx: &mut Tx) -> bool {
@@ -697,6 +729,7 @@ impl State {
                     tab.edit.insert(&format!("\n{indent}"));
                 }
                 tab.revision += 1;
+                tab.preview = false;
             }
             return true;
         }
@@ -715,6 +748,7 @@ impl State {
                 if tab.edit.text.get(a..b) == Some(query.as_str()) {
                     tab.edit.insert(&replacement);
                     tab.revision += 1;
+                    tab.preview = false;
                 }
             }
             let start = tab.edit.focus;
@@ -742,6 +776,10 @@ impl State {
                 .edit
                 .text
                 .replace(&query, &self.workspace.replacement.text);
+            if updated == tab.edit.text {
+                return;
+            }
+            tab.preview = false;
             tab.edit.undo_group(|edit| {
                 edit.anchor = 0;
                 edit.focus = edit.text.len();
@@ -801,7 +839,16 @@ impl State {
                     }
                 }
                 Event::Open { path, result } => {
-                    self.workspace.opening.retain(|p| p != &path);
+                    let preview = self
+                        .workspace
+                        .opening
+                        .iter()
+                        .find(|(p, _)| p == &path)
+                        .is_some_and(|(_, preview)| *preview);
+                    self.workspace.opening.retain(|(p, _)| p != &path);
+                    if preview && self.workspace.latest_activation.as_ref() != Some(&path) {
+                        continue;
+                    }
                     match result {
                         Ok(document) => {
                             if let Some(i) = self
@@ -810,7 +857,7 @@ impl State {
                                 .iter()
                                 .position(|t| t.document.path == document.path)
                             {
-                                self.activate_editor(i);
+                                self.show_editor(i, !preview);
                                 continue;
                             }
                             let id = self.workspace.next_id;
@@ -822,25 +869,44 @@ impl State {
                             };
                             let mut edit = TextEdit::new(&document.saved.text);
                             edit.focused = mode == View::Edit;
-                            self.workspace.tabs.push(Tab {
-                                id,
-                                document,
-                                edit,
-                                mode,
-                                external: None,
-                                disk_error: None,
-                                dismissed: false,
-                                saving: false,
-                                revision: 0,
-                                baseline: 0,
-                                after_save: None,
-                            });
-                            let index = self.workspace.tabs.len() - 1;
+                            let replacement = preview
+                                .then(|| {
+                                    self.workspace.tabs.iter().position(|t| {
+                                        t.preview
+                                            && !t.dirty()
+                                            && !t.saving
+                                            && t.external.is_none()
+                                            && t.disk_error.is_none()
+                                            && t.after_save.is_none()
+                                    })
+                                })
+                                .flatten();
+                            if let Some(index) = replacement {
+                                self.workspace.tabs.remove(index);
+                            }
+                            let index = replacement.unwrap_or(self.workspace.tabs.len());
+                            self.workspace.tabs.insert(
+                                index,
+                                Tab {
+                                    id,
+                                    document,
+                                    preview,
+                                    edit,
+                                    mode,
+                                    external: None,
+                                    disk_error: None,
+                                    dismissed: false,
+                                    saving: false,
+                                    revision: 0,
+                                    baseline: 0,
+                                    after_save: None,
+                                },
+                            );
                             if self.workspace.restore_active.is_none()
                                 || self.workspace.restore_active.as_ref()
                                     == Some(&self.workspace.tabs[index].document.path)
                             {
-                                self.activate_editor(index);
+                                self.show_editor(index, !preview);
                             }
                             self.message.clear();
                         }
@@ -1250,8 +1316,9 @@ fn explorer(s: &State, a: &Appearance) -> El {
             item
         }
     })
-    .on_select(|s, _, _| {
+    .on_select(|s, _, tx| {
         s.workspace.terminal_focus = false;
+        s.dispatch(AppAction::PreviewExplorerSelection, tx);
     })
     .on_open(|s, _, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx))
     .build(s, a.kit())
@@ -1352,8 +1419,20 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .gap(2.0)
                 .center_y()
                 .child(super::tabs::interactive(
-                    button(a, format!("editor-tab-{id}"), name, move |s, tx| {
-                        s.dispatch(AppAction::ActivateEditor(i), tx)
+                    button(
+                        a,
+                        format!("editor-tab-{id}"),
+                        if tab.preview {
+                            format!("{name} (preview)")
+                        } else {
+                            name
+                        },
+                        move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
+                    )
+                    .on_double_press(move |s: &mut State| {
+                        if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
+                            tab.preview = false;
+                        }
                     })
                     .w(180.0)
                     .pl(30.0)
@@ -1379,6 +1458,12 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     .help(tab.document.path.to_string_lossy()),
                     super::tabs::Target::Editor(id),
                 ))
+                .children(tab.preview.then(|| {
+                    text("Preview")
+                        .key(format!("editor-preview-{id}"))
+                        .font(ui_style(10.0, 500.0))
+                        .color(a.accent())
+                }))
                 .children(
                     tab.dirty()
                         .then(|| text("•").font(ui_label()).color(a.accent())),
@@ -1601,6 +1686,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     tab.edit
                         .insert(&clipboard.text().replace("\r\n", "\n").replace('\r', "\n"));
                     tab.revision += 1;
+                    tab.preview = false;
                 }
                 true
             });
@@ -1914,6 +2000,7 @@ pub(super) fn demo(s: &mut State, diff: bool) {
     let new = edit.text.clone();
     s.workspace.tabs.push(Tab {
         id: 1,
+        preview: false,
         document,
         edit,
         mode: if diff {
@@ -1984,6 +2071,7 @@ pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
     let result = crate::git::diff(&path, &document.saved.text, Comparison::Current)?;
     s.workspace.tabs = vec![Tab {
         id: 1,
+        preview: false,
         edit: TextEdit::new(&document.saved.text),
         document,
         mode: View::Diff(Comparison::Current),
@@ -2064,6 +2152,7 @@ pub(super) fn icons_demo(s: &mut State) {
         });
         s.workspace.tabs.push(Tab {
             id: index as u64 + 1,
+            preview: false,
             document: Document {
                 path: root.join(name),
                 saved,
@@ -2390,6 +2479,351 @@ mod tests {
     fn open(state: &mut State, path: &std::path::Path) {
         state.open_file(path.to_owned());
         wait(state, |s| !s.workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn single_click_previews_reuse_one_visible_tab_and_double_click_keeps_it() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 3);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("a.txt (preview)")
+        }));
+        click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| {
+            s.workspace
+                .tabs
+                .iter()
+                .any(|t| t.document.path.ends_with("b.txt"))
+        });
+        assert_eq!(
+            runtime
+                .elements()
+                .iter()
+                .filter(|e| e
+                    .key
+                    .as_deref()
+                    .is_some_and(|k| k.starts_with("editor-tab-")))
+                .count(),
+            1
+        );
+        let (x, y) = runtime
+            .find(root.path().join("b.txt").to_str().unwrap())
+            .unwrap();
+        runtime.frame(1.0);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.1);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt")
+        }));
+        click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
+        runtime.update(|s, _| s.persist_workspace());
+        let layout = Layout::load(root.path()).unwrap();
+        assert_eq!(layout.files, vec![root.path().join("b.txt")]);
+        assert!(layout.active_file.is_none());
+    }
+
+    #[test]
+    fn late_preview_load_does_not_replace_a_file_explicitly_reopened_while_loading() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 2);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        runtime.update(|s, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx));
+        runtime.frame(0.0);
+        click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
+        // Explicit Open targets the existing retained tab before the worker's
+        // queued preview load is delivered, as a fast keyboard/palette user can.
+        runtime.update(|s, tx| {
+            s.workspace
+                .tree
+                .select(&root.path().join("a.txt").to_string_lossy());
+            s.dispatch(AppAction::ExplorerOpenSelection, tx);
+        });
+        wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+        assert_eq!(
+            runtime.state.workspace.tabs[runtime.state.workspace.active]
+                .document
+                .path,
+            root.path().join("a.txt")
+        );
+        assert!(!runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt (preview)")
+        }));
+    }
+
+    #[test]
+    fn preview_while_saving_keeps_the_saving_file_and_uses_normal_close_protection() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let a = root.path().join("a.txt");
+        let b = root.path().join("b.txt");
+        std::fs::write(&a, "saved").unwrap();
+        std::fs::write(&b, "other").unwrap();
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 2);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, a.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        // Queue the preview first so its result is delivered while A's real
+        // save is outstanding. Worker results still go through workspace_poll.
+        click(&mut runtime, b.to_str().unwrap());
+        runtime.update(|s, tx| {
+            s.dispatch(AppAction::SaveEditor(Some(1)), tx);
+            s.dispatch(AppAction::CloseEditor(Some(1)), tx);
+        });
+        assert_eq!(
+            runtime.state.message,
+            "Wait for the current save to finish."
+        );
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.opening.is_empty() && !s.workspace.tabs.iter().any(|t| t.saving)
+        });
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("a.txt")
+        }));
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt (preview)")
+        }));
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(Layout::load(root.path()).unwrap().files, vec![a.clone()]);
+        assert_eq!(std::fs::read_to_string(a).unwrap(), "saved");
+    }
+
+    #[test]
+    fn context_palette_and_double_click_during_load_all_keep_the_selected_file() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 3);
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime
+            .find(root.path().join("a.txt").to_str().unwrap())
+            .unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(0.0);
+        click(&mut runtime, "context-open-file");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        let (x, y) = runtime
+            .find(root.path().join("b.txt").to_str().unwrap())
+            .unwrap();
+        runtime.frame(1.0);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.1);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        // Do not poll the worker between the single and double clicks: the
+        // retention request must survive even when loading is still queued.
+        click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt")
+        }));
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("open selected item".into()),
+            Default::default(),
+        );
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(
+            Layout::load(root.path()).unwrap().files,
+            ["a.txt", "b.txt", "c.txt"].map(|name| root.path().join(name))
+        );
+    }
+
+    #[test]
+    fn editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let a = root.path().join("a.txt");
+        let b = root.path().join("b.txt");
+        std::fs::write(&a, "saved text").unwrap();
+        std::fs::write(&b, "another file").unwrap();
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 2);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, a.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        fill(&mut runtime, "file-editor-1", "my draft");
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("a.txt")
+        }));
+        press(
+            &mut runtime,
+            Key::Command('z'),
+            rune::Mods {
+                ctrl: true,
+                cmd: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "saved text");
+        assert!(
+            runtime.elements().iter().any(|e| e
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("a.txt")),
+            "undo does not make the tab temporary again"
+        );
+        fill(&mut runtime, "file-editor-1", "my draft");
+        click(&mut runtime, b.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
+        click(&mut runtime, "editor-tab-1");
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "my draft");
+        runtime.update(|s, tx| s.dispatch(AppAction::FindEditor, tx));
+        runtime.frame(0.0);
+        fill(&mut runtime, "editor-find", "draft");
+        press(&mut runtime, Key::Enter, Default::default());
+        let edit = &runtime.state.workspace.tabs[0].edit;
+        assert_eq!(
+            &edit.text[edit.anchor.min(edit.focus)..edit.anchor.max(edit.focus)],
+            "draft"
+        );
+        std::fs::write(&a, "external text").unwrap();
+        runtime.update(|s, _| s.workspace.last_scan = Instant::now() - Duration::from_secs(3));
+        wait_runtime(&mut runtime, |s| s.workspace.tabs[0].external.is_some());
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
+        wait_runtime(&mut runtime, |s| {
+            matches!(s.pending, Some(Pending::File(FilePrompt::Conflict { .. })))
+        });
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "external text");
+        runtime.update(|s, _| s.cancel_file_action());
+        click(&mut runtime, "editor-close-1");
+        assert!(matches!(
+            runtime.state.pending,
+            Some(Pending::File(FilePrompt::Unsaved { .. }))
+        ));
+        runtime.update(|s, _| s.cancel_file_action());
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(Layout::load(root.path()).unwrap().files, vec![a]);
+    }
+
+    #[test]
+    fn behavior_setting_applies_live_persists_resets_and_external_json_updates() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 4);
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
+        runtime.frame(0.0);
+        fill(&mut runtime, "settings-search", "single click");
+        click(&mut runtime, "single-click-keeps-open");
+        assert!(Config::load(root.path()).unwrap().single_click_keeps_open);
+        click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 1);
+        assert!(runtime.find("settings-tab").is_some());
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("a.txt")
+        }));
+        click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
+        click(&mut runtime, "settings");
+        click(&mut runtime, "reset-single-click-keeps-open");
+        assert!(!Config::load(root.path()).unwrap().single_click_keeps_open);
+        click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 3);
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("c.txt (preview)")
+        }));
+        let mut config = Config::load(root.path()).unwrap();
+        config.single_click_keeps_open = true;
+        config.save(root.path()).unwrap();
+        runtime.update(|s, _| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            s.poll_settings();
+        });
+        click(&mut runtime, root.path().join("d.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 4);
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("d.txt")
+        }));
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(
+            Layout::load(root.path()).unwrap().files,
+            ["a.txt", "b.txt", "d.txt"].map(|name| root.path().join(name))
+        );
+        let restored = self::state(root.path());
+        let mut restored = runtime_for(restored);
+        wait_runtime(&mut restored, |s| s.workspace.tabs.len() == 3);
+        assert!(restored.elements().iter().all(|e| {
+            !e.label
+                .as_deref()
+                .is_some_and(|label| label.contains("(preview)"))
+        }));
     }
 
     #[test]
@@ -3614,9 +4048,16 @@ mod tests {
         runtime.frame(0.0);
         press(&mut runtime, Key::Text("o".into()), Default::default());
         press(&mut runtime, Key::Enter, Default::default());
-        wait(&mut runtime.state, |s| !s.workspace.tabs.is_empty());
+        wait(&mut runtime.state, |s| {
+            s.workspace
+                .tabs
+                .iter()
+                .any(|t| t.document.path == root.path().join("soap.txt"))
+        });
         assert_eq!(
-            runtime.state.workspace.tabs[0].document.path,
+            runtime.state.workspace.tabs[runtime.state.workspace.active]
+                .document
+                .path,
             root.path().join("soap.txt")
         );
     }
