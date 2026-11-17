@@ -64,6 +64,7 @@ impl OperationRequest {
             .file_name()
             .context("Enter a file or folder name")?;
         let mut target = parent.join(name);
+        let mut case_alias = false;
         if let FileOperation::Move { source } = &self.operation {
             let original = source
                 .parent()
@@ -77,6 +78,7 @@ impl OperationRequest {
                     path: target,
                 });
             }
+            case_alias = same_entry_case_alias(&original, &target)?;
         }
         let source_version = match &self.operation {
             FileOperation::Move { source } => fingerprint(source)?,
@@ -109,7 +111,13 @@ impl OperationRequest {
                 metadata.is_dir()
             }
         };
-        let existing = fingerprint(&target)?;
+        // A proven case alias names the source entry itself. Quarantine removes
+        // that alias before no-replace publication creates the requested spelling.
+        let existing = if case_alias {
+            None
+        } else {
+            fingerprint(&target)?
+        };
         let mut replace = false;
         if let Some(version) = existing {
             match decision {
@@ -144,7 +152,10 @@ impl OperationRequest {
         // Prefer the host's exclusive rename. This preserves object identity and
         // handles read-only source folders without needing to alter their mode.
         // Filesystems without this primitive retain the staged-copy fallback.
-        if !replace && let FileOperation::Move { source } = &self.operation {
+        if !replace
+            && !case_alias
+            && let FileOperation::Move { source } = &self.operation
+        {
             if fingerprint(source)? != source_version {
                 bail!("Source changed while preparing the move. Try again.");
             }
@@ -224,6 +235,62 @@ impl OperationRequest {
             path: target,
         })
     }
+}
+
+/// Prove a case-only destination is an alias for the selected directory entry,
+/// rather than a distinct hardlink or another case-sensitive entry. Never infer
+/// case sensitivity from the operating system; volumes can differ on one host.
+fn same_entry_case_alias(source: &Path, target: &Path) -> Result<bool> {
+    if source.parent() != target.parent() {
+        return Ok(false);
+    }
+    let Some((source_name, target_name)) = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .zip(target.file_name().and_then(|n| n.to_str()))
+    else {
+        return Ok(false);
+    };
+    if source_name == target_name || !source_name.eq_ignore_ascii_case(target_name) {
+        return Ok(false);
+    }
+    let target_metadata = match fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let source_metadata = fs::symlink_metadata(source)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if source_metadata.dev() != target_metadata.dev()
+            || source_metadata.ino() != target_metadata.ino()
+        {
+            return Ok(false);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (source_metadata, target_metadata);
+        if source.canonicalize()? != target.canonicalize()? {
+            return Ok(false);
+        }
+    }
+    let mut exact_source = false;
+    let mut equivalents = 0;
+    for entry in fs::read_dir(source.parent().context("Source has no parent")?)? {
+        let name = entry?.file_name();
+        if name == target_name {
+            return Ok(false);
+        }
+        if let Some(name) = name.to_str()
+            && name.eq_ignore_ascii_case(source_name)
+        {
+            exact_source |= name == source_name;
+            equivalents += 1;
+        }
+    }
+    Ok(exact_source && equivalents == 1)
 }
 
 /// Return false when the host/filesystem needs the staged move fallback.

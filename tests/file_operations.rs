@@ -672,3 +672,57 @@ fn moving_a_selected_link_keeps_its_referent_and_moves_only_the_link() {
     assert_eq!(fs::read_link(target).unwrap(), referent);
     assert_eq!(fs::read_to_string(referent).unwrap(), "original referent");
 }
+
+#[test]
+fn case_changing_rename_keeps_bytes_and_uses_the_requested_directory_spelling() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("notes.txt");
+    let target = root.path().join("NOTES.txt");
+    fs::write(&source, "case change").unwrap();
+    assert!(matches!(
+        OperationRequest {
+            operation: FileOperation::Move {
+                source: source.clone()
+            },
+            target: target.clone(),
+        }
+        .execute(None)
+        .unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    let names = fs::read_dir(root.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec![std::ffi::OsString::from("NOTES.txt")]);
+    assert_eq!(fs::read_to_string(target).unwrap(), "case change");
+}
+
+#[cfg(unix)]
+#[test]
+fn distinct_case_differing_hardlinks_still_require_a_collision_decision() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("notes.txt");
+    let target = root.path().join("NOTES.txt");
+    fs::write(&source, "shared inode").unwrap();
+    // A case-insensitive volume cannot create this distinct second entry.
+    if fs::hard_link(&source, &target).is_err() {
+        return;
+    }
+    let request = OperationRequest {
+        operation: FileOperation::Move {
+            source: source.clone(),
+        },
+        target: target.clone(),
+    };
+    let ticket = collision(request.clone());
+    assert!(matches!(
+        request
+            .execute(Some((ticket, CollisionChoice::Cancel)))
+            .unwrap(),
+        OperationOutcome::Cancelled
+    ));
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    assert_eq!(fs::read_to_string(source).unwrap(), "shared inode");
+    assert_eq!(fs::read_to_string(target).unwrap(), "shared inode");
+}
