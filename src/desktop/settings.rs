@@ -130,6 +130,14 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     section,
                     "font size ui font family terminal font family installed monospace preview",
                 )
+        } else if section == "Keyboard Shortcuts" {
+            s.commands.iter().any(|c| {
+                matches(
+                    s,
+                    section,
+                    &format!("{} {} {}", c.id, c.title, s.shortcut_label(c.id)),
+                )
+            })
         } else if section == "Behavior" {
             matches(
                 s,
@@ -226,6 +234,9 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             group = group.child(sizes.child(buttons));
         }
         match section {
+            "Keyboard Shortcuts" => {
+                group = group.child(shortcuts::list(s, a));
+            }
             "Behavior" => {
                 if matches(
                     s,

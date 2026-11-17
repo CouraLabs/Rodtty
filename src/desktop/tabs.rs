@@ -154,7 +154,11 @@ pub(super) fn interactive(tab: El, target: Target) -> El {
     tab.on_drawn_layout(move |s: &mut State, rect| {
         s.tab_strips.rects.insert(target, rect);
     })
-    .on_middle_press(move |s: &mut State, tx| s.dispatch(close(target), tx))
+    .on_middle_press(move |s: &mut State, tx| {
+        if !s.dispatch_mouse_shortcut(rune::PointerButton::Middle, tx) {
+            s.dispatch(close(target), tx);
+        }
+    })
     .on_drag(move |s: &mut State, drag, tx| {
         if drag.phase != Phase::Up || drag.cancelled() || drag.dx.abs() < 4.0 {
             return;

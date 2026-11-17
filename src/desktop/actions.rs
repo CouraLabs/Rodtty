@@ -4,7 +4,7 @@ use super::*;
 use crate::git::Comparison;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(super) enum AppAction {
     CreateFile,
     CreateFolder,
@@ -50,11 +50,25 @@ pub(super) enum AppAction {
     ToggleIgnore,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ShortcutContext {
+    Global,
+    Terminal,
+    Editor,
+    Settings,
+}
+impl ShortcutContext {
+    pub fn overlaps(self, other: Self) -> bool {
+        self == Self::Global || other == Self::Global || self == other
+    }
+}
+
 pub(super) struct Command {
     pub id: &'static str,
     pub title: &'static str,
     pub shortcut: &'static str,
     pub action: AppAction,
+    pub context: ShortcutContext,
 }
 
 /// Registrations are stable IDs plus visible metadata and an application action. Later
@@ -270,7 +284,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "settings-close",
             "Settings: Close Settings Tab",
-            "",
+            app("Ctrl+W", "Cmd+W"),
             AppAction::CloseSettings,
         ),
         (
@@ -297,11 +311,29 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             title,
             shortcut,
             action,
+            context: match action {
+                AppAction::CopyTerminal
+                | AppAction::PasteTerminal
+                | AppAction::EndTerminal
+                | AppAction::FindTerminal => ShortcutContext::Terminal,
+                AppAction::SaveEditor(_)
+                | AppAction::CloseEditor(_)
+                | AppAction::FindEditor
+                | AppAction::ReplaceEditor => ShortcutContext::Editor,
+                AppAction::CloseSettings => ShortcutContext::Settings,
+                _ => ShortcutContext::Global,
+            },
         });
     }
 }
 
 impl State {
+    pub(super) fn action_help(&self, action: AppAction, title: &str) -> String {
+        self.commands
+            .iter()
+            .find(|c| c.action == action)
+            .map_or_else(|| title.to_owned(), |c| self.shortcut_help(c.id, title))
+    }
     fn editor_id(&self, id: Option<u64>) -> Option<u64> {
         id.or_else(|| self.workspace.tabs.get(self.workspace.active).map(|t| t.id))
     }
