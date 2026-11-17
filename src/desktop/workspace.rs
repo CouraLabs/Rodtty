@@ -1173,6 +1173,26 @@ fn explorer(s: &State, a: &Appearance) -> El {
                 |s, tx| s.dispatch(AppAction::ExplorerTerminalRoot, tx),
             ));
     }
+    if let Some(path) = &workspace.operation_result
+        && workspace
+            .directory
+            .as_ref()
+            .is_none_or(|root| !path.starts_with(root))
+    {
+        pane = pane
+            .child(
+                text(format!("Last result: {}", path.display()))
+                    .font(ui_label())
+                    .color(a.muted())
+                    .wrap_anywhere(),
+            )
+            .child(button(
+                a,
+                "explorer-reveal-result",
+                "Show destination",
+                |s, tx| s.dispatch(AppAction::RevealFileOperation, tx),
+            ));
+    }
     let danger = a.danger();
     let mut tree_style = TreeStyle::from_kit(a.kit())
         .label(ui_label(), a.ink(), a.ink())
