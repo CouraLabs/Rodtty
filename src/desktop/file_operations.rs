@@ -235,6 +235,11 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .border(1.0, a.hover_bg())
             .shadow(6.0, 20.0, a.scrim());
         for (key, title, action) in [
+            (
+                "context-open-file",
+                "Open",
+                AppAction::ExplorerOpenSelection,
+            ),
             ("context-create-file", "New File…", AppAction::CreateFile),
             (
                 "context-create-folder",
@@ -263,7 +268,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     y.clamp(
                         8.0,
                         (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 5.0
+                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 6.0
                             - 28.0)
                             .max(8.0),
                     ),

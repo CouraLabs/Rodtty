@@ -104,7 +104,12 @@ Command selection configures a convenience environment. Explicit host executable
 
 The explorer keeps one chosen host folder as its root. Click folders to expand them;
 use the arrow keys, Home/End, Page Up/Down, or type a name to select an item.
-Enter opens the selected file through the shared file-opening action. Use the path
+Single click previews a file in a temporary tab; double click or editing keeps it
+open. Only a clean, idle preview can be reused. Enter, the context menu's Open,
+and the palette's Open Selected Item keep the file through the same activation
+boundary. Behavior in Settings offers live Single click keeps files open and its
+reset; the JSON preference is `single_click_keeps_open` (default `false`). Regular
+tabs restore from workspace state; temporary previews are omitted. Use the path
 field or the command palette to choose a new root. Follow Terminal reveals its
 current directory within that root and offers an explicit root change when it
 moves outside. The explorer continues to browse host files while using SSH.

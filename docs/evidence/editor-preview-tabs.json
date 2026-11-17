@@ -1,0 +1,71 @@
+{
+  "issue": "https://github.com/CouraLabs/Rodtty/issues/18",
+  "platform": "Linux x86_64; KWin Wayland and actual Xlib",
+  "preference": {
+    "key": "single_click_keeps_open",
+    "default": false,
+    "storage": "~/.rodtty/settings.json",
+    "ui": "Settings / Behavior / Single click keeps files open"
+  },
+  "workspace": "~/.rodtty/workspace-state.json stores regular tabs only; temporary previews and active preview path excluded",
+  "runtime_boundary": "Existing Rune Runtime<State>, actual pointer/keyboard/application actions and real temporary files",
+  "new_runtime_cases": [
+    "single_click_previews_reuse_one_visible_tab_and_double_click_keeps_it",
+    "late_preview_load_does_not_replace_a_file_explicitly_reopened_while_loading",
+    "preview_while_saving_keeps_the_saving_file_and_uses_normal_close_protection",
+    "context_palette_and_double_click_during_load_all_keep_the_selected_file",
+    "editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions",
+    "behavior_setting_applies_live_persists_resets_and_external_json_updates"
+  ],
+  "red_green_evidence": [
+    {
+      "red": "Single click selected without opening; runtime test timed out",
+      "green": "Single click opens preview; next preview reuses it; double click retains; persistence excludes active preview"
+    },
+    {
+      "red": "Queued B preview overtook explicitly reopened retained A",
+      "green": "Every file activation supersedes older preview loads; A remains active and late B is omitted"
+    },
+    {
+      "red": "Explicitly saved preview was omitted from regular persisted tabs",
+      "green": "Explicit Save retains the preview and existing save-in-flight close protection remains active"
+    }
+  ],
+  "regressions": [
+    "Preview inspection preserves Tree keyboard focus/type-to-select through background refresh",
+    "Existing editor identity/reorder/close/icon/disambiguation/undo/find/external-change/conflict tests pass"
+  ],
+  "native_scope": "Existing --workspace-check regression verifies unsaved close prompt, editor save, background output, same-session reopen and live appearances. Preview interactions are verified at the runtime boundary; native pointer preview interaction is not separately claimed.",
+  "native_reports": [
+    "editor-preview-workspace-wayland.json",
+    "editor-preview-workspace-xlib.json"
+  ],
+  "captures": {
+    "scene": "preview-tabs",
+    "size": "1440x860",
+    "light": "../assets/editor-preview-tabs-light.png",
+    "dark": "../assets/editor-preview-tabs-dark.png",
+    "inspection": "Retained dirty config.rs and temporary config.rs show distinct parent folders, file icons, dirty mark, visible Preview badge and active file contents in both appearances"
+  },
+  "pending": [
+    "Windows native runtime",
+    "macOS native runtime"
+  ],
+  "validation": {
+    "integration_tip": "76fc48e27bda3b7f35c822f37f795383558a9a48",
+    "full_serial_suite": {
+      "command": "cargo test --offline --locked --all-targets -- --test-threads=1 --include-ignored",
+      "passed": 124,
+      "failed": 0,
+      "ignored": 0,
+      "app_runtime": 79,
+      "supporting_files_git_config_pty": 45
+    },
+    "strict_lint": "cargo clippy --offline --locked --all-targets -- -D warnings: passed",
+    "backend": "cargo check --offline --locked --no-default-features --bins: passed",
+    "desktop": "cargo build --offline --locked --bins: passed",
+    "formatting": "cargo fmt --all -- --check and git diff --check: passed",
+    "isolation": "CARGO_TARGET_DIR=target/t17; TMPDIR=target/t17/tmp; GIT_CEILING_DIRECTORIES is the exact absolute TMPDIR; PTY/native tests executed with approved escalated access",
+    "dependency_warnings": "Existing vendored Rune dependency warnings remain; strict application clippy passed"
+  }
+}
