@@ -196,7 +196,8 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .gap(4.0)
             .radius(8.0)
             .fill(a.panel())
-            .border(1.0, a.hover_bg());
+            .border(1.0, a.hover_bg())
+            .shadow(6.0, 20.0, a.scrim());
         for (key, title, action) in [
             ("context-create-file", "New File…", AppAction::CreateFile),
             (
@@ -213,17 +214,23 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     s.dispatch(action, tx);
                 })
                 .w_full()
+                .items_start()
                 .opacity(if enabled { 1.0 } else { 0.45 }),
             );
         }
         return Some(
-            el().absolute(0.0, 0.0)
-                .w_full()
-                .h_full()
-                .child(menu.absolute(
-                    x.min((s.workspace.body_width - 230.0).max(0.0)),
-                    y.min(400.0),
-                )),
+            el().absolute(0.0, 0.0).w_full().h_full().child(
+                menu.absolute(
+                    x.clamp(8.0, (s.workspace.operation_viewport.0 - 228.0).max(8.0)),
+                    y.clamp(
+                        8.0,
+                        (s.workspace.operation_viewport.1
+                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 3.0
+                            - 28.0)
+                            .max(8.0),
+                    ),
+                ),
+            ),
         );
     }
     let Some(Pending::Operation(prompt)) = &s.pending else {
@@ -234,6 +241,10 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
         .modal_tx(true, cancel)
         .w_full()
         .max_w(490.0)
+        .max_h((s.workspace.operation_viewport.1 - 32.0).max(120.0))
+        .scroll(rune::ScrollSpec {
+            stick_bottom: false,
+        })
         .px(24.0)
         .py(24.0)
         .gap(14.0)
@@ -253,31 +264,31 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::CreateFolder => ("New folder", "Create folder"),
                 FileOperation::Copy { .. } => ("Copy item", "Copy"),
             };
-            content = content.child(text(title).font(TextStyle::new(18.0, 600.0)).color(a.ink()));
+            content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
             if let FileOperation::Copy { source } = operation {
                 content = content.child(
                     text(format!("From {}", source.display()))
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(a.muted())
                         .wrap_anywhere(),
                 );
             }
-            content = content.child(text("Name").font(LABEL).color(a.muted())).child(
-                text_input(&s.workspace.operation_name,LABEL).key("operation-name").label("File or folder name").single_line().w_full().h(34.0).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_name).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
-                .child(text("Destination folder").font(LABEL).color(a.muted())).child(
-                text_input(&s.workspace.operation_destination,LABEL).key("operation-destination").label("Destination folder").single_line().w_full().h(34.0).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_destination).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
-                .child(text("Choose an existing host folder. Relative paths start at the explorer root.").font(LABEL).color(a.muted()).wrap());
+            content = content.child(text("Name").font(ui_label()).color(a.muted())).child(
+                text_input(&s.workspace.operation_name,ui_label()).key("operation-name").label("File or folder name").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_name).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                .child(text("Destination folder").font(ui_label()).color(a.muted())).child(
+                text_input(&s.workspace.operation_destination,ui_label()).key("operation-destination").label("Destination folder").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_destination).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                .child(text("Choose an existing host folder. Relative paths start at the explorer root.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {
-                content = content.child(text(error).font(LABEL).color(a.danger()).wrap());
+                content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
             }
             buttons = buttons.child(button(a, "operation-submit", verb, |s, tx| {
                 s.submit_file_operation(tx)
             }));
         }
         OperationPrompt::Collision(collision) => {
-            content = content.child(text("An item already exists").font(TextStyle::new(18.0,600.0)).color(a.ink()))
-                .child(text(collision.request.target.to_string_lossy()).font(LABEL).color(a.muted()).wrap_anywhere())
-                .child(text("Replace removes the existing item after the new item is ready. Keep Both creates a separate copy with an available name.").font(LABEL).color(a.muted()).wrap());
+            content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
+                .child(text(collision.request.target.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
+                .child(text("Replace removes the existing item after the new item is ready. Keep Both creates a separate copy with an available name.").font(ui_label()).color(a.muted()).wrap());
             buttons = buttons
                 .child(button(a, "operation-keep-both", "Keep Both", |s, tx| {
                     s.decide_file_collision(CollisionChoice::KeepBoth, tx)
@@ -294,6 +305,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .fill(a.scrim())
             .center()
             .px(16.0)
+            .py(16.0)
             .child(content.child(buttons)),
     )
 }

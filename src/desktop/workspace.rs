@@ -66,6 +66,7 @@ pub(super) struct Workspace {
     pub(super) operation_destination: TextEdit,
     pub(super) operation_error: Option<String>,
     pub(super) operation_context: Option<(f32, f32)>,
+    pub(super) operation_viewport: (f32, f32),
     tree_errors: Vec<(PathBuf, String)>,
     tree_dirty: bool,
     explorer_error: Option<String>,
@@ -119,6 +120,7 @@ impl Default for Workspace {
             operation_destination: TextEdit::new(""),
             operation_error: None,
             operation_context: None,
+            operation_viewport: (1080.0, 720.0),
             tree_errors: Vec::new(),
             tree_dirty: true,
             explorer_error: None,
@@ -1187,7 +1189,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
     .on_secondary_press(|s: &mut State, press, tx| s.file_context_menu(press, tx));
     pane = pane.child(list);
     if workspace.operation_busy {
-        pane = pane.child(text("Working on files…").font(LABEL).color(a.muted()));
+        pane = pane.child(text("Working on files…").font(ui_label()).color(a.muted()));
     }
     if workspace.scan_busy {
         pane = pane.child(text("Loading…").font(ui_label()).color(a.muted()));
@@ -1808,7 +1810,7 @@ mod tests {
             runtime.pointer_down(x, y);
             runtime.pointer_up(x, y);
             runtime.frame(0.0);
-            wait(&mut runtime.state, |s| {
+            wait_runtime(&mut runtime, |s| {
                 !s.workspace.operation_busy && s.workspace.entries.iter().any(|e| e.name == name)
             });
             runtime.update(|_, _| {});
@@ -1823,6 +1825,20 @@ mod tests {
         assert!(root.path().join("work").is_dir());
     }
 
+    fn wait_runtime(runtime: &mut rune::Runtime<State>, condition: impl Fn(&State) -> bool) {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(8) {
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            runtime.frame(0.02);
+            if condition(&runtime.state) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("application operation timed out: {}", runtime.state.message);
+    }
     fn click(runtime: &mut rune::Runtime<State>, key: &str) {
         runtime.frame(1.0);
         let (x, y) = runtime.find(key).unwrap_or_else(|| panic!("missing {key}"));
@@ -1864,7 +1880,7 @@ mod tests {
         let mut runtime = runtime_for(state);
         fill(&mut runtime, "file-editor-1", "unsaved draft");
         click(&mut runtime, source.to_str().unwrap());
-        wait(&mut runtime.state, |s| {
+        wait_runtime(&mut runtime, |s| {
             !s.workspace.scan_busy
                 && s.workspace
                     .entries
@@ -1885,7 +1901,7 @@ mod tests {
             destination.to_str().unwrap(),
         );
         click(&mut runtime, "operation-submit");
-        wait(&mut runtime.state, |s| {
+        wait_runtime(&mut runtime, |s| {
             !s.workspace.operation_busy && s.message.starts_with("Created")
         });
         assert_eq!(
@@ -1894,7 +1910,7 @@ mod tests {
         );
         assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved draft");
         assert_eq!(std::fs::read_to_string(editor).unwrap(), "saved");
-        wait(&mut runtime.state, |s| {
+        wait_runtime(&mut runtime, |s| {
             !s.workspace.scan_busy
                 && s.workspace
                     .entries
@@ -1949,7 +1965,7 @@ mod tests {
                 destination.to_str().unwrap(),
             );
             click(&mut runtime, "operation-submit");
-            wait(&mut runtime.state, |s| {
+            wait_runtime(&mut runtime, |s| {
                 matches!(
                     s.pending,
                     Some(Pending::Operation(
@@ -1963,15 +1979,15 @@ mod tests {
             assert!(runtime.find("operation-keep-both").is_some());
             assert!(runtime.find("operation-replace").is_some());
             if choice == "operation-cancel" {
-                press(&mut runtime, Key::Enter, Default::default());
+                press(&mut runtime, Key::Text(" ".into()), Default::default());
                 assert!(
                     runtime.state.pending.is_none(),
-                    "Enter activates the focused Cancel button"
+                    "Space activates the focused Cancel button"
                 );
             } else {
                 click(&mut runtime, choice);
             }
-            wait(&mut runtime.state, |s| !s.workspace.operation_busy);
+            wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
             if choice == "operation-replace" {
                 assert_eq!(std::fs::read_to_string(&target).unwrap(), "new report");
             } else {
@@ -2015,7 +2031,7 @@ mod tests {
             source.join("child").to_str().unwrap(),
         );
         click(&mut runtime, "operation-submit");
-        wait(&mut runtime.state, |s| {
+        wait_runtime(&mut runtime, |s| {
             !s.workspace.operation_busy && s.message.contains("cannot be copied into itself")
         });
         runtime.update(|_, _| {});
@@ -2047,7 +2063,7 @@ mod tests {
             root.path().join("missing").to_str().unwrap(),
         );
         click(&mut runtime, "operation-submit");
-        wait(&mut runtime.state, |s| {
+        wait_runtime(&mut runtime, |s| {
             !s.workspace.operation_busy && s.message.contains("Open destination folder")
         });
         assert!(!root.path().join("missing").exists());

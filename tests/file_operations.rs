@@ -158,6 +158,11 @@ fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
     let target = root.path().join("target");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("ordinary.txt"), "ordinary file").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let read_only = source.join("read-only");
+    fs::create_dir(&read_only).unwrap();
+    fs::write(read_only.join("file.txt"), "read-only nested file").unwrap();
+    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o555)).unwrap();
     let _socket = std::os::unix::net::UnixListener::bind(source.join("socket")).unwrap();
     fs::create_dir(&target).unwrap();
     fs::write(target.join("precious.txt"), "keep this").unwrap();
@@ -180,6 +185,7 @@ fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
     names.sort();
+    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(names, ["source", "target"]);
 }
 

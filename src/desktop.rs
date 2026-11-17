@@ -491,6 +491,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     }));
     let mut root = col()
         .key("root")
+        .on_layout(|s: &mut State, r| s.workspace.operation_viewport = (r[2], r[3]))
         .w_full()
         .h_full()
         .fill(a.bg())
