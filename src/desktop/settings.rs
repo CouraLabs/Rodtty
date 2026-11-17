@@ -286,6 +286,14 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 group = group
                     .child(text("Autosave").font(ui_label()).color(a.ink()))
                     .child(choices)
+                    .child(button(
+                        a,
+                        "reset-autosave-policy",
+                        "Reset autosave policy",
+                        |s, _| {
+                            s.save_config(|c| c.autosave.policy = AutosavePolicy::default());
+                        },
+                    ))
                     .child(
                         text(format!("Autosave delay: {} ms", s.config.autosave.delay_ms))
                             .font(ui_label())
@@ -303,6 +311,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .child(button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
                                 s.save_config(|c| {
                                     c.autosave.delay_ms = (c.autosave.delay_ms + 100).min(60_000)
+                                });
+                            }))
+                            .child(button(a, "reset-autosave-delay", "Reset delay", |s, _| {
+                                s.save_config(|c| {
+                                    c.autosave.delay_ms =
+                                        config::AutosavePreferences::default().delay_ms
                                 });
                             }))
                             .child(button(a, "reset-autosave", "Reset Autosave", |s, _| {
@@ -1679,6 +1693,21 @@ mod tests {
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
         assert_eq!(saved["autosave"]["policy"], "editor_focus_loss");
+        click(&mut runtime, "reset-autosave-delay");
+        let saved = Config::load(root.path()).unwrap();
+        assert_eq!(
+            saved.autosave.policy,
+            crate::config::AutosavePolicy::EditorFocusLoss
+        );
+        assert_eq!(saved.autosave.delay_ms, 1000);
+        click(&mut runtime, "less-autosave-delay");
+        click(&mut runtime, "reset-autosave-policy");
+        let saved = Config::load(root.path()).unwrap();
+        assert_eq!(
+            saved.autosave.policy,
+            crate::config::AutosavePolicy::Explicit
+        );
+        assert_eq!(saved.autosave.delay_ms, 900);
         click(&mut runtime, "reset-autosave");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
