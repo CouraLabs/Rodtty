@@ -105,6 +105,11 @@ and are also available under Files in Settings. Root and expanded folders live i
 `workspace-state.json`; refresh retains expansion and selection. File and Git scans
 run on the file worker, with loading and folder errors shown in the explorer.
 
+Linux draws the complete themed window frame and right-side controls. Empty header
+space drags the window; double-click maximizes/restores it; all edges/corners resize.
+Custom close follows the same unsaved-file and session lifecycle as menu closure.
+See [the custom-frame implementation and native checks](docs/linux-custom-frame.md).
+
 ## Validation
 
 ```sh
@@ -129,6 +134,8 @@ target/debug/rodtty --native-check target/native-check.json
 ```
 
 This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and immediate `quit`.
+
+`--frame-check <report.json>` is driven by the isolated KWin native input harness described in the custom-frame report. It exercises actual pointer resize/drag/controls, compositor/native state, dirty-close cancellation and the lifecycle below.
 
 `--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. `--font-check <report.json>` also changes UI, terminal and editor sizes live, checks the full-screen application sees the updated PTY dimensions, and verifies unsaved editor work and the terminal session survive. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
 
