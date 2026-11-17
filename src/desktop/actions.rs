@@ -361,6 +361,20 @@ impl State {
     }
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
+        if self.removal_background_busy()
+            && !matches!(
+                action,
+                AppAction::ShowTerminal
+                    | AppAction::ToggleTerminal
+                    | AppAction::ActivateTerminal(_)
+                    | AppAction::CopyTerminal
+                    | AppAction::PasteTerminal
+            )
+        {
+            return Some(
+                "Files are protected while the operation finishes; terminal input remains available",
+            );
+        }
         match action {
             AppAction::TrashFile if self.settings => Some("Select a file in the explorer first"),
             AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {

@@ -407,8 +407,17 @@ pub struct BehaviorPreferences {
     pub terminal_tab_close: TerminalClosePolicy,
     pub new_terminal_directory: NewTerminalDirectory,
     pub specified_directory: PathBuf,
+    pub terminal_startup: TerminalStartup,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStartup {
+    #[default]
+    RestoreWorkspace,
+    SingleFresh,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

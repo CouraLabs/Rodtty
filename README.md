@@ -125,7 +125,8 @@ an explicit decision after the host Trash fails. Unsaved files, including open
 folder descendants, offer Save As, Discard, or Cancel. Save As must preserve work
 outside the removed item; existing destinations require a fresh collision
 choice. Files, editor tabs, and restored workspace paths change only after the
-selected worker operation succeeds.
+selected worker operation succeeds. Background file work keeps terminal input
+available; owner decisions remain modal and affected editor work stays protected.
 
 Linux draws the complete themed window frame and right-side controls. Empty header
 space drags the window; double-click maximizes/restores it; all edges/corners resize.

@@ -21,6 +21,10 @@ pub(super) enum RemovalPrompt {
 }
 
 impl State {
+    pub(super) fn removal_background_busy(&self) -> bool {
+        self.workspace.operation_busy
+            && matches!(self.pending, Some(Pending::Removal(RemovalPrompt::Busy)))
+    }
     pub(super) fn begin_removal(&mut self, tx: &mut Tx) {
         if self.workspace.operation_busy || self.workspace.removal.is_some() {
             return;
@@ -46,6 +50,8 @@ impl State {
                 permanent: false,
             });
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
+            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.message = "Preparing Move to Trash… Terminal input remains available.".into();
             tx.blur();
         }
     }
@@ -105,6 +111,13 @@ impl State {
         }) {
             self.workspace.operation_busy = true;
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
+            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.message = if permanent {
+                "Deleting permanently…"
+            } else {
+                "Moving to Trash…"
+            }
+            .into();
             tx.blur();
         }
     }
@@ -272,6 +285,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
     let Some(Pending::Removal(prompt)) = &s.pending else {
         return None;
     };
+    if matches!(prompt, RemovalPrompt::Busy) {
+        return None;
+    }
     let path = s
         .workspace
         .removal
@@ -300,6 +316,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             s.cancel_removal(tx)
         }));
     }
+    let mut fields: Option<El> = None;
     let (title, description) = match prompt {
         RemovalPrompt::Busy => (
             "Working on files…",
@@ -329,7 +346,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             ("Preserve unsaved work before deletion?", s.workspace.tabs.iter().find(|t|t.id==id).map(|t|format!("{} has unsaved changes. Discard applies only after successful removal.",t.document.path.display())).unwrap_or_default())
         }
         RemovalPrompt::SaveAs(_) => {
-            content = content.child(
+            let mut field = col().w_full().gap(8.0).child(
                 text_input(&s.workspace.operation_destination, ui_label())
                     .key("removal-save-as-path")
                     .label("Preserve work at path")
@@ -346,8 +363,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     .on_submit(|s: &mut State, tx| s.submit_removal_save_as(tx)),
             );
             if let Some(error) = &s.workspace.operation_error {
-                content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
+                field = field.child(text(error).font(ui_label()).color(a.danger()).wrap());
             }
+            fields = Some(field);
             buttons = buttons.child(button(a, "removal-save-as-submit", "Save As", |s, tx| {
                 s.submit_removal_save_as(tx)
             }));
@@ -377,6 +395,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 .color(a.muted())
                 .wrap_anywhere(),
         );
+    if let Some(fields) = fields {
+        content = content.child(fields);
+    }
     Some(
         el().absolute(0.0, 0.0)
             .w_full()

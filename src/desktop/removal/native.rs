@@ -3,9 +3,9 @@ use super::*;
 use std::time::Duration;
 
 pub(in crate::desktop) fn check(handle: &rune::AppHandle<State>) -> Result<serde_json::Value> {
-    let owner = crate::config::app_root()?;
     #[cfg(target_os = "linux")]
     {
+        let owner = crate::config::app_root()?;
         let data = PathBuf::from(
             std::env::var_os("XDG_DATA_HOME")
                 .context("--trash-check requires isolated XDG_DATA_HOME")?,

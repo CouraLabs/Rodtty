@@ -94,6 +94,11 @@ pub(super) struct Workspace {
     latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
     restore_editor: Option<bool>,
+    restore_focus: Option<bool>,
+    restore_explorer: Option<bool>,
+    pub(super) restoration_warnings: Vec<String>,
+    pub(super) last_persist: Instant,
+    last_saved: Option<Vec<u8>>,
     pub diff: DiffState,
     pub diff_label: String,
     pub diff_error: Option<String>,
@@ -159,6 +164,11 @@ impl Default for Workspace {
             latest_activation: None,
             restore_active: None,
             restore_editor: None,
+            restore_focus: None,
+            restore_explorer: None,
+            restoration_warnings: Vec::new(),
+            last_persist: Instant::now(),
+            last_saved: None,
             diff: DiffState::default(),
             diff_label: String::new(),
             diff_error: None,
@@ -184,6 +194,32 @@ impl State {
         !self.workspace.opening.is_empty() || self.workspace.tabs.iter().any(|t| t.saving)
     }
     pub(super) fn remove_file_references(&mut self, path: &std::path::Path) {
+        let selected = self
+            .workspace
+            .tree
+            .cursor()
+            .map(PathBuf::from)
+            .or_else(|| self.workspace.layout.selected_path.clone());
+        self.workspace.layout.selected_path = selected.filter(|p| !p.starts_with(path));
+        // Old tree nodes retain expansion/cursor keys until rebuilt. Clear them
+        // before the next poll can copy removed paths back into workspace state.
+        self.workspace.tree.clear();
+        if self
+            .workspace
+            .latest_activation
+            .as_ref()
+            .is_some_and(|p| p.starts_with(path))
+        {
+            self.workspace.latest_activation = None;
+        }
+        if self
+            .workspace
+            .restore_active
+            .as_ref()
+            .is_some_and(|p| p.starts_with(path))
+        {
+            self.workspace.restore_active = None;
+        }
         let active = self.workspace.tabs.get(self.workspace.active).map(|t| t.id);
         self.workspace
             .tabs
@@ -220,10 +256,19 @@ impl State {
         if self.workspace.tabs.is_empty() {
             self.workspace.terminal_focus = true;
         }
+        self.rebuild_tree();
         self.invalidate_diff(true);
         self.persist_file_references();
     }
     pub(super) fn persist_file_references(&mut self) {
+        self.workspace.layout.empty_editor = self.workspace.show_empty_editor;
+        self.workspace.layout.explorer_revealed = self.workspace.explorer_revealed;
+        self.workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
+        self.workspace.layout.active_terminal = self.active;
+        self.workspace.layout.terminal_focus = self.workspace.terminal_focus || self.settings;
+        if let Some(selected) = self.workspace.tree.cursor() {
+            self.workspace.layout.selected_path = Some(PathBuf::from(selected));
+        }
         self.workspace.layout.explorer_directory = self.workspace.directory.clone();
         self.workspace.layout.files = self
             .workspace
@@ -243,6 +288,9 @@ impl State {
             layout: self.workspace.layout.clone(),
         });
     }
+    pub(super) fn workspace_restoration_ready(&self) -> bool {
+        self.workspace.opening.is_empty()
+    }
     pub(super) fn workspace_setup(&mut self) {
         self.workspace.worker = Some(Worker::new(self.wake.clone()));
         self.workspace.explorer_preferences = self.config.explorer.clone();
@@ -250,6 +298,8 @@ impl State {
             Ok(layout) => {
                 if !layout.files.is_empty() {
                     self.workspace.restore_editor = Some(layout.editor);
+                    self.workspace.restore_focus = Some(layout.terminal_focus);
+                    self.workspace.restore_explorer = Some(layout.explorer_revealed);
                 }
                 self.workspace.restore_active = layout.active_file.clone();
                 self.workspace.directory = layout.explorer_directory.clone();
@@ -274,9 +324,27 @@ impl State {
                     });
                 }
                 let paths = layout.files.clone();
+                self.workspace.show_empty_editor = layout.empty_editor;
+                self.workspace.explorer_revealed = layout.explorer_revealed;
                 self.workspace.layout = layout;
                 self.workspace.layout.follow = self.config.explorer.follow_terminal;
                 self.workspace.layout.hidden = self.config.explorer.show_hidden;
+                if self
+                    .workspace
+                    .directory
+                    .as_ref()
+                    .is_some_and(|p| !p.is_dir())
+                {
+                    self.workspace.restoration_warnings.push(format!(
+                        "Saved explorer folder is unavailable: {}. Showing the startup folder instead.",
+                        self.workspace.directory.as_ref().unwrap().display()
+                    ));
+                    self.workspace.directory = Some(self.directory.clone());
+                    self.workspace
+                        .address
+                        .replace_text(self.directory.to_string_lossy());
+                    self.workspace.layout.expanded_folders.clear();
+                }
                 for path in paths {
                     self.open_file(path);
                 }
@@ -319,6 +387,7 @@ impl State {
         self.workspace.tree.clear();
         self.workspace.tree_dirty = true;
         self.workspace.layout.expanded_folders.clear();
+        self.workspace.layout.selected_path = None;
         self.workspace.explorer_error = None;
         self.workspace.outside_root = None;
         self.workspace.pending_reveal = None;
@@ -388,6 +457,9 @@ impl State {
             }
         }
         let w = &mut self.workspace;
+        if let Some(path) = w.tree.cursor() {
+            w.layout.selected_path = Some(PathBuf::from(path));
+        }
         for tab in &mut w.tabs {
             if tab.document.path.starts_with(source) {
                 remap(&mut tab.document.path, source, target);
@@ -407,6 +479,7 @@ impl State {
             &mut w.directory,
             &mut w.layout.explorer_directory,
             &mut w.layout.active_file,
+            &mut w.layout.selected_path,
             &mut w.outside_root,
             &mut w.pending_reveal,
             &mut w.revealed_directory,
@@ -495,7 +568,13 @@ impl State {
     fn rebuild_tree(&mut self) {
         let workspace = &mut self.workspace;
         workspace.tree_dirty = false;
-        let selected = workspace.tree.cursor().map(str::to_owned);
+        let selected = workspace.tree.cursor().map(str::to_owned).or_else(|| {
+            workspace
+                .layout
+                .selected_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+        });
         workspace.tree.clear();
         let Some(root) = workspace.directory.as_ref() else {
             return;
@@ -653,8 +732,14 @@ impl State {
         self.invalidate_diff(true);
     }
     pub(super) fn persist_workspace(&mut self) {
+        // Never publish a partial list while saved files are still loading.
+        if self.shutdown_saved || !self.workspace_restoration_ready() {
+            return;
+        }
         let workspace = &mut self.workspace;
         workspace.layout.explorer_directory = workspace.directory.clone();
+        workspace.layout.empty_editor = workspace.show_empty_editor;
+        workspace.layout.explorer_revealed = workspace.explorer_revealed;
         workspace.layout.files = workspace
             .tabs
             .iter()
@@ -666,8 +751,19 @@ impl State {
             .get(workspace.active)
             .filter(|t| !t.preview)
             .map(|t| t.document.path.clone());
-        if let Err(e) = workspace.layout.save(&self.root) {
-            self.message = format!("Could not save workspace: {e:#}");
+        workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
+        workspace.layout.active_terminal = self.active;
+        workspace.layout.terminal_focus = workspace.terminal_focus || self.settings;
+        if let Some(path) = workspace.tree.cursor() {
+            workspace.layout.selected_path = Some(PathBuf::from(path));
+        }
+        workspace.last_persist = Instant::now();
+        let next = serde_json::to_vec(&workspace.layout).ok();
+        if next != workspace.last_saved {
+            match workspace.layout.save(&self.root) {
+                Ok(()) => workspace.last_saved = next,
+                Err(e) => self.message = format!("Could not save workspace: {e:#}"),
+            }
         }
     }
     pub(super) fn request_action(&mut self, action: Action, tx: &mut Tx) {
@@ -850,6 +946,9 @@ impl State {
         }
     }
     fn file_key(&mut self, id: u64, event: &KeyEvent, tx: &mut Tx) -> bool {
+        if self.workspace.removal.is_some() {
+            return true;
+        }
         if event.key == Key::Function(3) {
             self.find_editor(false, tx);
             return true;
@@ -876,6 +975,9 @@ impl State {
         false
     }
     fn find_editor(&mut self, replace: bool, tx: &mut Tx) {
+        if replace && self.workspace.removal.is_some() {
+            return;
+        }
         let query = self.workspace.find_query.text.clone();
         if query.is_empty() {
             return;
@@ -907,6 +1009,9 @@ impl State {
         }
     }
     fn replace_all(&mut self) {
+        if self.workspace.removal.is_some() {
+            return;
+        }
         let query = self.workspace.find_query.text.clone();
         if query.is_empty() {
             return;
@@ -1050,17 +1155,28 @@ impl State {
                             {
                                 self.show_editor(index, !preview);
                             }
-                            self.message.clear();
+                            if self.workspace.restore_editor.is_none() {
+                                self.message.clear();
+                            }
                         }
-                        Err(error) => self.message = error,
+                        Err(error) => {
+                            if self.workspace.restore_editor.is_some() {
+                                self.workspace.restoration_warnings.push(error.clone());
+                            }
+                            self.message = error;
+                        }
                     }
                     if self.workspace.opening.is_empty() {
                         self.workspace.restore_active = None;
                         if let Some(visible) = self.workspace.restore_editor.take() {
                             self.workspace.layout.editor = visible;
-                            if !visible {
-                                self.workspace.terminal_focus = true;
-                            }
+                            self.workspace.terminal_focus =
+                                self.workspace.restore_focus.take().unwrap_or(true)
+                                    || !visible
+                                    || self.workspace.tabs.is_empty();
+                            self.workspace.explorer_revealed =
+                                self.workspace.restore_explorer.take().unwrap_or(false);
+                            self.message = self.workspace.restoration_warnings.join("\n");
                         }
                     }
                 }
@@ -1815,6 +1931,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .caret(a.accent(), a.selection())
             .key(format!("file-editor-{id}"))
             .label("File editor")
+            .disabled(workspace.removal.is_some())
             .w_full()
             .color(a.ink())
             .wrap_anywhere()
@@ -1830,6 +1947,9 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .on_input_change(move |s: &mut State, _| s.changed_editor(id))
             .on_input_key(move |s: &mut State, event, tx| s.file_key(id, event, tx))
             .on_input_paste(move |s: &mut State, clipboard, _| {
+                if s.workspace.removal.is_some() {
+                    return true;
+                }
                 if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
                     tab.edit
                         .insert(&clipboard.text().replace("\r\n", "\n").replace('\r', "\n"));
@@ -3233,6 +3353,11 @@ mod tests {
         });
         open(&mut state, &path);
         state.workspace.tree.select(path.to_str().unwrap());
+        state.persist_workspace();
+        assert_eq!(
+            Layout::load(&fixture).unwrap().selected_path,
+            Some(path.clone())
+        );
         let mut runtime = runtime_for(state);
         runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
@@ -3251,6 +3376,17 @@ mod tests {
         assert!(!path.exists());
         assert!(runtime.state.workspace.tabs.is_empty());
         assert!(!runtime.state.workspace.layout.files.contains(&path));
+        assert!(runtime.state.workspace.layout.selected_path.is_none());
+        assert_ne!(runtime.state.workspace.tree.cursor(), path.to_str());
+        wait_runtime(&mut runtime, |_| {
+            Layout::load(&fixture)
+                .is_ok_and(|layout| layout.files.is_empty() && layout.selected_path.is_none())
+        });
+        let mut reopened = State::with_root(fixture.clone());
+        reopened.workspace_setup();
+        wait(&mut reopened, |s| s.workspace_restoration_ready());
+        assert!(reopened.workspace.tabs.is_empty());
+        assert!(reopened.workspace.layout.selected_path.is_none());
         assert_eq!(
             std::fs::read_dir(fixture.join("data/Trash/files"))
                 .unwrap()
@@ -3315,11 +3451,11 @@ mod tests {
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         click(&mut runtime, "removal-confirm");
         click(&mut runtime, "removal-save-as");
-        runtime.update(|s, _| {
-            s.workspace
-                .operation_destination
-                .replace_text(folder.join("unsafe.txt").to_string_lossy())
-        });
+        fill(
+            &mut runtime,
+            "removal-save-as-path",
+            &folder.join("unsafe.txt").to_string_lossy(),
+        );
         click(&mut runtime, "removal-save-as-submit");
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         assert!(
@@ -3330,11 +3466,11 @@ mod tests {
         assert!(folder.exists());
         let destination = fixture.join("preserved.txt");
         std::fs::write(&destination, "existing destination").unwrap();
-        runtime.update(|s, _| {
-            s.workspace
-                .operation_destination
-                .replace_text(destination.to_string_lossy())
-        });
+        fill(
+            &mut runtime,
+            "removal-save-as-path",
+            &destination.to_string_lossy(),
+        );
         click(&mut runtime, "removal-save-as-submit");
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         click(&mut runtime, "operation-keep-both");
@@ -3436,6 +3572,172 @@ mod tests {
         });
         assert!(!path.exists());
         assert!(runtime.state.workspace.tabs.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_pty_input_survives_background_trash_preparation_save_as_and_removal() {
+        use super::super::tests::{press, runtime_for};
+        let fixture = tempfile::tempdir().unwrap();
+        if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
+            let output=std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","desktop::workspace::tests::real_pty_input_survives_background_trash_preparation_save_as_and_removal","--nocapture"])
+                .env("RODTTY_TRASH_UI_CHILD",fixture.path()).env("XDG_DATA_HOME",fixture.path().join("data")).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let fixture = PathBuf::from(std::env::var_os("RODTTY_TRASH_UI_CHILD").unwrap());
+        let path = fixture.join("notes.txt");
+        std::fs::write(&path, "saved source").unwrap();
+        let mut state = state(&fixture);
+        state.directory = fixture.clone();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.new_tab();
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", Duration::from_secs(15))
+            .unwrap();
+        state.navigate(fixture.clone());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        open(&mut state, &path);
+        state.workspace.tabs[0]
+            .edit
+            .replace_text("unsaved work retained");
+        state.workspace.tabs[0].revision += 1;
+        state.workspace.tree.select(path.to_str().unwrap());
+        let mut runtime = runtime_for(state);
+        let input = |runtime: &mut rune::Runtime<State>, stage: &str| {
+            assert!(runtime.state.workspace.operation_busy);
+            assert!(runtime.find("removal-dialog").is_none());
+            press(
+                runtime,
+                Key::Text(format!("printf 'BUSY_{stage}_%s\\n' DONE")),
+                Default::default(),
+            );
+            press(runtime, Key::Enter, Default::default());
+            runtime
+                .state
+                .active()
+                .unwrap()
+                .wait_for(&format!("BUSY_{stage}_DONE"), Duration::from_secs(2))
+                .unwrap();
+            assert_eq!(
+                runtime.state.workspace.tabs[0].edit.text,
+                "unsaved work retained"
+            );
+        };
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        click(&mut runtime, "file-editor-1");
+        press(
+            &mut runtime,
+            Key::Text("ignored edit".into()),
+            Default::default(),
+        );
+        runtime.paste("ignored paste");
+        runtime.frame(0.0);
+        runtime.update(|s, tx| {
+            s.dispatch(AppAction::SaveEditor(None), tx);
+            s.dispatch(AppAction::CloseEditor(None), tx);
+        });
+        assert_eq!(runtime.state.workspace.tabs.len(), 1);
+        assert!(!runtime.state.workspace.tabs[0].saving);
+        assert_eq!(
+            runtime.state.workspace.tabs[0].edit.text,
+            "unsaved work retained"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::ShowTerminal, tx));
+        press(
+            &mut runtime,
+            Key::Command('u'),
+            rune::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+        );
+        input(&mut runtime, "PREPARE");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-confirm");
+        click(&mut runtime, "removal-save-as");
+        let saved = fixture.join("preserved.txt");
+        fill(
+            &mut runtime,
+            "removal-save-as-path",
+            &saved.to_string_lossy(),
+        );
+        click(&mut runtime, "removal-save-as-submit");
+        input(&mut runtime, "SAVE_AS");
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.operation_busy
+                && s.workspace
+                    .removal
+                    .as_ref()
+                    .is_some_and(|r| r.save_as.is_none())
+        });
+        input(&mut runtime, "REMOVE");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Moved to Trash")
+        });
+        assert!(!path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&saved).unwrap(),
+            "unsaved work retained"
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, saved);
+    }
+
+    #[test]
+    fn trash_waits_for_in_flight_open_and_save_before_starting_any_removal() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("notes.txt");
+        std::fs::write(&path, "saved source").unwrap();
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        state.workspace.tree.select(path.to_str().unwrap());
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| {
+            s.open_file(path.clone());
+            s.dispatch(AppAction::TrashFile, tx);
+        });
+        assert!(runtime.state.workspace.removal.is_none());
+        assert!(runtime.state.message.contains("Wait"));
+        assert!(path.exists());
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.tabs.len() == 1 && !s.file_io_pending()
+        });
+        runtime.update(|s, tx| {
+            let tab = &mut s.workspace.tabs[0];
+            tab.edit.replace_text("saved before deletion is allowed");
+            tab.revision += 1;
+            let id = tab.id;
+            s.save_file(id, false, None);
+            s.dispatch(AppAction::TrashFile, tx);
+        });
+        assert!(runtime.state.workspace.removal.is_none());
+        assert!(runtime.state.message.contains("Wait"));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "saved before deletion is allowed"
+        );
+        assert!(!runtime.state.workspace.tabs[0].dirty());
     }
 
     #[test]
@@ -3802,6 +4104,14 @@ mod tests {
             s.navigate(source.clone());
             s.workspace.layout.expanded_folders = vec![source.join("nested")];
         });
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "dirty.txt")
+        });
+        runtime.update(|s, _| {
+            s.workspace
+                .tree
+                .select(source.join("nested/dirty.txt").to_str().unwrap());
+        });
         click(&mut runtime, "operation-submit");
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         assert!(!source.exists());
@@ -3844,6 +4154,7 @@ mod tests {
         assert_eq!(layout.explorer_directory, Some(target.clone()));
         assert!(layout.expanded_folders.contains(&target.join("nested")));
         assert_eq!(layout.active_file, Some(target.join("nested/dirty.txt")));
+        assert_eq!(layout.selected_path, Some(target.join("nested/dirty.txt")));
         assert_eq!(
             layout.files,
             vec![
@@ -4895,6 +5206,7 @@ mod tests {
         });
         let runtime = runtime_for(restored);
         assert!(runtime.find(path.to_str().unwrap()).is_some());
+        assert_eq!(runtime.state.workspace.tree.cursor(), path.to_str());
         assert_eq!(
             runtime.state.workspace.directory.as_deref(),
             Some(root.path())

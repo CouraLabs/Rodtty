@@ -12,6 +12,7 @@ use std::{
 #[serde(default)]
 pub struct Layout {
     pub explorer: bool,
+    pub explorer_revealed: bool,
     pub explorer_directory: Option<PathBuf>,
     pub expanded_folders: Vec<PathBuf>,
     #[serde(skip_serializing)]
@@ -22,13 +23,20 @@ pub struct Layout {
     pub editor_share: f32,
     pub terminal: bool,
     pub editor: bool,
+    pub empty_editor: bool,
     pub files: Vec<PathBuf>,
     pub active_file: Option<PathBuf>,
+    /// Ordered last directories, never commands, labels, or process identities.
+    pub terminals: Vec<PathBuf>,
+    pub active_terminal: usize,
+    pub terminal_focus: bool,
+    pub selected_path: Option<PathBuf>,
 }
 impl Default for Layout {
     fn default() -> Self {
         Self {
             explorer: false,
+            explorer_revealed: false,
             explorer_directory: None,
             expanded_folders: Vec::new(),
             follow: false,
@@ -37,8 +45,13 @@ impl Default for Layout {
             editor_share: 0.42,
             terminal: true,
             editor: true,
+            empty_editor: false,
             files: Vec::new(),
             active_file: None,
+            terminals: Vec::new(),
+            active_terminal: 0,
+            terminal_focus: true,
+            selected_path: None,
         }
     }
 }

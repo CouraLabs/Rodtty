@@ -212,6 +212,9 @@ impl State {
     }
 
     pub(super) fn file_context_menu(&mut self, press: rune::PointerPress, tx: &mut Tx) {
+        if self.workspace.removal.is_some() {
+            return;
+        }
         tx.element_at_in(
             "file-list",
             press.x,
