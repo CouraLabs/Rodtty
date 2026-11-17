@@ -225,7 +225,7 @@ fn full_screen_app_resizes_and_returns_to_shell() {
     let mut terminal = session(root.path(), Config::default());
     let fixture = rodtty::profile::quote(Path::new(env!("CARGO_BIN_EXE_rodtty-probe"))).unwrap();
     terminal
-        .send(format!("{fixture} --fixture\r").into_bytes())
+        .send(format!("{fixture} --resize-fixture\r").into_bytes())
         .unwrap();
     terminal
         .wait_for("FULL SCREEN FIXTURE", Duration::from_secs(15))
@@ -234,6 +234,9 @@ fn full_screen_app_resizes_and_returns_to_shell() {
     assert!(terminal.screen().contents().contains("日本語"));
     terminal.resize(36, 120).unwrap();
     assert_eq!(terminal.screen().size(), (36, 120));
+    terminal
+        .wait_for("SIZE:120x36", Duration::from_secs(5))
+        .unwrap();
     terminal.send(b"q".to_vec()).unwrap();
     let start = Instant::now();
     while terminal.screen().alternate_screen() && start.elapsed() < Duration::from_secs(5) {

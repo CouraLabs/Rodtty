@@ -117,7 +117,7 @@ impl Appearance {
             } else {
                 "Catppuccin Latte"
             },
-            kit,
+            kit: super::fonts::kit(kit),
             ansi: p
                 .ansi
                 .each_ref()

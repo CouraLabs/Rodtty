@@ -15,6 +15,9 @@ fn main() -> anyhow::Result<()> {
         std::fs::write(path, "completed")?;
         return Ok(());
     }
+    if std::env::args().any(|arg| arg == "--resize-fixture") {
+        return resize_fixture();
+    }
     if std::env::args().any(|arg| arg == "--fixture") {
         return fixture();
     }
@@ -49,6 +52,30 @@ fn fixture() -> anyhow::Result<()> {
         for byte in std::io::stdin().lock().bytes() {
             if byte? == b'q' {
                 break;
+            }
+        }
+        Ok(())
+    })();
+    print!("\x1b[?1049l");
+    std::io::stdout().flush()?;
+    crossterm::terminal::disable_raw_mode()?;
+    result
+}
+
+// A real alternate-screen application observes the OS PTY dimensions and SIGWINCH.
+fn resize_fixture() -> anyhow::Result<()> {
+    use crossterm::event::{Event, KeyCode, read};
+    crossterm::event::poll(Duration::ZERO)?;
+    crossterm::terminal::enable_raw_mode()?;
+    print!("\x1b[?1049h\x1b[2J\x1b[HFULL SCREEN FIXTURE\r\nUnicode: café 日本語 🌿\r\n");
+    let result = (|| -> anyhow::Result<()> {
+        loop {
+            let (cols, rows) = crossterm::terminal::size()?;
+            print!("\x1b[4;1H\x1b[2KSIZE:{cols}x{rows}");
+            std::io::stdout().flush()?;
+            match read()? {
+                Event::Key(key) if key.code == KeyCode::Char('q') => break,
+                _ => {}
             }
         }
         Ok(())

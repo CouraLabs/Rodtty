@@ -83,9 +83,9 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
         .gap(8.0)
         .radius(10.0)
         .fill(a.panel())
-        .child(text("Command Palette").font(LABEL).color(a.ink()))
+        .child(text("Command Palette").font(ui_label()).color(a.ink()))
         .child(
-            text_input(&state.palette_query, LABEL)
+            text_input(&state.palette_query, ui_label())
                 .caret(a.accent(), a.selection())
                 .key("command-query")
                 .label("Search application actions")
@@ -104,7 +104,11 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
         );
     let matches = state.palette_matches();
     if matches.is_empty() {
-        content = content.child(text("No matching actions").font(LABEL).color(a.muted()));
+        content = content.child(
+            text("No matching actions")
+                .font(ui_label())
+                .color(a.muted()),
+        );
     }
     let count = matches.len();
     let first = palette.selected.saturating_sub(3);
@@ -139,7 +143,7 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
                     .gap(8.0)
                     .child(
                         text(command.title)
-                            .font(LABEL)
+                            .font(ui_label())
                             .color(if disabled.is_some() {
                                 a.muted()
                             } else {
@@ -151,14 +155,14 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
                     )
                     .child(
                         text(command.shortcut)
-                            .font(TextStyle::new(10.0, 400.0))
+                            .font(ui_style(10.0, 400.0))
                             .color(a.muted()),
                     ),
             );
         if let Some(reason) = disabled {
             item = item.child(
                 text(reason)
-                    .font(TextStyle::new(10.0, 400.0))
+                    .font(ui_style(10.0, 400.0))
                     .color(a.muted())
                     .truncate(),
             );
@@ -170,7 +174,7 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
             "{} of {count} · ↑ ↓ select · Enter run · Esc dismiss",
             if count == 0 { 0 } else { palette.selected + 1 }
         ))
-        .font(TextStyle::new(10.0, 400.0))
+        .font(ui_style(10.0, 400.0))
         .color(a.muted()),
     );
     Some(

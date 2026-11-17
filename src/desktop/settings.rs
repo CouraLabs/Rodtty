@@ -73,13 +73,9 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         .px(12.0)
         .py(12.0)
         .gap(10.0)
+        .child(text("Settings").font(ui_style(18.0, 600.0)).color(a.ink()))
         .child(
-            text("Settings")
-                .font(TextStyle::new(18.0, 600.0))
-                .color(a.ink()),
-        )
-        .child(
-            text_input(&s.settings_query, LABEL)
+            text_input(&s.settings_query, ui_label())
                 .caret(a.accent(), a.selection())
                 .key("settings-search")
                 .label("Search settings")
@@ -96,10 +92,16 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             |s, tx| s.dispatch(AppAction::OpenSettingsJson, tx),
         ));
     if let Some(error) = &s.settings_error {
-        page = page.child(text(error).font(LABEL).color(a.danger()).wrap_anywhere());
+        page = page.child(
+            text(error)
+                .font(ui_label())
+                .color(a.danger())
+                .wrap_anywhere(),
+        );
     }
     let mut list = col()
         .key("settings-list")
+        .instant_changes()
         .w_full()
         .grow(1.0)
         .min_h(0.0)
@@ -122,10 +124,13 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 s,
                 section,
                 "theme family Catppuccin Latte Mocha Light Dark System palette",
-            )
+            ) || matches(s, section, "font size")
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
+                || matches(s, section, "font size")
+        } else if section == "Editor" {
+            matches(s, section, "font size")
         } else if section == "Files" {
             matches(
                 s,
@@ -147,13 +152,64 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             .key(format!("settings-section-{section}"))
             .w_full()
             .gap(6.0)
-            .child(
-                text(section)
-                    .font(TextStyle::new(13.0, 600.0))
-                    .color(a.accent()),
+            .child(text(section).font(ui_style(13.0, 600.0)).color(a.accent()));
+        let target = match section {
+            "Appearance" => Some("ui"),
+            "Terminal" => Some("terminal"),
+            "Editor" => Some("editor"),
+            _ => None,
+        };
+        if let Some(target) = target.filter(|_| matches(s, section, "font size")) {
+            let size = match target {
+                "ui" => s.config.fonts.ui_size,
+                "terminal" => s.config.fonts.terminal_size,
+                _ => s.config.fonts.editor_size,
+            };
+            let sizes = col().w_full().gap(6.0).child(
+                text(format!(
+                    "{} font size: {size}px",
+                    if target == "ui" { "UI" } else { target }
+                ))
+                .font(ui_label())
+                .color(a.ink()),
             );
+            let mut buttons = row().gap(6.0).scroll_x();
+            for (action, title, delta) in [
+                ("less", "−", -1.0),
+                ("more", "+", 1.0),
+                ("reset", "Reset", 0.0),
+            ] {
+                buttons = buttons.child(button(
+                    a,
+                    format!("{action}-{target}-font-size"),
+                    title,
+                    move |s, _| {
+                        s.save_config(|c| {
+                            let defaults = config::FontPreferences::default();
+                            let (size, default) = match target {
+                                "ui" => (&mut c.fonts.ui_size, defaults.ui_size),
+                                "terminal" => (&mut c.fonts.terminal_size, defaults.terminal_size),
+                                _ => (&mut c.fonts.editor_size, defaults.editor_size),
+                            };
+                            *size = if delta == 0.0 {
+                                default
+                            } else {
+                                (*size + delta).clamp(8.0, 32.0)
+                            };
+                        });
+                    },
+                ));
+            }
+            group = group.child(sizes.child(buttons));
+        }
         match section {
-            "Appearance" => {
+            "Appearance"
+                if matches(
+                    s,
+                    section,
+                    "theme family Catppuccin Latte Mocha Light Dark System palette",
+                ) =>
+            {
                 use crate::config::{Appearance as Mode, ThemeFamily};
                 let mut families = row().gap(6.0).scroll_x();
                 for &family in ThemeFamily::ALL {
@@ -177,7 +233,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     );
                 }
                 group = group
-                    .child(text("Theme family").font(LABEL).color(a.muted()))
+                    .child(text("Theme family").font(ui_label()).color(a.muted()))
                     .child(families)
                     .child(button(a, "reset-theme-family", "Reset family", |s, _| {
                         s.save_config(|c| c.theme_family = Config::default().theme_family);
@@ -205,15 +261,16 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     );
                 }
                 group = group.child(choices)
-                    .child(text(format!("{} · applies immediately", a.name)).font(LABEL).color(a.muted()).wrap())
+                    .child(text(format!("{} · applies immediately", a.name)).font(ui_label()).color(a.muted()).wrap())
                     .child(palette_preview(s.config.theme_family, Mode::Light))
                     .child(palette_preview(s.config.theme_family, Mode::Dark))
                     .child(button(a, "reset-appearance", "Reset appearance", |s, _| {
                         s.save_config(|c| c.appearance = Config::default().appearance);
                     }))
                     .child(text("Catppuccin palette © 2021 Catppuccin · MIT · github.com/catppuccin/palette")
-                        .font(LABEL).color(a.muted()).wrap_anywhere());
+                        .font(ui_label()).color(a.muted()).wrap_anywhere());
             }
+            "Appearance" | "Editor" => {}
             "Terminal" => {
                 if matches(s, section, "history save shell commands") {
                     group = group.child(
@@ -241,7 +298,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .scroll_x()
                             .child(
                                 text(format!("Scrollback: {} lines", s.config.scrollback))
-                                    .font(LABEL)
+                                    .font(ui_label())
                                     .color(a.ink()),
                             )
                             .child(button(a, "less-scrollback", "− 1000", |s, _| {
@@ -266,7 +323,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     text(
                         "Command, history, and scrollback choices apply to new terminal sessions.",
                     )
-                    .font(LABEL)
+                    .font(ui_label())
                     .color(a.muted())
                     .wrap(),
                 );
@@ -349,7 +406,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             _ => {
                 group = group.child(
                     text("No configurable preferences in this section yet.")
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(a.muted())
                         .wrap(),
                 );
@@ -360,7 +417,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
     if count == 0 {
         list = list.child(
             text("No settings match your search.")
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.muted()),
         );
     }
@@ -390,10 +447,10 @@ fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appe
         .radius(6.0)
         .fill(p.bg())
         .border(1.0, p.kit().c.border_base)
-        .child(text(p.name).font(LABEL).color(p.ink()).wrap())
+        .child(text(p.name).font(ui_label()).color(p.ink()).wrap())
         .child(
             text("rodtty:~/projects $ cargo build")
-                .font(LABEL)
+                .font(ui_label())
                 .color(p.accent())
                 .wrap(),
         )
@@ -438,6 +495,48 @@ mod tests {
                 .all(|(a, b)| (a - b).abs() < 0.0001),
             "canvas {actual:?}, expected {hex}"
         );
+    }
+    #[test]
+    fn owner_changes_and_resets_independent_live_font_sizes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        click(&mut runtime, "settings");
+        runtime.update(|s, _| s.settings_query.replace_text("font size"));
+        runtime.frame(0.0);
+        let before = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Settings"))
+            .unwrap()
+            .rect[3];
+        click(&mut runtime, "more-ui-font-size");
+        let after = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Settings"))
+            .unwrap()
+            .rect[3];
+        assert!(
+            after > before,
+            "UI text applies the chosen size immediately"
+        );
+        click(&mut runtime, "more-terminal-font-size");
+        click(&mut runtime, "more-editor-font-size");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["fonts"]["ui_size"], 14.0);
+        assert_eq!(saved["fonts"]["terminal_size"], 15.0);
+        assert_eq!(saved["fonts"]["editor_size"], 15.0);
+        click(&mut runtime, "reset-ui-font-size");
+        click(&mut runtime, "reset-terminal-font-size");
+        click(&mut runtime, "reset-editor-font-size");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["fonts"]["ui_size"], 13.0);
+        assert_eq!(saved["fonts"]["terminal_size"], 14.0);
+        assert_eq!(saved["fonts"]["editor_size"], 14.0);
     }
     #[test]
     fn system_tracks_live_host_changes_while_explicit_appearance_stays_fixed() {
@@ -494,16 +593,17 @@ mod tests {
         }
         let cell_background = |runtime: &rune::Runtime<State>, col: usize| {
             let r = runtime.presented("terminal").unwrap().0;
-            let x = r[0] + (col as f32 + 0.5) * CW;
+            let metrics = runtime.state.terminal_metrics;
+            let x = r[0] + (col as f32 + 0.5) * metrics.width;
             runtime
                 .instances
                 .iter()
                 .find(|i| {
                     (i.rect[1] - r[1]).abs() < 0.01
-                        && i.rect[3] == CH
+                        && i.rect[3] == metrics.height
                         && i.rect[0] <= x
                         && x < i.rect[0] + i.rect[2]
-                        && i.rect[2] < 2.0 * CW
+                        && i.rect[2] < 2.0 * metrics.width
                 })
                 .expect("terminal cell background")
                 .fill
