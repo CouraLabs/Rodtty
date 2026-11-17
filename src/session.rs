@@ -264,10 +264,12 @@ impl Session {
         #[cfg(unix)]
         {
             use nix::{sys::signal::kill, unistd::Pid};
-            if pids
-                .iter()
-                .any(|pid| matches!(kill(Pid::from_raw(*pid as i32), None), Ok(()) | Err(nix::errno::Errno::EPERM)))
-            {
+            if pids.iter().any(|pid| {
+                matches!(
+                    kill(Pid::from_raw(*pid as i32), None),
+                    Ok(()) | Err(nix::errno::Errno::EPERM)
+                )
+            }) {
                 return true;
             }
             self.master

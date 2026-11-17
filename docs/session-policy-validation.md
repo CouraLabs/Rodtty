@@ -32,3 +32,5 @@ RODTTY_HOME="$CARGO_TARGET_DIR/native-owner" "$CARGO_TARGET_DIR/debug/rodtty" \
 For Xlib, remove `WAYLAND_DISPLAY` and `WAYLAND_SOCKET` from the process environment. The report's actual native raw-handle backend identifies the exercised platform; an environment label alone is insufficient.
 
 The labelled Behavior scene can be rendered with `--scene behavior --snap <path> --size 1200x850` or `640x360`. The Settings list scrolls at short heights, and search narrows it to each preference group.
+
+Final merged validation on 2026-11-16: 73 application/runtime tests, 10 file-operation tests, 12 file/Git tests, 3 settings/storage tests and 20 real PTY tests passed (118 total, serial, including ignored tests). Formatting, strict all-target Clippy, all-binary build and the host backend-only all-target check also passed. Both native backend reports above were refreshed after merging the latest frame and terminal-parser integration changes.
