@@ -20,6 +20,7 @@ pub struct TerminalEvents {
     pub cwd: Option<PathBuf>,
     pub title: String,
     responses: Vec<Vec<u8>>,
+    command_running: bool,
 }
 
 impl vt100::Callbacks for TerminalEvents {
@@ -45,6 +46,8 @@ impl vt100::Callbacks for TerminalEvents {
                     }
                 }
             }
+            [b"133", b"C"] => self.command_running = true,
+            [b"133", b"A"] => self.command_running = false,
             _ => {}
         }
     }
@@ -85,6 +88,10 @@ pub struct Session {
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     size: (u16, u16),
+    #[cfg(unix)]
+    shell_pid: Option<u32>,
+    jobs: PathBuf,
+    job_pids: PathBuf,
 }
 
 impl Session {
@@ -128,6 +135,8 @@ impl Session {
             .spawn_command(command)
             .context("start Brush in PTY")?;
         drop(pair.slave);
+        #[cfg(unix)]
+        let shell_pid = child.process_id();
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
@@ -138,7 +147,10 @@ impl Session {
                 rows,
                 cols,
                 config.scrollback,
-                TerminalEvents::default(),
+                TerminalEvents {
+                    command_running: true,
+                    ..Default::default()
+                },
             ),
             generation: 0,
             bytes: 0,
@@ -185,6 +197,8 @@ impl Session {
                 }
             }
         });
+        let jobs = profile.jobs.clone();
+        let job_pids = profile.job_pids.clone();
         let exit_state = state.clone();
         std::thread::spawn(move || {
             // Windows cannot remove in-use launcher executables. Keep the
@@ -209,12 +223,62 @@ impl Session {
             master: pair.master,
             killer,
             size: (rows, cols),
+            #[cfg(unix)]
+            shell_pid,
+            jobs,
+            job_pids,
         })
     }
 
     /// Process-lifetime identity, independent of tab position and rendering.
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    /// A live interactive shell at its prompt is idle. Shell markers cover
+    /// builtins as well as external commands; the foreground group additionally
+    /// protects interactive programs which own the terminal on Unix.
+    pub fn has_running_commands(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.exit.is_some() {
+            return false;
+        }
+        let events = state.parser.callbacks();
+        if events.command_running {
+            return true;
+        }
+        let Ok(jobs) = std::fs::read_to_string(&self.jobs) else {
+            // A failed prompt job snapshot cannot prove an idle session safe.
+            return true;
+        };
+        let pids: Vec<u32> = std::fs::read_to_string(&self.job_pids)
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|pid| pid.parse().ok())
+            .collect();
+        // Brush can run bundled commands as internal async jobs with no OS PID.
+        // Retain their confirmation until the next authoritative prompt refresh.
+        if jobs.lines().filter(|line| !line.is_empty()).count() > pids.len() {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use nix::{sys::signal::kill, unistd::Pid};
+            if pids
+                .iter()
+                .any(|pid| matches!(kill(Pid::from_raw(*pid as i32), None), Ok(()) | Err(nix::errno::Errno::EPERM)))
+            {
+                return true;
+            }
+            self.master
+                .process_group_leader()
+                .is_some_and(|group| Some(group as u32) != self.shell_pid)
+        }
+        #[cfg(not(unix))]
+        {
+            // ConPTY has no foreground-group or process-liveness query.
+            !jobs.is_empty()
+        }
     }
 
     pub fn send(&self, bytes: impl Into<Vec<u8>>) -> Result<()> {
