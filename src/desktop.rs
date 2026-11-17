@@ -738,7 +738,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
-    root = root.children(fonts::overlays(state, a));
+    root = root.children(fonts::overlays(state, a, width));
     root.on_paste(|s: &mut State, content, _| {
         if s.pending.is_none()
             && s.palette.is_none()

@@ -228,6 +228,14 @@ mod tests {
                 .ui_family,
             "Geist"
         );
+        click(&mut rt, "font-ui-trigger");
+        rt.set_viewport((640.0, 900.0), 1.0);
+        rt.update(|s, tx| s.dispatch(AppAction::ShowTerminal, tx));
+        frame(&mut rt);
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "a hidden compact settings pane must not retain its dropdown overlay"
+        );
     }
     #[test]
     #[ignore = "requires a native desktop host with installed proportional and monospace fonts"]
@@ -774,12 +782,12 @@ pub(super) fn selectors(s: &State, a: &Appearance) -> El {
     }
     result
 }
-pub(super) fn overlays(s: &State, a: &Appearance) -> Vec<El> {
+pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
     let mut layers = Vec::new();
     if s.settings
         && s.pending.is_none()
         && s.palette.is_none()
-        && s.workspace.layout.editor
+        && workspace::pane_visibility(s, width).2
         && "appearance ui font family terminal font family installed monospace preview"
             .contains(&s.settings_query.text.trim().to_lowercase())
     {
