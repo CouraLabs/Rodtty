@@ -13,6 +13,7 @@ mod actions;
 mod appearance;
 mod palette;
 use appearance::Appearance;
+mod file_operations;
 mod settings;
 mod workspace;
 use actions::AppAction;
@@ -42,6 +43,7 @@ enum Pending {
     Tab(usize),
     Quit,
     File(workspace::FilePrompt),
+    Operation(file_operations::OperationPrompt),
 }
 
 struct State {
@@ -641,6 +643,9 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     if let Some(dialog) = workspace::file_dialog(state, a) {
         root = root.child(dialog);
     }
+    if let Some(dialog) = file_operations::view(state, a) {
+        root = root.child(dialog);
+    }
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
@@ -709,7 +714,14 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if event.key == Key::Escape {
             state.cancel_file_action();
         }
-        return true;
+        return !matches!(state.pending, Some(Pending::Operation(_)));
+    }
+    if state.workspace.operation_context.is_some() {
+        if event.key == Key::Escape {
+            state.workspace.operation_context = None;
+            return true;
+        }
+        return false;
     }
     if state.palette.is_some() {
         return state.palette_key(event, tx);
