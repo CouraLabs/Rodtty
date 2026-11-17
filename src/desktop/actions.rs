@@ -15,6 +15,7 @@ pub(super) enum AppAction {
     ActivateTerminal(usize),
     ToggleExplorer,
     ToggleTerminal,
+    ShowTerminal,
     ToggleEditor,
     FindTerminal,
     FindEditor,
@@ -116,6 +117,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             "View: Toggle Terminal",
             "",
             AppAction::ToggleTerminal,
+        ),
+        (
+            "show-terminal",
+            "View: Return to Terminal",
+            "",
+            AppAction::ShowTerminal,
         ),
         (
             "toggle-editor",
@@ -359,6 +366,7 @@ impl State {
             self.message = reason.into();
             return;
         }
+        self.workspace_menu = false;
         match action {
             AppAction::CreateFile => {
                 self.begin_file_operation(crate::files::operations::FileOperation::CreateFile, tx)
@@ -377,6 +385,7 @@ impl State {
             AppAction::CommandPalette => self.open_palette(tx),
             AppAction::NewTerminal => {
                 tx.blur();
+                self.workspace.layout.terminal = true;
                 self.new_tab();
             }
             AppAction::EndTerminal => {
@@ -388,15 +397,41 @@ impl State {
                     tx.blur();
                     self.active = index;
                     self.workspace.terminal_focus = true;
+                    self.workspace.layout.terminal = true;
                     self.selection = None;
                 }
             }
             AppAction::ToggleExplorer => self.toggle_files(),
+            AppAction::ShowTerminal => {
+                self.workspace.layout.terminal = true;
+                self.workspace.terminal_focus = true;
+                self.workspace.explorer_revealed = false;
+                tx.blur();
+            }
             AppAction::ToggleTerminal => {
-                self.workspace.layout.terminal = !self.workspace.layout.terminal
+                self.workspace.layout.terminal = !self.workspace.layout.terminal;
+                if !self.workspace.layout.terminal {
+                    self.workspace.layout.editor = true;
+                    self.workspace.terminal_focus = false;
+                    if !self.settings_open && self.workspace.tabs.is_empty() {
+                        self.workspace.show_empty_editor = true;
+                    }
+                }
             }
             AppAction::ToggleEditor => {
-                self.workspace.layout.editor = !self.workspace.layout.editor;
+                if self.workspace.tabs.is_empty()
+                    && !self.settings_open
+                    && !self.workspace.show_empty_editor
+                {
+                    self.workspace.show_empty_editor = true;
+                    self.workspace.layout.editor = true;
+                    self.workspace.terminal_focus = false;
+                } else if self.workspace.body_width < 880.0 && self.workspace.terminal_focus {
+                    self.workspace.layout.editor = true;
+                    self.workspace.terminal_focus = false;
+                } else {
+                    self.workspace.layout.editor = !self.workspace.layout.editor;
+                }
                 if !self.workspace.layout.editor {
                     self.workspace.layout.terminal = true;
                     self.workspace.terminal_focus = true;
@@ -404,6 +439,9 @@ impl State {
                 }
             }
             AppAction::FindTerminal => {
+                self.workspace.layout.terminal = true;
+                self.workspace.terminal_focus = true;
+                self.workspace.explorer_revealed = false;
                 self.search = true;
                 tx.focus_when_shown("search-query", true);
             }
