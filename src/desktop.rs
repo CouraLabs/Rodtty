@@ -1992,14 +1992,28 @@ fn native_session_policies(
     .context("Ask Keep reopens same session")?;
     handle.update(|s, _| {
         s.save_config(|c| {
-            c.behavior.terminal_tab_close = Tab::CloseImmediately;
+            c.behavior.terminal_tab_close = Tab::ConfirmRunning;
             c.behavior.window_close = Window::QuitRodtty;
         });
-        s.send(b"read session_policy_answer\r".to_vec());
+        s.send(b"printf '\\033]133;C\\007\\033]133;A\\007'; printf 'POLICY_%s\\n' BLOCKED; read session_policy_answer\r".to_vec());
     });
-    wait_app(handle, |s| s.active().unwrap().has_running_commands())
-        .context("running builtin activity")?;
-    handle.update(|s, tx| s.dispatch(AppAction::Quit, tx));
+    wait_app(handle, |s| {
+        s.active()
+            .unwrap()
+            .screen()
+            .contents()
+            .contains("POLICY_BLOCKED")
+            && s.active().unwrap().has_running_commands()
+    })
+    .context("public shell integration leaves builtin activity protected")?;
+    handle.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Tab(_))))
+        .context("confirm-running protects builtin after public prompt marker")?;
+    handle.update(|s, tx| {
+        s.cancel_file_action();
+        s.save_config(|c| c.behavior.terminal_tab_close = Tab::CloseImmediately);
+        s.dispatch(AppAction::Quit, tx);
+    });
     wait_app(handle, |s| matches!(s.pending, Some(Pending::Quit)))
         .context("explicit Quit running confirmation")?;
     wait_visible(true)?;
@@ -2122,6 +2136,8 @@ fn native_session_policies(
     Ok(serde_json::json!({
         "ask_native_close_cancel":true, "ask_keep_same_session_relaunch":true,
         "quit_running_confirmation":true, "quit_policy_native_close_confirmation":true,
+        "public_prompt_markers_preserve_running_confirmation":true,
+        "confirm_running_busy_tab_after_public_marker":true,
         "always_confirm_idle_tab":true, "confirm_running_idle_tab_closes":true,
         "close_immediately_busy_tab":true, "new_tab_directory_choices":3,
         "running_session_configuration_snapshot":true, "cancel_preserved_session":true,

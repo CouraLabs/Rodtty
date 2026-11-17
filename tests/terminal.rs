@@ -611,3 +611,69 @@ fn command_confirmation_distinguishes_idle_builtin_foreground_background_interru
     }
     assert!(!session.has_running_commands());
 }
+
+#[test]
+fn public_prompt_markers_cannot_hide_a_running_builtin() {
+    let root = tempfile::tempdir().unwrap();
+    let terminal = session(root.path(), Config::default());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while terminal.has_running_commands() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !terminal.has_running_commands(),
+        "initial prompt should be idle"
+    );
+    terminal.send(b"printf '\\033]133;A\\007'; printf 'REVIEW_%s\\n' BLOCKED; read pending; printf complete > completed\r".to_vec()).unwrap();
+    terminal
+        .wait_for("REVIEW_BLOCKED", Duration::from_secs(5))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let running_while_blocked = terminal.has_running_commands();
+    assert!(
+        !root.path().join("completed").exists(),
+        "read must still be blocked"
+    );
+    terminal.send(b"answer\r".to_vec()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !root.path().join("completed").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("completed")).unwrap(),
+        "complete"
+    );
+    assert!(
+        running_while_blocked,
+        "Session::has_running_commands was false while builtin read blocked after a public OSC133 A"
+    );
+}
+
+#[test]
+fn other_sessions_activity_markers_cannot_hide_a_running_builtin() {
+    let root = tempfile::tempdir().unwrap();
+    let other_root = tempfile::tempdir().unwrap();
+    let other = PreparedProfile::new(shell(), other_root.path(), &Config::default()).unwrap();
+    let terminal = session(root.path(), Config::default());
+    wait_activity(&terminal, false);
+    terminal.send(format!(
+        "printf '\\033]133;C\\007\\033]777;rodtty;{};C\\007\\033]777;rodtty;{};A\\033\\\\'; printf 'FOREIGN_%s\\n' BLOCKED; read answer; printf complete > completed\r",
+        other.activity_tag, other.activity_tag
+    ).into_bytes()).unwrap();
+    terminal
+        .wait_for("FOREIGN_BLOCKED", Duration::from_secs(5))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let running = terminal.has_running_commands();
+    assert!(!root.path().join("completed").exists());
+    terminal.send(b"reply\r".to_vec()).unwrap();
+    wait_activity(&terminal, false);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("completed")).unwrap(),
+        "complete"
+    );
+    assert!(
+        running,
+        "another session's prompt marker must not clear this owning shell's command"
+    );
+}

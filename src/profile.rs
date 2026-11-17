@@ -50,6 +50,7 @@ pub struct PreparedProfile {
     pub disabled: String,
     pub jobs: PathBuf,
     pub job_pids: PathBuf,
+    pub activity_tag: String,
 }
 
 pub fn quote(path: &Path) -> Result<String> {
@@ -123,16 +124,28 @@ impl PreparedProfile {
         } else {
             ""
         };
+        // The private profile path uniquely identifies this owning session. This
+        // tag separates our activity from public/nested shell integration; it is
+        // not a security boundary against programs that can read the profile.
+        let activity_tag: String = directory
+            .path()
+            .as_os_str()
+            .as_encoded_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         // Preserve the owner's pre-command prompt and every PROMPT_COMMAND
         // array entry. Invisible OSC markers describe command activity without
         // matching prompt text, so builtins and host programs behave alike.
-        script.push_str("PS0='\\e]133;C\\a'\"${PS0-}\"\n");
+        script.push_str(&format!(
+            "PS0='\\e]777;rodtty;{activity_tag};C\\a'\"${{PS0-}}\"\n"
+        ));
         let jobs = directory.path().join("jobs");
         let job_pids = directory.path().join("job-pids");
         // `jobs` in command substitution runs in a subshell and loses Brush's
         // internal async jobs. Capture directly in private session files instead.
         script.push_str(&format!(
-            "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]133;A\\007'\n}}\n",
+            "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]777;rodtty;{activity_tag};A\\007'\n}}\n",
             jobs = quote(&jobs)?, pids = quote(&job_pids)?,
         ));
         script.push_str(&format!(
@@ -146,6 +159,7 @@ impl PreparedProfile {
             disabled: config.disabled.join(","),
             jobs,
             job_pids,
+            activity_tag,
         })
     }
 }

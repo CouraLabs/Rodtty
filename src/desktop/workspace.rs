@@ -62,6 +62,12 @@ pub(super) struct TreeEntry {
     badge: String,
 }
 
+struct RestoredPanes {
+    editor_visible: bool,
+    terminal_focus: bool,
+    explorer_revealed: bool,
+}
+
 pub(super) struct Workspace {
     pub autosave_preferences: config::AutosavePreferences,
     pub autosave_context: Option<u64>,
@@ -105,9 +111,7 @@ pub(super) struct Workspace {
     opening: Vec<(PathBuf, bool)>,
     latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
-    restore_editor: Option<bool>,
-    restore_focus: Option<bool>,
-    restore_explorer: Option<bool>,
+    restore_panes: Option<RestoredPanes>,
     pub(super) restoration_warnings: Vec<String>,
     pub(super) last_persist: Instant,
     last_saved: Option<Vec<u8>>,
@@ -178,9 +182,7 @@ impl Default for Workspace {
             opening: Vec::new(),
             latest_activation: None,
             restore_active: None,
-            restore_editor: None,
-            restore_focus: None,
-            restore_explorer: None,
+            restore_panes: None,
             restoration_warnings: Vec::new(),
             last_persist: Instant::now(),
             last_saved: None,
@@ -276,6 +278,13 @@ impl State {
         self.persist_file_references();
     }
     pub(super) fn persist_file_references(&mut self) {
+        self.update_workspace_snapshot();
+        self.io(Job::Layout {
+            root: self.root.clone(),
+            layout: self.workspace.layout.clone(),
+        });
+    }
+    fn update_workspace_snapshot(&mut self) {
         self.workspace.layout.empty_editor = self.workspace.show_empty_editor;
         self.workspace.layout.explorer_revealed = self.workspace.explorer_revealed;
         self.workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
@@ -298,10 +307,6 @@ impl State {
             .get(self.workspace.active)
             .filter(|t| !t.preview)
             .map(|t| t.document.path.clone());
-        self.io(Job::Layout {
-            root: self.root.clone(),
-            layout: self.workspace.layout.clone(),
-        });
     }
     pub(super) fn workspace_restoration_ready(&self) -> bool {
         self.workspace.opening.is_empty()
@@ -312,9 +317,11 @@ impl State {
         match Layout::load(&self.root) {
             Ok(layout) => {
                 if !layout.files.is_empty() {
-                    self.workspace.restore_editor = Some(layout.editor);
-                    self.workspace.restore_focus = Some(layout.terminal_focus);
-                    self.workspace.restore_explorer = Some(layout.explorer_revealed);
+                    self.workspace.restore_panes = Some(RestoredPanes {
+                        editor_visible: layout.editor,
+                        terminal_focus: layout.terminal_focus,
+                        explorer_revealed: layout.explorer_revealed,
+                    });
                 }
                 self.workspace.restore_active = layout.active_file.clone();
                 self.workspace.directory = layout.explorer_directory.clone();
@@ -753,27 +760,8 @@ impl State {
         if self.shutdown_saved || !self.workspace_restoration_ready() {
             return;
         }
+        self.update_workspace_snapshot();
         let workspace = &mut self.workspace;
-        workspace.layout.explorer_directory = workspace.directory.clone();
-        workspace.layout.empty_editor = workspace.show_empty_editor;
-        workspace.layout.explorer_revealed = workspace.explorer_revealed;
-        workspace.layout.files = workspace
-            .tabs
-            .iter()
-            .filter(|t| !t.preview)
-            .map(|t| t.document.path.clone())
-            .collect();
-        workspace.layout.active_file = workspace
-            .tabs
-            .get(workspace.active)
-            .filter(|t| !t.preview)
-            .map(|t| t.document.path.clone());
-        workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
-        workspace.layout.active_terminal = self.active;
-        workspace.layout.terminal_focus = workspace.terminal_focus || self.settings;
-        if let Some(path) = workspace.tree.cursor() {
-            workspace.layout.selected_path = Some(PathBuf::from(path));
-        }
         workspace.last_persist = Instant::now();
         let next = serde_json::to_vec(&workspace.layout).ok();
         if next != workspace.last_saved {
@@ -1125,6 +1113,9 @@ impl State {
                                 .iter()
                                 .position(|t| t.document.path == document.path)
                             {
+                                if !preview {
+                                    self.workspace.tabs[i].preview = false;
+                                }
                                 self.show_editor(i, !preview);
                                 continue;
                             }
@@ -1178,12 +1169,12 @@ impl State {
                             {
                                 self.show_editor(index, !preview);
                             }
-                            if self.workspace.restore_editor.is_none() {
+                            if self.workspace.restore_panes.is_none() {
                                 self.message.clear();
                             }
                         }
                         Err(error) => {
-                            if self.workspace.restore_editor.is_some() {
+                            if self.workspace.restore_panes.is_some() {
                                 self.workspace.restoration_warnings.push(error.clone());
                             }
                             self.message = error;
@@ -1191,14 +1182,12 @@ impl State {
                     }
                     if self.workspace.opening.is_empty() {
                         self.workspace.restore_active = None;
-                        if let Some(visible) = self.workspace.restore_editor.take() {
-                            self.workspace.layout.editor = visible;
-                            self.workspace.terminal_focus =
-                                self.workspace.restore_focus.take().unwrap_or(true)
-                                    || !visible
-                                    || self.workspace.tabs.is_empty();
-                            self.workspace.explorer_revealed =
-                                self.workspace.restore_explorer.take().unwrap_or(false);
+                        if let Some(panes) = self.workspace.restore_panes.take() {
+                            self.workspace.layout.editor = panes.editor_visible;
+                            self.workspace.terminal_focus = panes.terminal_focus
+                                || !panes.editor_visible
+                                || self.workspace.tabs.is_empty();
+                            self.workspace.explorer_revealed = panes.explorer_revealed;
                             self.message = self.workspace.restoration_warnings.join("\n");
                         }
                     }
@@ -6204,5 +6193,64 @@ mod tests {
         state.workspace_poll(&mut Tx::default());
         assert_eq!(state.workspace.diff.mode(), DiffMode::Unified);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "fn main() {}\n");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn double_clicking_a_symlink_retains_the_canonical_preview_and_persists_it() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real.txt");
+        let alias = root.path().join("alias.txt");
+        let other = root.path().join("other.txt");
+        std::fs::write(&real, "symlink target").unwrap();
+        std::fs::write(&other, "other file").unwrap();
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 3);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, alias.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 1);
+        let original_id = runtime.state.workspace.tabs[0].id;
+        let (x, y) = runtime.find(alias.to_str().unwrap()).unwrap();
+        runtime.frame(1.0);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.1);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        wait_runtime(&mut runtime, |s| !s.workspace.has_pending_opens());
+        assert!(runtime.elements().iter().any(|e| {
+            e.key.as_deref() == Some(&format!("editor-tab-{original_id}"))
+                && e.label.as_deref() == Some("real.txt")
+        }));
+        assert!(runtime.state.workspace.tabs[0].edit.focused);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "symlink target");
+        runtime.update(|s, _| s.persist_workspace());
+        let saved = Layout::load(root.path()).unwrap();
+        assert_eq!(saved.files, vec![real.clone()]);
+        assert_eq!(saved.active_file, Some(real.clone()));
+        click(&mut runtime, other.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.tabs.iter().any(|t| t.document.path == other)
+        });
+        assert_eq!(
+            runtime.state.workspace.tabs.len(),
+            2,
+            "previewing another file must preserve the retained symlink target"
+        );
+        let retained = runtime
+            .state
+            .workspace
+            .tabs
+            .iter()
+            .find(|t| t.id == original_id)
+            .unwrap();
+        assert_eq!(retained.document.path, real);
+        assert_eq!(retained.edit.text, "symlink target");
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(Layout::load(root.path()).unwrap().files, vec![real]);
     }
 }
