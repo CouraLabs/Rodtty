@@ -288,7 +288,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         ),
         (
             "close-window",
-            "Window: Close and Keep Sessions Running",
+            "Window: Close Window",
             "",
             AppAction::CloseWindow,
         ),
@@ -456,7 +456,19 @@ impl State {
             AppAction::CloseTerminal(id) => {
                 if self.sessions.iter().any(|s| tabs::session_id(s) == id) {
                     tx.blur();
+                    let confirm = match self.config.behavior.terminal_tab_close {
+                        crate::config::TerminalClosePolicy::ConfirmRunning => self
+                            .sessions
+                            .iter()
+                            .find(|s| tabs::session_id(s) == id)
+                            .is_some_and(Session::has_running_commands),
+                        crate::config::TerminalClosePolicy::AlwaysConfirm => true,
+                        crate::config::TerminalClosePolicy::CloseImmediately => false,
+                    };
                     self.pending = Some(Pending::Tab(id));
+                    if !confirm {
+                        self.confirm(tx);
+                    }
                 }
             }
             AppAction::MoveTab(target, to) => self.move_tab(target, to),

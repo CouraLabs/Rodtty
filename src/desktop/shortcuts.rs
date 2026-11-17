@@ -31,18 +31,22 @@ impl State {
             .unwrap_or_default()
     }
     fn shortcut_context(&self, context: actions::ShortcutContext, focused: Option<&str>) -> bool {
-        let terminal =
-            self.workspace.terminal_focus && self.workspace.layout.terminal && focused.is_none();
+        let (_, terminal_visible, editor_visible) =
+            workspace::pane_visibility(self, self.workspace.body_width);
+        let editor_field =
+            focused.is_some_and(|f| f.starts_with("file-editor-") || f.starts_with("editor-"));
+        let settings_field = focused.is_some_and(|f| f.starts_with("settings-"));
+        let terminal = terminal_visible && self.workspace.terminal_focus && focused.is_none();
         let editor =
-            !self.workspace.terminal_focus && self.workspace.layout.editor && !self.settings;
+            editor_visible && !self.settings && (editor_field || !self.workspace.terminal_focus);
         match context {
             actions::ShortcutContext::Terminal => terminal,
-            actions::ShortcutContext::Editor => {
-                editor
-                    && focused
-                        .is_none_or(|f| f.starts_with("file-editor-") || f.starts_with("editor-"))
+            actions::ShortcutContext::Editor => editor,
+            actions::ShortcutContext::Settings => {
+                editor_visible
+                    && self.settings
+                    && (settings_field || !self.workspace.terminal_focus)
             }
-            actions::ShortcutContext::Settings => self.settings && !self.workspace.terminal_focus,
             actions::ShortcutContext::Global => true,
         }
     }
@@ -548,5 +552,30 @@ mod tests {
         assert!(words(&rt).contains("Invalid Settings JSON"));
         press(&mut rt, Key::Function(8), Default::default());
         assert!(rt.state.workspace.layout.explorer);
+    }
+    #[test]
+    fn clicking_a_visible_editor_overrides_stale_terminal_pane_focus_for_close_chords() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        workspace::demo(&mut state, false);
+        state.workspace.terminal_focus = true;
+        state
+            .config
+            .shortcuts
+            .insert("end-terminal".into(), "mod+w".into());
+        let mut rt = runtime_for(state);
+        click(&mut rt, "file-editor-1");
+        press(&mut rt, Key::Text("unsaved".into()), Default::default());
+        press(
+            &mut rt,
+            Key::Command('w'),
+            rune::Mods {
+                cmd: true,
+                ctrl: !cfg!(target_os = "macos"),
+                ..Default::default()
+            },
+        );
+        assert!(rt.find("file-dialog").is_some());
+        assert!(rt.find("confirmation").is_none());
     }
 }

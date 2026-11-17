@@ -42,6 +42,8 @@ impl State {
         self.settings_seen = next;
         match Config::load(&self.root) {
             Ok(config) => {
+                self.behavior_directory
+                    .replace_text(config.behavior.specified_directory.to_string_lossy());
                 self.config = config.clone();
                 self.last_valid_config = config;
                 self.config_valid = true;
@@ -135,6 +137,20 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     &format!("{} {} {}", c.id, c.title, s.shortcut_label(c.id)),
                 )
             })
+        } else if section == "Behavior" {
+            matches(
+                s,
+                section,
+                "window close keep sessions running ask each time quit Rodtty",
+            ) || matches(
+                s,
+                section,
+                "terminal tab close confirm running commands always confirm close immediately",
+            ) || matches(
+                s,
+                section,
+                "new terminal directory active explorer specified folder",
+            )
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
@@ -215,6 +231,172 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         match section {
             "Keyboard Shortcuts" => {
                 group = group.child(shortcuts::list(s, a));
+            }
+            "Behavior" => {
+                use crate::config::WindowClosePolicy as Window;
+                if matches(
+                    s,
+                    section,
+                    "window close keep sessions running ask each time quit Rodtty",
+                ) {
+                    group = group.child(text("Window close").font(ui_label()).color(a.muted()));
+                    for (key, label, policy) in [
+                        (
+                            "window-close-keep",
+                            "Keep sessions running",
+                            Window::KeepSessionsRunning,
+                        ),
+                        ("window-close-ask", "Ask each time", Window::AskEachTime),
+                        ("window-close-quit", "Quit Rodtty", Window::QuitRodtty),
+                    ] {
+                        group = group.child(
+                            button(
+                                a,
+                                key,
+                                format!(
+                                    "{} {label}",
+                                    if s.config.behavior.window_close == policy {
+                                        "●"
+                                    } else {
+                                        "○"
+                                    }
+                                ),
+                                move |s, _| {
+                                    s.save_config(|c| c.behavior.window_close = policy);
+                                },
+                            )
+                            .w_full(),
+                        );
+                    }
+                    group = group.child(button(
+                        a,
+                        "reset-window-close",
+                        "Reset window close",
+                        |s, _| {
+                            s.save_config(|c| c.behavior.window_close = Window::default());
+                        },
+                    ));
+                }
+                use crate::config::{
+                    NewTerminalDirectory as Directory, TerminalClosePolicy as Terminal,
+                };
+                if matches(
+                    s,
+                    section,
+                    "terminal tab close confirm running commands always confirm close immediately",
+                ) {
+                    group =
+                        group.child(text("Terminal tab close").font(ui_label()).color(a.muted()));
+                    for (key, label, policy) in [
+                        (
+                            "terminal-close-running",
+                            "Confirm when commands are running",
+                            Terminal::ConfirmRunning,
+                        ),
+                        (
+                            "terminal-close-always",
+                            "Always confirm",
+                            Terminal::AlwaysConfirm,
+                        ),
+                        (
+                            "terminal-close-immediate",
+                            "Close immediately",
+                            Terminal::CloseImmediately,
+                        ),
+                    ] {
+                        group = group.child(
+                            button(
+                                a,
+                                key,
+                                format!(
+                                    "{} {label}",
+                                    if s.config.behavior.terminal_tab_close == policy {
+                                        "●"
+                                    } else {
+                                        "○"
+                                    }
+                                ),
+                                move |s, _| {
+                                    s.save_config(|c| c.behavior.terminal_tab_close = policy);
+                                },
+                            )
+                            .w_full(),
+                        );
+                    }
+                    group = group.child(button(
+                        a,
+                        "reset-terminal-close",
+                        "Reset terminal tab close",
+                        |s, _| {
+                            s.save_config(|c| c.behavior.terminal_tab_close = Terminal::default());
+                        },
+                    ));
+                }
+                if matches(
+                    s,
+                    section,
+                    "new terminal directory active explorer specified folder",
+                ) {
+                    group = group.child(
+                        text("New terminal directory")
+                            .font(ui_label())
+                            .color(a.muted()),
+                    );
+                    for (key, label, policy) in [
+                        (
+                            "new-directory-active",
+                            "Active terminal directory",
+                            Directory::Active,
+                        ),
+                        (
+                            "new-directory-explorer",
+                            "Explorer folder",
+                            Directory::Explorer,
+                        ),
+                        (
+                            "new-directory-specified",
+                            "Specified folder",
+                            Directory::Specified,
+                        ),
+                    ] {
+                        group = group.child(
+                            button(
+                                a,
+                                key,
+                                format!(
+                                    "{} {label}",
+                                    if s.config.behavior.new_terminal_directory == policy {
+                                        "●"
+                                    } else {
+                                        "○"
+                                    }
+                                ),
+                                move |s, _| {
+                                    s.save_config(|c| c.behavior.new_terminal_directory = policy);
+                                },
+                            )
+                            .w_full(),
+                        );
+                    }
+                    group = group
+                        .child(button(a, "reset-new-directory", "Reset new terminal directory", |s, _| {
+                            s.save_config(|c| c.behavior.new_terminal_directory = Directory::default());
+                        }))
+                        .child(text_input(&s.behavior_directory, ui_label())
+                            .caret(a.accent(), a.selection()).key("specified-directory")
+                            .label("Specified terminal folder").single_line().w_full().h(30.0).color(a.ink())
+                            .placeholder("Absolute folder path", a.muted())
+                            .on_edit(|s: &mut State| &mut s.behavior_directory)
+                            .on_input_change(|s: &mut State, _| {
+                                let path = PathBuf::from(&s.behavior_directory.text);
+                                s.save_config(|c| c.behavior.specified_directory = path);
+                            }))
+                        .child(button(a, "reset-specified-directory", "Reset specified folder", |s, _| {
+                            s.behavior_directory.replace_text("");
+                            s.save_config(|c| c.behavior.specified_directory = PathBuf::new());
+                        }))
+                        .child(text("The first terminal keeps the startup directory. These choices apply to new tabs.").font(ui_label()).color(a.muted()).wrap());
+                }
             }
             "Appearance" if matches(s, section, THEME_SEARCH) => {
                 use crate::config::Appearance as Mode;
@@ -559,6 +741,121 @@ mod tests {
             "canvas {actual:?}, expected {hex}"
         );
     }
+    #[test]
+    fn behavior_settings_save_and_reset_terminal_close_and_directory_choices() {
+        use crate::config::{NewTerminalDirectory, TerminalClosePolicy};
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("terminal tab close"));
+        rt.frame(0.0);
+        click(&mut rt, "terminal-close-always");
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .terminal_tab_close,
+            TerminalClosePolicy::AlwaysConfirm
+        );
+        click(&mut rt, "terminal-close-immediate");
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .terminal_tab_close,
+            TerminalClosePolicy::CloseImmediately
+        );
+        click(&mut rt, "reset-terminal-close");
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .terminal_tab_close,
+            TerminalClosePolicy::ConfirmRunning
+        );
+        rt.update(|s, _| s.settings_query.replace_text("new terminal directory"));
+        rt.frame(0.0);
+        click(&mut rt, "new-directory-explorer");
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .new_terminal_directory,
+            NewTerminalDirectory::Explorer
+        );
+        click(&mut rt, "new-directory-specified");
+        click(&mut rt, "specified-directory");
+        rt.key(KeyEvent {
+            key: Key::Text(root.path().display().to_string()),
+            mods: Default::default(),
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .specified_directory,
+            root.path()
+        );
+        click(&mut rt, "reset-new-directory");
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .new_terminal_directory,
+            NewTerminalDirectory::Active
+        );
+        click(&mut rt, "reset-specified-directory");
+        assert!(
+            Config::load(root.path())
+                .unwrap()
+                .behavior
+                .specified_directory
+                .as_os_str()
+                .is_empty()
+        );
+        let mut external = Config::load(root.path()).unwrap();
+        external.behavior.new_terminal_directory = NewTerminalDirectory::Specified;
+        external.behavior.specified_directory = root.path().into();
+        external.behavior.terminal_tab_close = TerminalClosePolicy::AlwaysConfirm;
+        external.save(root.path()).unwrap();
+        rt.update(|s, _| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            s.poll_settings();
+        });
+        assert_eq!(
+            rt.state.config.behavior.terminal_tab_close,
+            TerminalClosePolicy::AlwaysConfirm
+        );
+    }
+
+    #[test]
+    fn behavior_settings_search_apply_live_persist_and_reset_window_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("window close"));
+        rt.frame(0.0);
+        click(&mut rt, "window-close-ask");
+        assert_eq!(
+            Config::load(root.path()).unwrap().behavior.window_close,
+            crate::config::WindowClosePolicy::AskEachTime
+        );
+        rt.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        rt.frame(0.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.find("window-close-choice").is_some());
+        click(&mut rt, "window-close-cancel");
+        click(&mut rt, "reset-window-close");
+        assert_eq!(
+            Config::load(root.path()).unwrap().behavior.window_close,
+            crate::config::WindowClosePolicy::KeepSessionsRunning
+        );
+        rt.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        assert_eq!(rt.shell_request.take(), Some(rune::Shell::Close));
+    }
+
     #[test]
     fn owner_selects_dracula_family_and_keeps_both_appearances_on_reopen() {
         let root = tempfile::tempdir().unwrap();

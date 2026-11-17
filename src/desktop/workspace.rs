@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 pub(super) enum Action {
     Editor(u64),
     Window,
+    KeepWindow,
     Quit,
 }
 pub(super) enum FilePrompt {
@@ -546,23 +547,49 @@ impl State {
                 }
                 self.invalidate_diff(true);
             }
-            Action::Window => {
+            Action::Window => match self.config.behavior.window_close {
+                crate::config::WindowClosePolicy::KeepSessionsRunning => {
+                    self.request_action(Action::KeepWindow, tx)
+                }
+                crate::config::WindowClosePolicy::AskEachTime => {
+                    self.pending = Some(Pending::Window)
+                }
+                crate::config::WindowClosePolicy::QuitRodtty => {
+                    self.request_action(Action::Quit, tx)
+                }
+            },
+            Action::KeepWindow => {
                 self.persist_workspace();
+                self.window_close_approved = true;
                 tx.close_window();
             }
             Action::Quit => {
                 self.persist_workspace();
                 self.pending = Some(Pending::Quit);
+                if !self.sessions.iter().any(Session::has_running_commands) {
+                    self.confirm(tx);
+                }
             }
         }
     }
     pub(super) fn on_window_close(&mut self, tx: &mut Tx) {
-        self.persist_workspace();
-        if self.workspace.tabs.iter().any(Tab::dirty) {
-            self.request_action(Action::Window, tx);
-            if let Some(handle) = &self.handle {
-                handle.open();
-            }
+        if rune::quitting() || std::mem::take(&mut self.window_close_approved) {
+            self.persist_workspace();
+            return;
+        }
+        // Native close notifications arrive as the window hides. Reopen it for
+        // the same decisions used by buttons, menus, palette and shortcuts.
+        self.request_action(Action::Window, tx);
+        self.window_close_approved = false;
+        if (self.pending.is_some()
+            || self
+                .workspace
+                .tabs
+                .iter()
+                .any(|tab| tab.saving || tab.dirty()))
+            && let Some(handle) = &self.handle
+        {
+            handle.open();
         }
     }
     pub(super) fn save_file(&mut self, id: u64, overwrite: bool, after: Option<Action>) {

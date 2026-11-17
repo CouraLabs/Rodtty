@@ -44,6 +44,7 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
 enum Pending {
     Tab(usize),
     Quit,
+    Window,
     File(workspace::FilePrompt),
     Operation(file_operations::OperationPrompt),
 }
@@ -58,6 +59,7 @@ struct State {
     handle: Option<rune::AppHandle<State>>,
     window: Option<rune::WindowHandle>,
     window_maximized: bool,
+    window_close_approved: bool,
     root: PathBuf,
     shell: Option<PathBuf>,
     config: Config,
@@ -71,6 +73,7 @@ struct State {
     settings_open: bool,
     settings_query: TextEdit,
     shortcut_recording: Option<shortcuts::Recording>,
+    behavior_directory: TextEdit,
     theme_family_picker: rune_kit::ComboboxState,
     settings_error: Option<String>,
     settings_seen: Option<Vec<u8>>,
@@ -122,9 +125,22 @@ impl State {
             handle: None,
             window: None,
             window_maximized: false,
+            window_close_approved: false,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
             root,
             shell: config::shell_executable().ok(),
+            behavior_directory: TextEdit::new(
+                loaded
+                    .as_ref()
+                    .ok()
+                    .map(|c| {
+                        c.behavior
+                            .specified_directory
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .unwrap_or_default(),
+            ),
             last_valid_config: loaded.as_ref().cloned().unwrap_or_default(),
             config: loaded.unwrap_or_default(),
             config_valid,
@@ -168,13 +184,40 @@ impl State {
     }
 
     fn new_tab(&mut self) {
+        let cwd = match self.config.behavior.new_terminal_directory {
+            crate::config::NewTerminalDirectory::Active => self
+                .active()
+                .map(Session::cwd)
+                .unwrap_or_else(|| self.directory.clone()),
+            crate::config::NewTerminalDirectory::Explorer => self
+                .workspace
+                .directory
+                .clone()
+                .unwrap_or_else(|| self.directory.clone()),
+            crate::config::NewTerminalDirectory::Specified => {
+                let path = &self.config.behavior.specified_directory;
+                if !path.is_absolute() {
+                    self.message =
+                        "Choose an absolute new-terminal directory in Behavior settings.".into();
+                    return;
+                }
+                path.clone()
+            }
+        };
+        self.start_tab(cwd);
+    }
+
+    fn start_tab(&mut self, cwd: PathBuf) {
         if !self.config_valid {
             return;
         }
-        let cwd = self
-            .active()
-            .map(Session::cwd)
-            .unwrap_or_else(|| self.directory.clone());
+        let cwd = match cwd.canonicalize() {
+            Ok(cwd) if cwd.is_dir() => cwd,
+            _ => {
+                self.message = format!("Could not open terminal directory: {}", cwd.display());
+                return;
+            }
+        };
         let Some(shell) = &self.shell else {
             self.message =
                 "Build rodtty-shell with cargo build --bins before starting Rodtty.".into();
@@ -834,6 +877,53 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 ),
         );
     }
+    if matches!(state.pending, Some(Pending::Window)) {
+        root = root.child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .fill(a.scrim())
+                .center()
+                .child(
+                    col()
+                        .key("window-close-choice")
+                        .modal(false, |s: &mut State| s.pending = None)
+                        .w(410.0)
+                        .px(24.0)
+                        .py(24.0)
+                        .gap(16.0)
+                        .radius(10.0)
+                        .fill(a.panel())
+                        .child(
+                            text("Close Rodtty window?")
+                                .font(ui_style(17.0, 600.0))
+                                .color(a.ink()),
+                        )
+                        .child(
+                            text("Keep terminal sessions running or quit Rodtty and end them.")
+                                .font(ui_label())
+                                .color(a.muted())
+                                .wrap(),
+                        )
+                        .child(button(
+                            a,
+                            "keep-sessions",
+                            "Keep sessions running",
+                            |s, tx| {
+                                s.pending = None;
+                                s.request_action(workspace::Action::KeepWindow, tx);
+                            },
+                        ))
+                        .child(button(a, "quit-sessions", "Quit Rodtty", |s, tx| {
+                            s.pending = None;
+                            s.request_action(workspace::Action::Quit, tx);
+                        }))
+                        .child(button(a, "window-close-cancel", "Cancel", |s, _| {
+                            s.pending = None
+                        })),
+                ),
+        );
+    }
     if let Some(dialog) = workspace::file_dialog(state, a) {
         root = root.child(dialog);
     }
@@ -994,7 +1084,7 @@ fn setup(state: &mut State, wake: rune::Waker) {
     state.wake = wake;
     state.font_catalog.start(state.wake.clone());
     if rune::tooling::headless_run().is_none() {
-        state.new_tab();
+        state.start_tab(state.directory.clone());
         state.workspace_setup();
     }
 }
@@ -1148,6 +1238,10 @@ fn settings_preview(state: &mut State) {
     preview(state);
     state.open_settings(&mut Tx::default());
 }
+fn behavior_preview(state: &mut State) {
+    settings_preview(state);
+    state.settings_query.replace_text("Behavior");
+}
 fn real_diff_preview(state: &mut State) {
     preview(state);
     if let Err(error) = workspace::real_diff_demo(state) {
@@ -1225,6 +1319,7 @@ pub fn run() -> Result<()> {
             ("tabs-light-editor", tabs_light_editor_preview),
             ("tabs-dark-editor", tabs_dark_editor_preview),
             ("settings", settings_preview),
+            ("behavior", behavior_preview),
         ],
         fonts: fonts::BUNDLED,
         families: ("Geist", "Geist Mono"),
@@ -1281,6 +1376,7 @@ pub fn run() -> Result<()> {
                 && arg != "--workspace-check"
                 && arg != "--font-check"
                 && arg != "--frame-check"
+                && arg != "--session-policy-check"
         })
         .nth(1)
         .map(PathBuf::from);
@@ -1341,7 +1437,10 @@ pub fn run() -> Result<()> {
                     }
                     "open" => handle.open(),
                     "close" => handle.close(),
-                    "quit" => handle.quit(),
+                    "quit" => {
+                        handle.open();
+                        handle.update(|s, tx| s.dispatch(AppAction::Quit, tx));
+                    }
                     "status" => eprintln!(
                         "rodtty: visible={} error={:?}",
                         handle.is_visible(),
@@ -1371,8 +1470,11 @@ fn native_check(
 ) {
     let with_frame = std::env::args().any(|a| a == "--frame-check");
     let with_fonts = std::env::args().any(|a| a == "--font-check");
-    let with_workspace =
-        with_frame || with_fonts || std::env::args().any(|a| a == "--workspace-check");
+    let with_sessions = std::env::args().any(|a| a == "--session-policy-check");
+    let with_workspace = with_frame
+        || with_fonts
+        || with_sessions
+        || std::env::args().any(|a| a == "--workspace-check");
     std::thread::spawn(move || {
         use std::time::{Duration, Instant};
         let check = (|| -> Result<serde_json::Value> {
@@ -1539,10 +1641,16 @@ fn native_check(
                 })
                 .context("Show unsaved close prompt")?;
                 wait_visible(true)?;
-                handle.update(|s, _| {
-                    s.cancel_file_action();
+                handle.update(move |s, _| {
                     let id = s.workspace.tabs[0].id;
-                    s.save_file(id, false, None);
+                    if with_sessions {
+                        // Choose Save in the actual dirty-close decision. Its
+                        // continuation must close only after the protected save.
+                        s.save_file(id, false, Some(workspace::Action::Window));
+                    } else {
+                        s.cancel_file_action();
+                        s.save_file(id, false, None);
+                    }
                 });
                 wait_app(&handle, |s| {
                     s.workspace
@@ -1555,6 +1663,12 @@ fn native_check(
                     std::fs::read_to_string(&file)?.contains("unsaved native check"),
                     "editor save did not reach disk"
                 );
+                if with_sessions {
+                    wait_visible(false)?;
+                    let code = std::process::Command::new(std::env::current_exe()?).status()?;
+                    anyhow::ensure!(code.success(), "Save/close relaunch failed");
+                    wait_visible(true)?;
+                }
                 Some(fixture)
             } else {
                 None
@@ -1639,6 +1753,11 @@ fn native_check(
                     s.with_screen(|screen| !screen.alternate_screen())
                 })?;
             }
+            let session_policies = if with_sessions {
+                Some(native_session_policies(&handle, &wait_visible)?)
+            } else {
+                None
+            };
             handle
                 .update(|state, _| state.send(b"sleep 1; printf 'HIDDEN_%s\\n' OUTPUT\r".to_vec()));
             handle.close();
@@ -1661,6 +1780,14 @@ fn native_check(
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
                 "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"theme_families_preserved_session":9,"family_mode_changes":27,"output_after_appearance_change":true});
+            if let Some(policies) = session_policies {
+                report["session_policies"] = policies;
+                wait_app(&handle, |s| {
+                    s.sessions.len() == 1
+                        && s.active()
+                            .is_some_and(|session| !session.has_running_commands())
+                })?;
+            }
             if let Some(frame) = frame_evidence {
                 report["custom_frame"] = frame;
             }
@@ -1696,8 +1823,211 @@ fn native_check(
         if result["passed"] != true {
             std::process::exit(1);
         }
-        handle.quit();
+        if with_sessions {
+            handle.update(|s, tx| s.dispatch(AppAction::Quit, tx));
+        } else {
+            handle.quit();
+        }
     });
+}
+
+/// Native lifecycle regression: actual hide/reopen notifications share the
+/// same policy boundary as explicit app actions. Every fixture uses this host's
+/// isolated owner root and the caller's per-ticket TMPDIR.
+fn native_session_policies(
+    handle: &rune::AppHandle<State>,
+    wait_visible: &impl Fn(bool) -> Result<()>,
+) -> Result<serde_json::Value> {
+    use crate::config::{
+        NewTerminalDirectory as Directory, TerminalClosePolicy as Tab, WindowClosePolicy as Window,
+    };
+    use std::time::Duration;
+    wait_app(handle, |s| {
+        s.active()
+            .is_some_and(|session| !session.has_running_commands())
+    })
+    .context("initial idle shell")?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    handle.update(move |s, _| {
+        let first = s.active().unwrap();
+        let _ = tx.send((first.id(), first.cwd(), first.config.clone()));
+    });
+    let (first, initial_cwd, initial_config) = rx.recv_timeout(Duration::from_secs(10))?;
+    handle.update(|s, tx| {
+        s.save_config(|c| c.behavior.terminal_tab_close = Tab::AlwaysConfirm);
+        s.dispatch(AppAction::EndTerminal, tx);
+    });
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Tab(_))))
+        .context("Always confirm idle tab")?;
+    handle.update(|s, _| {
+        s.cancel_file_action();
+        s.save_config(|c| c.behavior.window_close = Window::AskEachTime);
+    });
+    wait_app(handle, |s| {
+        s.pending.is_none() && s.config.behavior.window_close == Window::AskEachTime
+    })
+    .context("Ask policy applied before native close")?;
+    handle.close();
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Window)))
+        .context("Ask native close prompt")?;
+    wait_visible(true)?;
+    handle.update(|s, _| s.cancel_file_action());
+    wait_app(handle, move |s| {
+        s.pending.is_none() && s.sessions.len() == 1 && s.active().unwrap().id() == first
+    })
+    .context("Ask cancellation preserves session")?;
+    handle.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Window)))
+        .context("Ask explicit close prompt")?;
+    handle.update(|s, tx| {
+        s.pending = None;
+        s.request_action(workspace::Action::KeepWindow, tx);
+    });
+    wait_visible(false)?;
+    let code = std::process::Command::new(std::env::current_exe()?).status()?;
+    anyhow::ensure!(code.success(), "Ask/Keep relaunch failed");
+    wait_visible(true)?;
+    wait_app(handle, move |s| {
+        s.sessions.len() == 1 && s.active().unwrap().id() == first
+    })
+    .context("Ask Keep reopens same session")?;
+    handle.update(|s, _| {
+        s.save_config(|c| {
+            c.behavior.terminal_tab_close = Tab::CloseImmediately;
+            c.behavior.window_close = Window::QuitRodtty;
+        });
+        s.send(b"read session_policy_answer\r".to_vec());
+    });
+    wait_app(handle, |s| s.active().unwrap().has_running_commands())
+        .context("running builtin activity")?;
+    handle.update(|s, tx| s.dispatch(AppAction::Quit, tx));
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Quit)))
+        .context("explicit Quit running confirmation")?;
+    wait_visible(true)?;
+    handle.update(|s, _| s.cancel_file_action());
+    wait_app(handle, |s| {
+        s.pending.is_none() && s.config.behavior.window_close == Window::QuitRodtty
+    })
+    .context("Quit cancellation applied before native close")?;
+    handle.close();
+    wait_app(handle, |s| matches!(s.pending, Some(Pending::Quit)))
+        .context("native Quit policy confirmation")?;
+    wait_visible(true)?;
+    handle.update(|s, _| {
+        s.cancel_file_action();
+        s.send(vec![3]);
+    });
+    wait_app(handle, |s| !s.active().unwrap().has_running_commands())
+        .context("interrupt returns to idle")?;
+
+    let fixture = tempfile::tempdir()?;
+    let active = fixture.path().join("active");
+    let explorer = fixture.path().join("explorer");
+    let specified = fixture.path().join("specified");
+    for path in [&active, &explorer, &specified] {
+        std::fs::create_dir(path)?;
+    }
+    let command = format!("cd {}\r", profile::quote(&active)?);
+    handle.update(move |s, _| s.send(command.into_bytes()));
+    let expected = active.clone();
+    wait_app(handle, move |s| {
+        s.active().unwrap().cwd() == expected && !s.active().unwrap().has_running_commands()
+    })
+    .context("active session directory change")?;
+    let root = explorer.clone();
+    handle.update(move |s, tx| {
+        s.navigate(root);
+        s.save_config(|c| {
+            c.behavior.new_terminal_directory = Directory::Active;
+            c.history = false;
+            c.disabled = vec!["cat".into()];
+        });
+        s.dispatch(AppAction::NewTerminal, tx);
+    });
+    wait_app(handle, move |s| {
+        s.sessions.len() == 2
+            && s.active().unwrap().cwd() == active
+            && !s.active().unwrap().has_running_commands()
+    })
+    .context("active directory new tab")?;
+    handle.update(|s, tx| {
+        s.save_config(|c| c.behavior.new_terminal_directory = Directory::Explorer);
+        s.dispatch(AppAction::NewTerminal, tx);
+    });
+    wait_app(handle, move |s| {
+        s.sessions.len() == 3
+            && s.active().unwrap().cwd() == explorer
+            && !s.active().unwrap().has_running_commands()
+    })
+    .context("explorer directory new tab")?;
+    let expected = specified.clone();
+    handle.update(move |s, tx| {
+        s.save_config(|c| {
+            c.behavior.new_terminal_directory = Directory::Specified;
+            c.behavior.specified_directory = specified;
+        });
+        s.dispatch(AppAction::NewTerminal, tx);
+    });
+    wait_app(handle, move |s| {
+        s.sessions.len() == 4
+            && s.active().unwrap().cwd() == expected
+            && !s.active().unwrap().has_running_commands()
+    })
+    .context("specified directory new tab")?;
+    let snapshot = initial_config.clone();
+    wait_app(handle, move |s| {
+        s.sessions[0].id() == first
+            && s.sessions[0].config.history == snapshot.history
+            && s.sessions[0].config.disabled == snapshot.disabled
+            && !s.active().unwrap().config.history
+            && s.active().unwrap().config.disabled == ["cat"]
+    })
+    .context("old and new command snapshots")?;
+    // Confirm-running closes an idle new shell directly.
+    handle.update(|s, tx| {
+        s.save_config(|c| c.behavior.terminal_tab_close = Tab::ConfirmRunning);
+        s.dispatch(AppAction::EndTerminal, tx);
+    });
+    wait_app(handle, |s| s.sessions.len() == 3 && s.pending.is_none())
+        .context("confirm-running closes idle tab")?;
+    // Close-immediately also applies to a busy shell without changing Quit's rule.
+    handle.update(|s, _| {
+        s.save_config(|c| c.behavior.terminal_tab_close = Tab::CloseImmediately);
+        s.send(b"read policy_close_answer\r".to_vec());
+    });
+    wait_app(handle, |s| s.active().unwrap().has_running_commands())
+        .context("new builtin activity")?;
+    handle.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+    wait_app(handle, |s| s.sessions.len() == 2 && s.pending.is_none())
+        .context("immediate closes busy tab")?;
+    handle.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+    wait_app(handle, move |s| {
+        s.sessions.len() == 1 && s.active().unwrap().id() == first
+    })
+    .context("remaining new tab close")?;
+    let command = format!("cd {}\r", profile::quote(&initial_cwd)?);
+    let expected = initial_cwd.clone();
+    handle.update(move |s, _| {
+        s.send(command.into_bytes());
+        s.save_config(|c| {
+            c.behavior = Default::default();
+            c.history = initial_config.history;
+            c.disabled = initial_config.disabled;
+        });
+        s.navigate(initial_cwd);
+    });
+    wait_app(handle, move |s| {
+        s.active().unwrap().cwd() == expected && !s.active().unwrap().has_running_commands()
+    })
+    .context("original directory and idle restore")?;
+    Ok(serde_json::json!({
+        "ask_native_close_cancel":true, "ask_keep_same_session_relaunch":true,
+        "quit_running_confirmation":true, "quit_policy_native_close_confirmation":true,
+        "always_confirm_idle_tab":true, "confirm_running_idle_tab_closes":true,
+        "close_immediately_busy_tab":true, "new_tab_directory_choices":3,
+        "running_session_configuration_snapshot":true, "cancel_preserved_session":true,
+        "explicit_quit_after_check":true, "dirty_close_save_then_reopen":true
+    }))
 }
 
 fn wait_app(
@@ -1754,6 +2084,366 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    fn click(runtime: &mut rune::Runtime<State>, key: &str) {
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+    }
+
+    fn close_terminal_from(runtime: &mut rune::Runtime<State>, entry: &str) {
+        runtime.settle_all();
+        runtime.frame(0.0);
+        match entry {
+            "button" => click(runtime, "terminal-close-0"),
+            "middle" => {
+                let (x, y) = runtime.find("tab-0").unwrap();
+                runtime.button_down(x, y, rune::PointerButton::Middle);
+                runtime.button_up(x, y, rune::PointerButton::Middle);
+                runtime.frame(0.0);
+            }
+            "context" => {
+                let (x, y) = runtime.find("tab-0").unwrap();
+                runtime.secondary_down(x, y);
+                runtime.secondary_up(x, y);
+                runtime.frame(0.0);
+                runtime.resolve_popup(Some("close")).unwrap();
+                runtime.frame(0.0);
+            }
+            "shortcut" => press(
+                runtime,
+                Key::Command('w'),
+                rune::Mods {
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+            "menu" => {
+                click(runtime, "workspace-menu");
+                click(runtime, "close-tab");
+            }
+            "palette" => {
+                open_palette(runtime);
+                press(runtime, Key::Text("End Session".into()), Default::default());
+                press(runtime, Key::Enter, Default::default());
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn every_terminal_close_entry_point_honors_live_idle_and_running_policy_matrix() {
+        use crate::config::TerminalClosePolicy as Policy;
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file())
+            .unwrap();
+        for policy in [
+            Policy::ConfirmRunning,
+            Policy::AlwaysConfirm,
+            Policy::CloseImmediately,
+        ] {
+            for running in [false, true] {
+                for entry in ["button", "middle", "context", "shortcut", "menu", "palette"] {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut state = State::with_root(root.path().into());
+                    state.shell = Some(shell.clone());
+                    state.start_tab(root.path().into());
+                    state
+                        .active()
+                        .unwrap()
+                        .wait_for("rodtty:", std::time::Duration::from_secs(15))
+                        .unwrap();
+                    state.save_config(|c| c.behavior.terminal_tab_close = policy);
+                    if running {
+                        state.send(b"read answer\r".to_vec());
+                        let start = std::time::Instant::now();
+                        while !state.active().unwrap().has_running_commands() {
+                            assert!(start.elapsed().as_secs() < 10);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                    let id = state.active().unwrap().id();
+                    let mut rt = runtime_for(state);
+                    close_terminal_from(&mut rt, entry);
+                    let confirms = policy == Policy::AlwaysConfirm
+                        || (policy == Policy::ConfirmRunning && running);
+                    if confirms {
+                        assert!(
+                            rt.find("confirmation").is_some(),
+                            "{policy:?} running={running} {entry}"
+                        );
+                        press(&mut rt, Key::Escape, Default::default());
+                        assert_eq!(rt.state.active().unwrap().id(), id);
+                        close_terminal_from(&mut rt, entry);
+                        click(&mut rt, "confirm");
+                    }
+                    assert!(
+                        rt.state.sessions.is_empty(),
+                        "{policy:?} running={running} {entry}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn window_quit_and_explicit_quit_keep_running_confirmation_even_with_immediate_tab_close() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.start_tab(root.path().into());
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        state.save_config(|c| {
+            c.behavior.terminal_tab_close = crate::config::TerminalClosePolicy::CloseImmediately;
+            c.behavior.window_close = crate::config::WindowClosePolicy::QuitRodtty;
+        });
+        state.send(b"read answer\r".to_vec());
+        let start = std::time::Instant::now();
+        while !state.active().unwrap().has_running_commands() {
+            assert!(start.elapsed().as_secs() < 10);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let id = state.active().unwrap().id();
+        let mut rt = runtime_for(state);
+        for action in [AppAction::Quit, AppAction::CloseWindow] {
+            rt.update(|s, tx| s.dispatch(action, tx));
+            rt.frame(0.0);
+            assert!(rt.find("confirmation").is_some());
+            assert!(rt.shell_request.is_none());
+            press(&mut rt, Key::Escape, Default::default());
+            assert_eq!(rt.state.active().unwrap().id(), id);
+        }
+        // An OS close callback uses the same configured quit flow.
+        rt.update(State::on_window_close);
+        rt.frame(0.0);
+        assert!(rt.find("confirmation").is_some());
+        press(&mut rt, Key::Escape, Default::default());
+        assert_eq!(rt.state.active().unwrap().id(), id);
+    }
+
+    #[test]
+    fn dirty_editor_decision_precedes_each_window_policy_and_quit() {
+        use crate::config::WindowClosePolicy as Policy;
+        for policy in [
+            Policy::KeepSessionsRunning,
+            Policy::AskEachTime,
+            Policy::QuitRodtty,
+        ] {
+            for action in [AppAction::CloseWindow, AppAction::Quit] {
+                let root = tempfile::tempdir().unwrap();
+                let mut state = State::with_root(root.path().into());
+                workspace::demo(&mut state, false);
+                state.workspace.tabs[0].edit.insert("draft remains ");
+                let draft = state.workspace.tabs[0].edit.text.clone();
+                state.save_config(|c| c.behavior.window_close = policy);
+                let mut rt = runtime_for(state);
+                rt.update(|s, tx| s.dispatch(action, tx));
+                rt.frame(0.0);
+                assert!(rt.find("file-save-confirm").is_some());
+                assert!(rt.shell_request.is_none());
+                click(&mut rt, "file-cancel");
+                assert_eq!(rt.state.workspace.tabs[0].edit.text, draft);
+                assert!(rt.state.workspace.tabs[0].dirty());
+                rt.update(|s, tx| s.dispatch(action, tx));
+                rt.frame(0.0);
+                click(&mut rt, "file-discard");
+                assert!(!rt.state.workspace.tabs[0].dirty());
+                if matches!(action, AppAction::CloseWindow) && policy == Policy::AskEachTime {
+                    assert!(rt.find("window-close-choice").is_some());
+                } else {
+                    assert_eq!(
+                        rt.shell_request.take(),
+                        Some(
+                            if matches!(action, AppAction::Quit) || policy == Policy::QuitRodtty {
+                                rune::Shell::Quit
+                            } else {
+                                rune::Shell::Close
+                            }
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn new_terminal_directories_follow_live_choices_without_changing_startup_or_session_snapshots()
+    {
+        use crate::config::NewTerminalDirectory;
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("active");
+        let explorer = root.path().join("explorer");
+        let specified = root.path().join("specified");
+        for dir in [&active, &explorer, &specified] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let mut state = State::with_root(root.path().into());
+        state.directory = active.clone();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.save_config(|c| {
+            c.behavior.new_terminal_directory = NewTerminalDirectory::Specified;
+            c.behavior.specified_directory = specified.clone();
+        });
+        setup(&mut state, Arc::new(|| {}));
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        assert_eq!(
+            state.active().unwrap().cwd(),
+            active,
+            "first launch still uses the startup directory"
+        );
+        state.navigate(explorer.clone());
+        let first = state.active().unwrap().id();
+        let mut rt = runtime_for(state);
+        rt.update(|s, tx| s.dispatch(AppAction::NewTerminal, tx));
+        assert_eq!(rt.state.active().unwrap().cwd(), specified);
+        rt.update(|s, _| {
+            s.save_config(|c| {
+                c.behavior.new_terminal_directory = NewTerminalDirectory::Explorer;
+                c.history = false;
+                c.disabled = vec!["cat".into()];
+            })
+        });
+        rt.update(|s, tx| s.dispatch(AppAction::NewTerminal, tx));
+        let newest = rt.state.active().unwrap();
+        assert_eq!(newest.cwd(), explorer);
+        assert!(!newest.config.history);
+        assert_eq!(newest.config.disabled, ["cat"]);
+        assert_eq!(rt.state.sessions[0].id(), first);
+        assert!(rt.state.sessions[0].config.history);
+        assert!(rt.state.sessions[0].config.disabled.is_empty());
+        rt.update(|s, _| {
+            s.save_config(|c| c.behavior.new_terminal_directory = NewTerminalDirectory::Active)
+        });
+        rt.update(|s, tx| s.dispatch(AppAction::NewTerminal, tx));
+        assert_eq!(rt.state.active().unwrap().cwd(), explorer);
+        let count = rt.state.sessions.len();
+        rt.update(|s, _| {
+            s.save_config(|c| {
+                c.behavior.new_terminal_directory = NewTerminalDirectory::Specified;
+                c.behavior.specified_directory = PathBuf::from("/missing-rodtty-folder");
+            })
+        });
+        rt.update(|s, tx| s.dispatch(AppAction::NewTerminal, tx));
+        assert_eq!(rt.state.sessions.len(), count);
+        assert!(rt.state.message.contains("directory"));
+    }
+
+    #[test]
+    fn window_close_policy_applies_live_and_ask_can_cancel_keep_or_quit() {
+        use crate::config::WindowClosePolicy;
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime_for(State::with_root(root.path().into()));
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Close));
+        runtime.update(|s, _| {
+            s.save_config(|c| c.behavior.window_close = WindowClosePolicy::AskEachTime)
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        runtime.frame(0.0);
+        assert!(runtime.find("window-close-choice").is_some());
+        assert!(runtime.shell_request.is_none());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.state.pending.is_none());
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("keep-sessions").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Close));
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("quit-sessions").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Quit));
+        runtime.update(|s, _| {
+            s.save_config(|c| c.behavior.window_close = WindowClosePolicy::QuitRodtty)
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
+        assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Quit));
+    }
+
+    #[test]
+    fn idle_terminal_closes_immediately_but_live_commands_offer_cancel() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.new_tab();
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+        assert!(
+            runtime.state.sessions.is_empty(),
+            "an idle shell needs no confirmation"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::NewTerminal, tx));
+        runtime
+            .state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
+        runtime
+            .state
+            .active()
+            .unwrap()
+            .send(b"read pending\r".to_vec())
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !runtime.state.active().unwrap().has_running_commands() {
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let id = runtime.state.active().unwrap().id();
+        runtime.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+        runtime.frame(0.0);
+        assert!(runtime.find("confirmation").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert_eq!(runtime.state.active().unwrap().id(), id);
+        runtime.update(|s, tx| s.dispatch(AppAction::Quit, tx));
+        runtime.frame(0.0);
+        assert!(runtime.find("confirmation").is_some());
+        press(&mut runtime, Key::Escape, Default::default());
+        assert_eq!(runtime.state.active().unwrap().id(), id);
     }
 
     #[test]
@@ -2040,6 +2730,8 @@ mod tests {
     fn dragging_and_closing_earlier_terminal_tabs_preserves_active_session() {
         let root = tempfile::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
+        state.config.behavior.terminal_tab_close =
+            crate::config::TerminalClosePolicy::AlwaysConfirm;
         let shell = std::env::current_exe()
             .unwrap()
             .ancestors()
@@ -2120,6 +2812,8 @@ mod tests {
     fn terminal_overflow_scrolls_and_context_close_targets_its_session() {
         let root = tempfile::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
+        state.config.behavior.terminal_tab_close =
+            crate::config::TerminalClosePolicy::AlwaysConfirm;
         let shell = std::env::current_exe()
             .unwrap()
             .ancestors()
@@ -2346,9 +3040,7 @@ mod tests {
         press(&mut runtime, Key::Up, Default::default());
         assert!(runtime.find("command-quit").is_some());
         press(&mut runtime, Key::Enter, Default::default());
-        assert!(runtime.find("confirmation").is_some());
-        press(&mut runtime, Key::Escape, Default::default());
-        assert!(runtime.find("confirmation").is_none());
+        assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Quit));
     }
 
     #[test]

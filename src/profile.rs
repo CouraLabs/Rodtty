@@ -48,6 +48,8 @@ pub struct PreparedProfile {
     pub rc: PathBuf,
     pub path: OsString,
     pub disabled: String,
+    pub jobs: PathBuf,
+    pub job_pids: PathBuf,
 }
 
 pub fn quote(path: &Path) -> Result<String> {
@@ -121,8 +123,20 @@ impl PreparedProfile {
         } else {
             ""
         };
+        // Preserve the owner's pre-command prompt and every PROMPT_COMMAND
+        // array entry. Invisible OSC markers describe command activity without
+        // matching prompt text, so builtins and host programs behave alike.
+        script.push_str("PS0='\\e]133;C\\a'\"${PS0-}\"\n");
+        let jobs = directory.path().join("jobs");
+        let job_pids = directory.path().join("job-pids");
+        // `jobs` in command substitution runs in a subshell and loses Brush's
+        // internal async jobs. Capture directly in private session files instead.
         script.push_str(&format!(
-            "PROMPT_COMMAND='{history_sync}printf \"\\033]7;file://localhost%s\\007\" \"$PWD\"'\n"
+            "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]133;A\\007'\n}}\n",
+            jobs = quote(&jobs)?, pids = quote(&job_pids)?,
+        ));
+        script.push_str(&format!(
+            "PROMPT_COMMAND+=('{history_sync}printf \"\\033]7;file://localhost%s\\007\" \"$PWD\"; __rodtty_prompt_activity')\n"
         ));
         std::fs::write(&rc, script)?;
         Ok(Self {
@@ -130,6 +144,8 @@ impl PreparedProfile {
             rc,
             path,
             disabled: config.disabled.join(","),
+            jobs,
+            job_pids,
         })
     }
 }
