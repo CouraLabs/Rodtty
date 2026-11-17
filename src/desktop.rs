@@ -994,10 +994,9 @@ fn tabs_preview(state: &mut State) {
     };
     state.root = fixture.path().to_owned();
     state.directory = state.root.clone();
+    let explorer_root = state.root.join("Rodtty");
     for index in 0..7 {
-        let cwd = state
-            .root
-            .join(if index % 2 == 0 { "client" } else { "host" });
+        let cwd = explorer_root.join(if index % 2 == 0 { "client" } else { "host" });
         std::fs::create_dir_all(&cwd).unwrap();
         let session = Session::spawn(
             &shell,
@@ -1013,7 +1012,7 @@ fn tabs_preview(state: &mut State) {
             .wait_for("rodtty:", std::time::Duration::from_secs(15))
             .unwrap();
         if index == 0 {
-            session.send(format!("printf '\\033]2;{}\\007'; printf 'TITLE_READY\\n'\r",
+            session.send(format!("printf '\\033]2;{}\\007\\033[2J\\033[H'; printf 'TITLE_READY\\n'\r",
                 "Agent 日本語 — preserving the complete application title while the label visually ellipsizes ".repeat(3)).into_bytes()).unwrap();
             session
                 .wait_for("TITLE_READY", std::time::Duration::from_secs(15))
@@ -1027,7 +1026,7 @@ fn tabs_preview(state: &mut State) {
         .iter()
         .enumerate()
     {
-        let path = state.root.join(folder).join("config.rs");
+        let path = explorer_root.join(folder).join("config.rs");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "// Tab preview\nfn main() {}\n").unwrap();
         state.open_file(path);
@@ -1038,6 +1037,19 @@ fn tabs_preview(state: &mut State) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+    state.navigate(explorer_root.clone());
+    let started = std::time::Instant::now();
+    while !state
+        .workspace
+        .entries
+        .iter()
+        .any(|entry| entry.path.starts_with(&explorer_root))
+    {
+        state.workspace_poll(&mut Tx::default());
+        assert!(started.elapsed().as_secs() < 10);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    state.message = "Tab strip preview · running PTYs and real file buffers".into();
     state.workspace.tabs[0].edit.insert("// Unsaved changes\n");
     state.workspace.active = 0;
     state.workspace.terminal_focus = true;
@@ -1051,6 +1063,14 @@ fn tabs_light_preview(state: &mut State) {
 fn tabs_dark_preview(state: &mut State) {
     tabs_preview(state);
     state.config.appearance = config::Appearance::Dark;
+}
+fn tabs_light_editor_preview(state: &mut State) {
+    tabs_light_preview(state);
+    state.workspace.terminal_focus = false;
+}
+fn tabs_dark_editor_preview(state: &mut State) {
+    tabs_dark_preview(state);
+    state.workspace.terminal_focus = false;
 }
 fn tree_preview(state: &mut State) {
     preview(state);
@@ -1138,6 +1158,8 @@ pub fn run() -> Result<()> {
             ("tree", tree_preview),
             ("tabs-light", tabs_light_preview),
             ("tabs-dark", tabs_dark_preview),
+            ("tabs-light-editor", tabs_light_editor_preview),
+            ("tabs-dark-editor", tabs_dark_editor_preview),
             ("settings", settings_preview),
         ],
         fonts: fonts::BUNDLED,
