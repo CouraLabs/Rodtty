@@ -75,6 +75,14 @@ impl Layout {
 }
 
 pub enum Job {
+    FileOperation {
+        id: u64,
+        request: files::operations::OperationRequest,
+        decision: Option<(
+            files::operations::Collision,
+            files::operations::CollisionChoice,
+        )>,
+    },
     Reload {
         id: u64,
         revision: u64,
@@ -108,6 +116,10 @@ pub enum Job {
     },
 }
 pub enum Event {
+    FileOperation {
+        id: u64,
+        result: Result<files::operations::OperationOutcome, String>,
+    },
     Reload {
         id: u64,
         revision: u64,
@@ -144,6 +156,14 @@ impl Worker {
         std::thread::spawn(move || {
             for job in jobs {
                 let event = match job {
+                    Job::FileOperation {
+                        id,
+                        request,
+                        decision,
+                    } => Event::FileOperation {
+                        id,
+                        result: request.execute(decision).map_err(|e| format!("{e:#}")),
+                    },
                     Job::Reload { id, revision, path } => Event::Reload {
                         id,
                         revision,

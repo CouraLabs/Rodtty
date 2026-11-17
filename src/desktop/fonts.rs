@@ -257,6 +257,58 @@ mod tests {
         );
     }
     #[test]
+    fn file_operation_dialogs_and_tree_menus_cover_open_font_dropdowns() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("notes.txt");
+        std::fs::write(&file, "notes").unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.directory = root.path().into();
+        state.workspace_setup();
+        state.toggle_files();
+        state.open_settings(&mut Tx::default());
+        state.settings_query.replace_text("font family");
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1600.0, 900.0),
+            Env::new(true, 1.0),
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
+        let started = std::time::Instant::now();
+        while rt.find(file.to_str().unwrap()).is_none()
+            && started.elapsed() < std::time::Duration::from_secs(8)
+        {
+            rt.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            rt.frame(0.1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        click(&mut rt, "font-ui-trigger");
+        assert!(rt.find("font-ui-option-Geist").is_some());
+        rt.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
+        frame(&mut rt);
+        assert!(rt.find("operation-dialog").is_some());
+        assert!(rt.find("font-ui-option-Geist").is_none());
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Default::default(),
+        });
+        rt.frame(1.0);
+        if rt.find("font-ui-option-Geist").is_none() {
+            click(&mut rt, "font-ui-trigger");
+        }
+        let (x, y) = rt.find(file.to_str().unwrap()).unwrap();
+        rt.update(move |s, tx| s.file_context_menu(rune::PointerPress { x, y }, tx));
+        rt.frame(1.0);
+        assert!(rt.find("file-context-menu").is_some());
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "font choices must stay below a tree context menu"
+        );
+    }
+
+    #[test]
     #[ignore = "requires a native desktop host with installed proportional and monospace fonts"]
     fn owner_finds_installed_fonts_by_keyboard_and_keeps_editor_size() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
@@ -804,8 +856,7 @@ pub(super) fn selectors(s: &State, a: &Appearance) -> El {
 pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
     let mut layers = Vec::new();
     if s.settings
-        && s.pending.is_none()
-        && s.palette.is_none()
+        && !s.application_overlay_open()
         && workspace::pane_visibility(s, width).2
         && "appearance ui font family terminal font family installed monospace preview"
             .contains(&s.settings_query.text.trim().to_lowercase())

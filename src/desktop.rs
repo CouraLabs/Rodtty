@@ -14,6 +14,7 @@ mod appearance;
 mod fonts;
 mod palette;
 use appearance::Appearance;
+mod file_operations;
 mod settings;
 use fonts::{label as ui_label, ui as ui_style};
 mod workspace;
@@ -39,6 +40,7 @@ enum Pending {
     Tab(usize),
     Quit,
     File(workspace::FilePrompt),
+    Operation(file_operations::OperationPrompt),
 }
 
 struct State {
@@ -135,6 +137,13 @@ impl State {
             font_ui: Default::default(),
             font_terminal: Default::default(),
         }
+    }
+
+    pub(super) fn application_overlay_open(&self) -> bool {
+        self.pending.is_some()
+            || self.palette.is_some()
+            || self.workspace_menu
+            || self.workspace.operation_context.is_some()
     }
 
     fn active(&self) -> Option<&Session> {
@@ -567,92 +576,98 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         .map(Session::cwd)
         .unwrap_or_else(|| state.directory.clone());
     let folder = state.workspace.directory.as_ref().unwrap_or(&cwd);
-    let mut root = col().key("root").w_full().h_full().fill(a.bg()).child(
-        row()
-            .key("workspace-header")
-            .instant_changes()
-            .w_full()
-            .h(header_height())
-            .px(12.0)
-            .gap(6.0)
-            .center_y()
-            .fill(a.panel())
-            .child(text("Rodtty").font(ui_style(13.0, 600.0)).color(a.muted()))
-            .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
-            .child(
-                text(
-                    folder
-                        .file_name()
-                        .unwrap_or(folder.as_os_str())
-                        .to_string_lossy(),
+    let mut root = col()
+        .key("root")
+        .on_layout(|s: &mut State, r| s.workspace.operation_viewport = (r[2], r[3]))
+        .w_full()
+        .h_full()
+        .fill(a.bg())
+        .child(
+            row()
+                .key("workspace-header")
+                .instant_changes()
+                .w_full()
+                .h(header_height())
+                .px(12.0)
+                .gap(6.0)
+                .center_y()
+                .fill(a.panel())
+                .child(text("Rodtty").font(ui_style(13.0, 600.0)).color(a.muted()))
+                .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
+                .child(
+                    text(
+                        folder
+                            .file_name()
+                            .unwrap_or(folder.as_os_str())
+                            .to_string_lossy(),
+                    )
+                    .key("active-folder")
+                    .font(ui_label())
+                    .color(a.ink())
+                    .truncate()
+                    .min_w(0.0)
+                    .grow(1.0)
+                    .help(folder.to_string_lossy()),
                 )
-                .key("active-folder")
-                .font(ui_label())
-                .color(a.ink())
-                .truncate()
-                .min_w(0.0)
-                .grow(1.0)
-                .help(folder.to_string_lossy()),
-            )
-            .child(
-                button(a, "files", "Files", |s, tx| {
-                    s.dispatch(AppAction::ToggleExplorer, tx)
-                })
-                .help(if show_explorer {
-                    "Hide file explorer"
-                } else {
-                    "Show file explorer"
-                })
-                .fill(if show_explorer {
-                    a.hover_bg()
-                } else {
-                    a.panel()
-                }),
-            )
-            .child(
-                button(a, "toggle-terminal", "Terminal", |s, tx| {
-                    if s.workspace.body_width < 880.0 {
-                        s.dispatch(AppAction::ShowTerminal, tx)
+                .child(
+                    button(a, "files", "Files", |s, tx| {
+                        s.dispatch(AppAction::ToggleExplorer, tx)
+                    })
+                    .help(if show_explorer {
+                        "Hide file explorer"
                     } else {
-                        s.dispatch(AppAction::ToggleTerminal, tx)
+                        "Show file explorer"
+                    })
+                    .fill(if show_explorer {
+                        a.hover_bg()
+                    } else {
+                        a.panel()
+                    }),
+                )
+                .child(
+                    button(a, "toggle-terminal", "Terminal", |s, tx| {
+                        if s.workspace.body_width < 880.0 {
+                            s.dispatch(AppAction::ShowTerminal, tx)
+                        } else {
+                            s.dispatch(AppAction::ToggleTerminal, tx)
+                        }
+                    })
+                    .help(if width < 880.0 {
+                        "Show terminal"
+                    } else if show_terminal {
+                        "Hide terminal pane"
+                    } else {
+                        "Show terminal pane"
+                    })
+                    .fill(if show_terminal {
+                        a.hover_bg()
+                    } else {
+                        a.panel()
+                    }),
+                )
+                .child(
+                    button(a, "toggle-editor", "Editor", |s, tx| {
+                        s.dispatch(AppAction::ToggleEditor, tx)
+                    })
+                    .help(if width < 880.0 {
+                        "Show editor"
+                    } else if show_editor {
+                        "Hide editor pane"
+                    } else {
+                        "Show editor pane"
+                    })
+                    .fill(if show_editor { a.hover_bg() } else { a.panel() }),
+                )
+                .child(button(a, "settings", "⚙", |s, tx| {
+                    s.dispatch(AppAction::Settings, tx)
+                }))
+                .child(button(a, "workspace-menu", "···", |s, tx| {
+                    s.workspace_menu = !s.workspace_menu;
+                    if s.workspace_menu {
+                        tx.focus_when_shown("palette", true);
                     }
-                })
-                .help(if width < 880.0 {
-                    "Show terminal"
-                } else if show_terminal {
-                    "Hide terminal pane"
-                } else {
-                    "Show terminal pane"
-                })
-                .fill(if show_terminal {
-                    a.hover_bg()
-                } else {
-                    a.panel()
-                }),
-            )
-            .child(
-                button(a, "toggle-editor", "Editor", |s, tx| {
-                    s.dispatch(AppAction::ToggleEditor, tx)
-                })
-                .help(if width < 880.0 {
-                    "Show editor"
-                } else if show_editor {
-                    "Hide editor pane"
-                } else {
-                    "Show editor pane"
-                })
-                .fill(if show_editor { a.hover_bg() } else { a.panel() }),
-            )
-            .child(button(a, "settings", "⚙", |s, tx| {
-                s.dispatch(AppAction::Settings, tx)
-            }))
-            .child(button(a, "workspace-menu", "···", |s, tx| {
-                s.workspace_menu = !s.workspace_menu;
-                if s.workspace_menu {
-                    tx.focus_when_shown("palette", true);
-                }
-            })),
-    );
+                })),
+        );
     root = root.child(workspace::body(state, a, width));
 
     let cwd = if state.preview.is_some() {
@@ -735,16 +750,15 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     if state.workspace_menu {
         root = root.child(workspace_menu(a));
     }
+    if let Some(dialog) = file_operations::view(state, a) {
+        root = root.child(dialog);
+    }
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
     root = root.children(fonts::overlays(state, a, width));
     root.on_paste(|s: &mut State, content, _| {
-        if s.pending.is_none()
-            && s.palette.is_none()
-            && !s.workspace_menu
-            && s.workspace.terminal_focus
-        {
+        if !s.application_overlay_open() && s.workspace.terminal_focus {
             s.paste(content);
         }
     })
@@ -808,7 +822,14 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if event.key == Key::Escape {
             state.cancel_file_action();
         }
-        return true;
+        return !matches!(state.pending, Some(Pending::Operation(_)));
+    }
+    if state.workspace.operation_context.is_some() {
+        if event.key == Key::Escape {
+            state.workspace.operation_context = None;
+            return true;
+        }
+        return false;
     }
     if state.palette.is_some() {
         return state.palette_key(event, tx);
@@ -952,6 +973,10 @@ fn real_diff_preview(state: &mut State) {
         state.message = format!("Could not render real Git fixture: {error:#}");
     }
 }
+fn file_collision_preview(state: &mut State) {
+    workspace_preview(state);
+    file_operations::collision_demo(state);
+}
 fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
@@ -1011,6 +1036,7 @@ pub fn run() -> Result<()> {
             ("diff", diff_preview),
             ("real-diff", real_diff_preview),
             ("palette", palette_preview),
+            ("file-collision", file_collision_preview),
             ("tree", tree_preview),
             ("settings", settings_preview),
         ],
@@ -1036,11 +1062,7 @@ pub fn run() -> Result<()> {
                 raw.split('(').next().unwrap_or("unknown").to_owned();
         })
         .on_ime(|s, event, _| {
-            if s.pending.is_some()
-                || s.palette.is_some()
-                || s.workspace_menu
-                || !s.workspace.terminal_focus
-            {
+            if s.application_overlay_open() || !s.workspace.terminal_focus {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {
