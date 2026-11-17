@@ -1,0 +1,17 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -421,6 +421,14 @@
+                 self.reset_params();
+                 self.state = State::Escape
+             },
++            // These commands carry one free-form string after the command
++            // delimiter. Preserve its semicolons instead of consuming the
++            // bounded parameter slots used by structured OSC commands.
++            0x3B if self.osc_num_params == 1
++                && matches!(&self.osc_raw[..self.osc_params[0].1], b"0" | b"1" | b"2" | b"7") =>
++            {
++                self.action_osc_put(byte)
++            },
+             0x3B => {
+                 #[cfg(not(feature = "std"))]
+                 {
