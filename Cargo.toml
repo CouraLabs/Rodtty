@@ -59,3 +59,6 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[patch."https://github.com/anomalyco/rune"]
+rune = { path = "vendor/rune" }

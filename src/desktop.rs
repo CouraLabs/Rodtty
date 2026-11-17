@@ -12,6 +12,7 @@ use std::{path::PathBuf, sync::Arc};
 mod actions;
 mod appearance;
 mod fonts;
+mod frame;
 mod palette;
 use appearance::Appearance;
 mod file_operations;
@@ -50,6 +51,8 @@ struct State {
     palette_query: TextEdit,
     workspace_menu: bool,
     handle: Option<rune::AppHandle<State>>,
+    window: Option<rune::WindowHandle>,
+    window_maximized: bool,
     root: PathBuf,
     shell: Option<PathBuf>,
     config: Config,
@@ -109,6 +112,8 @@ impl State {
             workspace_menu: false,
             workspace: workspace::Workspace::default(),
             handle: None,
+            window: None,
+            window_maximized: false,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
             root,
             shell: config::shell_executable().ok(),
@@ -296,6 +301,7 @@ fn button(
         .label(help)
         .help(help)
         .focusable(true)
+        .no_window_drag()
         .focus_ring(2.0, 1.0, a.accent())
         .min_h(29.0_f32.max(ui_label().size * 1.5 + 8.0))
         .px(10.0)
@@ -582,17 +588,24 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(a.bg())
+        .padding(if frame::enabled() { frame::BORDER } else { 0.0 })
+        .border(if frame::enabled() { 1.0 } else { 0.0 }, a.hover_bg())
         .child(
             row()
                 .key("workspace-header")
+                .window_drag()
                 .instant_changes()
                 .w_full()
                 .h(header_height())
-                .px(12.0)
-                .gap(6.0)
+                .px(if width < 880.0 { 4.0 } else { 12.0 })
+                .gap(if width < 880.0 { 3.0 } else { 6.0 })
                 .center_y()
                 .fill(a.panel())
-                .child(text("Rodtty").font(ui_style(13.0, 600.0)).color(a.muted()))
+                .child(
+                    text(if width < 880.0 { "" } else { "Rodtty" })
+                        .font(ui_style(13.0, 600.0))
+                        .color(a.muted()),
+                )
                 .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
                 .child(
                     text(
@@ -666,7 +679,8 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                     if s.workspace_menu {
                         tx.focus_when_shown("palette", true);
                     }
-                })),
+                }))
+                .child(frame::controls(state, a)),
         );
     root = root.child(workspace::body(state, a, width));
 
@@ -921,6 +935,13 @@ fn setup(state: &mut State, wake: rune::Waker) {
     }
 }
 fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
+    let maximized = state
+        .window
+        .as_ref()
+        .and_then(|w| w.with_winit_window(|w| w.is_maximized()).ok())
+        .unwrap_or(false);
+    let frame_changed = state.window_maximized != maximized;
+    state.window_maximized = maximized;
     let generations: Vec<_> = state
         .sessions
         .iter()
@@ -939,7 +960,12 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     let (sans, mono) = state.font_families();
     tx.set_font_families(sans, mono);
     let metrics_changed = state.refresh_terminal_metrics();
-    state.workspace_poll(tx) || changed || settings_changed || metrics_changed || fonts_changed
+    state.workspace_poll(tx)
+        || changed
+        || settings_changed
+        || metrics_changed
+        || frame_changed
+        || fonts_changed
 }
 
 fn preview(state: &mut State) {
@@ -1054,13 +1080,6 @@ pub fn run() -> Result<()> {
             s.persist_workspace();
             s.sessions.clear();
         })
-        .on_window(move |window| {
-            let raw = window
-                .with_raw_handle(|handle| format!("{:?}", handle.as_raw()))
-                .unwrap_or_default();
-            *backend_slot.lock().unwrap_or_else(|e| e.into_inner()) =
-                raw.split('(').next().unwrap_or("unknown").to_owned();
-        })
         .on_ime(|s, event, _| {
             if s.application_overlay_open() || !s.workspace.terminal_focus {
                 return true;
@@ -1073,6 +1092,18 @@ pub fn run() -> Result<()> {
             }
         });
     let handle = app.handle();
+    let native_state = handle.clone();
+    app = app
+        .window_options(frame::options())
+        .on_window(move |window| {
+            let raw = window
+                .with_raw_handle(|handle| format!("{:?}", handle.as_raw()))
+                .unwrap_or_default();
+            *backend_slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                raw.split('(').next().unwrap_or("unknown").to_owned();
+            let window = window.clone();
+            native_state.update(move |s, _| s.window = Some(window));
+        });
     let state_handle = handle.clone();
     app = app.init(move || {
         let mut state = State::init();
@@ -1086,7 +1117,10 @@ pub fn run() -> Result<()> {
         .transpose()?;
     let native_report = std::env::args()
         .skip_while(|arg| {
-            arg != "--native-check" && arg != "--workspace-check" && arg != "--font-check"
+            arg != "--native-check"
+                && arg != "--workspace-check"
+                && arg != "--font-check"
+                && arg != "--frame-check"
         })
         .nth(1)
         .map(PathBuf::from);
@@ -1123,10 +1157,28 @@ pub fn run() -> Result<()> {
     // A local developer control channel also makes native close/reopen checks
     // repeatable without depending on a desktop's tray implementation.
     if std::env::args().any(|a| a == "--control-stdin") {
+        let control_report = native_report.clone();
         std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
                 match line.trim() {
+                    "frame-status" => {
+                        if let Some(report) = control_report.clone() {
+                            handle.update(move |s, _| {
+                                if let Some(window) = &s.window {
+                                    let _ = window.with_winit_window(|w| {
+                                        let size = w.inner_size();
+                                        let _ = std::fs::write(report.with_extension("state.json"), serde_json::to_vec(&serde_json::json!({
+                                            "position":w.inner_position().ok().map(|p| [p.x,p.y]),
+                                            "decorated":w.is_decorated(),"maximized":w.is_maximized(),"minimized":w.is_minimized(),
+                                            "size":[size.width,size.height],"scale":w.scale_factor(),
+                                            "unsaved_prompt":matches!(s.pending, Some(Pending::File(workspace::FilePrompt::Unsaved { .. }))),
+                                            "dirty":s.workspace.tabs.iter().any(|t| t.dirty())})).unwrap_or_default());
+                                    });
+                                }
+                            });
+                        }
+                    }
                     "open" => handle.open(),
                     "close" => handle.close(),
                     "quit" => handle.quit(),
@@ -1157,8 +1209,10 @@ fn native_check(
     report: PathBuf,
     backend: Arc<std::sync::Mutex<String>>,
 ) {
+    let with_frame = std::env::args().any(|a| a == "--frame-check");
     let with_fonts = std::env::args().any(|a| a == "--font-check");
-    let with_workspace = with_fonts || std::env::args().any(|a| a == "--workspace-check");
+    let with_workspace =
+        with_frame || with_fonts || std::env::args().any(|a| a == "--workspace-check");
     std::thread::spawn(move || {
         use std::time::{Duration, Instant};
         let check = (|| -> Result<serde_json::Value> {
@@ -1200,6 +1254,61 @@ fn native_check(
                 anyhow::bail!("terminal did not produce {needle}");
             };
             wait_text("rodtty:")?;
+            let frame_evidence = if with_frame {
+                // Real editor work makes the native custom-close check exercise the
+                // same dirty-file decision as the menu and OS close lifecycle.
+                let fixture = tempfile::tempdir()?;
+                let file = fixture.path().join("frame-close-check.txt");
+                std::fs::write(&file, "saved frame fixture\n")?;
+                handle.update(move |s, _| s.open_file(file));
+                wait_app(&handle, |s| !s.workspace.tabs.is_empty())?;
+                handle.update(|s, _| {
+                    s.workspace.tabs[0].edit.insert("unsaved frame fixture\n");
+                    s.workspace.tabs[0].revision += 1;
+                });
+                wait_app(&handle, |s| s.workspace.tabs[0].dirty())?;
+                let (info_tx, info_rx) = std::sync::mpsc::channel();
+                handle.update(move |s, _| {
+                    let info = s.window.as_ref().and_then(|w| w.with_winit_window(|w| {
+                        let size = w.inner_size();
+                        serde_json::json!({"position":w.inner_position().ok().map(|p| [p.x,p.y]),"decorated":w.is_decorated(), "maximized":w.is_maximized(),
+                            "minimized":w.is_minimized(),"size":[size.width,size.height],"scale":w.scale_factor()})
+                    }).ok());
+                    let _ = info_tx.send(info);
+                });
+                let info = info_rx
+                    .recv_timeout(Duration::from_secs(10))?
+                    .context("frame native window missing")?;
+                anyhow::ensure!(
+                    info["decorated"] == false,
+                    "native decorations remain: {info}"
+                );
+                std::fs::write(
+                    report.with_extension("ready.json"),
+                    serde_json::to_vec_pretty(&info)?,
+                )?;
+                let input = report.with_extension("input.json");
+                let start = Instant::now();
+                while !input.exists() && start.elapsed() < Duration::from_secs(120) {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+                let evidence: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&input)
+                        .context("external native frame input did not complete")?,
+                )?;
+                anyhow::ensure!(
+                    evidence["passed"] == true,
+                    "external frame input failed: {evidence}"
+                );
+                handle.update(|s, _| {
+                    s.workspace.tabs.clear();
+                    s.workspace.terminal_focus = true;
+                });
+                wait_app(&handle, |s| s.workspace.tabs.is_empty())?;
+                Some(serde_json::json!({"initial_native_state":info,"compositor_input":evidence}))
+            } else {
+                None
+            };
             // Exercise live preferences against a real running terminal session.
             // Retain the owner's original choice when this developer harness finishes.
             let (choice_tx, choice_rx) = std::sync::mpsc::channel();
@@ -1251,7 +1360,7 @@ fn native_check(
                     s.workspace.tabs.first().is_some_and(|t| t.dirty())
                 })
                 .context("Apply native editor change")?;
-                handle.close();
+                handle.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
                 wait_app(&handle, |s| {
                     matches!(
                         s.pending,
@@ -1382,6 +1491,9 @@ fn native_check(
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
                 "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"output_after_appearance_change":true});
+            if let Some(frame) = frame_evidence {
+                report["custom_frame"] = frame;
+            }
             if with_fonts {
                 report["font_inventory"] = font_inventory.unwrap();
                 report["live_font_families"] = true.into();
@@ -1472,6 +1584,91 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn custom_frame_places_controls_right_and_header_controls_keep_their_clicks() {
+        let mut runtime = runtime();
+        let minimize = runtime
+            .find("window-minimize")
+            .expect("custom minimize control");
+        let maximize = runtime
+            .find("window-maximize")
+            .expect("custom maximize control");
+        let close = runtime.find("window-close").expect("custom close control");
+        assert!(minimize.0 < maximize.0 && maximize.0 < close.0);
+        assert!(close.0 > 1100.0);
+        runtime.pointer_down(240.0, 20.0);
+        assert_eq!(
+            runtime.take_titlebar_action(),
+            Some(rune::TitlebarAction::Drag)
+        );
+        runtime.pointer_up(240.0, 20.0);
+        runtime.frame(0.1);
+        runtime.pointer_down(240.0, 20.0);
+        assert_eq!(
+            runtime.take_titlebar_action(),
+            Some(rune::TitlebarAction::DoubleClick)
+        );
+        runtime.pointer_up(240.0, 20.0);
+        let (x, y) = runtime.find("settings").unwrap();
+        runtime.pointer_down(x, y);
+        assert_eq!(runtime.take_titlebar_action(), None);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.2);
+        assert!(runtime.find("settings-search").is_some());
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.3);
+        for key in [
+            "window-minimize",
+            "window-maximize",
+            "window-close",
+            "settings",
+            "workspace-menu",
+        ] {
+            let rect = runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                .unwrap()
+                .rect;
+            assert!(
+                rect[0] >= 0.0
+                    && rect[0] + rect[2] <= 640.0
+                    && rect[1] >= 0.0
+                    && rect[1] + rect[3] <= 60.0,
+                "{key} must fit narrow header: {rect:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn custom_close_keeps_unsaved_editor_until_owner_decides() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        workspace::demo(&mut state, false);
+        state.workspace.tabs[0].edit.insert("draft remains ");
+        let draft = state.workspace.tabs[0].edit.text.clone();
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime.find("window-close").unwrap();
+        runtime.pointer_down(x, y);
+        assert_eq!(runtime.take_titlebar_action(), None);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.05);
+        assert!(runtime.find("file-save-confirm").is_some());
+        assert!(runtime.find("file-discard").is_some());
+        let (x, y) = runtime.find("file-cancel").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.1);
+        assert!(runtime.state.pending.is_none());
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
+        assert!(runtime.state.workspace.tabs[0].dirty());
     }
 
     #[test]

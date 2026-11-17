@@ -1,0 +1,329 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,8 +1,8 @@
+ [package]
+ name = "rune"
+ version = "0.0.1"
+-edition.workspace = true
+-license.workspace = true
++edition = "2024"
++license = "MIT"
+ 
+ [features]
+ default = ["accessibility", "dbus", "embedded-fonts", "metal-backend", "ogg-audio", "svg"]
+@@ -78,12 +78,12 @@
+ [dependencies]
+ # The accessibility tree's types; the platform adapters below come with `accessibility`.
+ accesskit = "0.25.2"
+-procwatch = { path = "../procwatch", optional = true }
++procwatch = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90", optional = true }
+ subsecond = { version = "=0.7.10", optional = true }
+ dioxus-devtools = { version = "=0.7.10", optional = true }
+-rune-motion = { path = "../rune-motion" }
+-rune-staging = { path = "../rune-staging" }
+-rune-taffy = { path = "../rune-taffy" }
++rune-motion = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
++rune-staging = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
++rune-taffy = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
+ # Allow backend patch fixes; headless pixel equivalence guards the precompiled Metal path.
+ wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "wgsl"] }
+ # Keep Wayland client-side frames/buttons without the title font's ab_glyph/ttf-parser.
+@@ -96,7 +96,7 @@
+ # Skia's paths and stroker, for icons covered as Chromium covers them (text/area.rs): tiny-skia-path
+ # as published plus `vendor/tiny-skia-path.patch` (Skia's conic splitting and stroker steps), re-made
+ # by `scripts/vendor-tiny-skia-path.sh <version>`. A path dependency, not a patch, so resvg keeps its own.
+-tiny-skia-path = { path = "../../vendor/tiny-skia-path" }
++tiny-skia-path = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90" }
+ skrifa = "0.44"
+ bytemuck = { version = "1.25", features = ["derive"] }
+ png = "0.18"
+@@ -260,110 +260,3 @@
+ [target.'cfg(target_os = "linux")'.dev-dependencies]
+ wgpu = { version = "~30.0.1", default-features = false, features = ["noop"] }
+ 
+-[[example]]
+-name = "metal_dispatch"
+-required-features = ["metal-backend"]
+-
+-[[example]]
+-name = "tree_swap"
+-required-features = ["frame-profile"]
+-
+-[[example]]
+-name = "cache_pan_zoom"
+-required-features = ["frame-profile"]
+-
+-[[example]]
+-name = "pinch_bench"
+-required-features = ["frame-profile"]
+-
+-[[example]]
+-name = "long_note"
+-required-features = ["frame-profile"]
+-
+-[[example]]
+-name = "taffy_adapter_bench"
+-required-features = ["frame-profile"]
+-
+-[[example]]
+-name = "scroll_commits"
+-required-features = ["frame-profile"]
+-
+-[[test]]
+-name = "macos_appearance_kvo"
+-harness = false
+-
+-[[test]]
+-name = "launcher_wakes"
+-harness = false
+-
+-[[test]]
+-name = "overlay_gpu_lifecycle"
+-harness = false
+-
+-[[test]]
+-name = "overlay_soak"
+-harness = false
+-
+-[[test]]
+-name = "macos_window_corners"
+-harness = false
+-
+-[[test]]
+-name = "accessibility_macos"
+-harness = false
+-
+-[[test]]
+-name = "accessibility_windows"
+-harness = false
+-
+-[[test]]
+-name = "secondary_window"
+-harness = false
+-
+-[[test]]
+-name = "macos_overlay_source"
+-harness = false
+-
+-[[test]]
+-name = "open_activates"
+-harness = false
+-
+-[[test]]
+-name = "shortcut_layout_macos"
+-harness = false
+-
+-[[test]]
+-name = "default_menu_macos"
+-harness = false
+-
+-[[test]]
+-name = "menu_key_equivalent_macos"
+-harness = false
+-
+-[[test]]
+-name = "macos_drag_out"
+-harness = false
+-
+-[[test]]
+-name = "macos_overlay_drag_out"
+-harness = false
+-
+-[[test]]
+-name = "macos_overlay_cursor"
+-harness = false
+-required-features = ["macos-background-cursor"]
+-
+-[[test]]
+-name = "popup_menu_macos"
+-harness = false
+-
+-[[test]]
+-name = "video_gui"
+-harness = false
+-
+-[[test]]
+-name = "help_macos"
+-harness = false
+-
+-[lints]
+-workspace = true
+--- a/src/el/tx.rs
++++ b/src/el/tx.rs
+@@ -398,7 +398,7 @@
+ 
+     /// Minimize this window after this handler, as its minimize button would (winit's
+     /// `set_minimized` off macOS). Does nothing (logging in debug builds) where a window
+-    /// can't minimize: an overlay, a panel or launcher, a borderless window, or one without a
++    /// can't minimize: an overlay, a panel or launcher, or one without a
+     /// minimize button.
+     /// A close or quit asked in the same change wins.
+     pub fn minimize(&mut self) {
+--- a/src/window/create.rs
++++ b/src/window/create.rs
+@@ -241,6 +241,7 @@
+         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+         let native = Native::default();
+         self.win = Some(Win {
++            resize_border: if self.options.borderless && self.options.resizable { self.options.custom_frame_resize_border } else { 0.0 },
+             a11y,
+             native,
+             first_frame: FirstFrame::opened(Instant::now()),
+--- a/src/window/custom_frame.rs
++++ b/src/window/custom_frame.rs
+@@ -0,0 +1,36 @@
++//! Only native frame mechanics; appearance and lifecycle remain application owned.
++use winit::window::{ResizeDirection, Window};
++
++/// Window-local logical coordinates, independent of app zoom. Kept at the native
++/// boundary so a Wayland request uses the original winit pointer seat and serial.
++pub(super) fn resize_edge(window: &Window, border: f32, point: (f32, f32)) -> Option<ResizeDirection> {
++    if !cfg!(target_os = "linux") || border <= 0.0 || window.is_decorated() || !window.is_resizable()
++        || window.is_maximized() || window.fullscreen().is_some() { return None; }
++    let size = window.inner_size().to_logical::<f32>(window.scale_factor());
++    let (x, y) = point;
++    if x < 0.0 || y < 0.0 || x >= size.width || y >= size.height { return None; }
++    let (left, right, top, bottom) = (x < border, x >= size.width - border, y < border, y >= size.height - border);
++    use ResizeDirection::*;
++    match (left, right, top, bottom) {
++        (true, _, true, _) => Some(NorthWest),
++        (_, true, true, _) => Some(NorthEast),
++        (true, _, _, true) => Some(SouthWest),
++        (_, true, _, true) => Some(SouthEast),
++        (true, _, _, _) => Some(West),
++        (_, true, _, _) => Some(East),
++        (_, _, true, _) => Some(North),
++        (_, _, _, true) => Some(South),
++        _ => None,
++    }
++}
++
++pub(super) fn resize_cursor(edge: ResizeDirection) -> winit::window::CursorIcon {
++    use ResizeDirection::*;
++    use winit::window::CursorIcon;
++    match edge {
++        North | South => CursorIcon::NsResize,
++        West | East => CursorIcon::EwResize,
++        NorthWest | SouthEast => CursorIcon::NwseResize,
++        NorthEast | SouthWest => CursorIcon::NeswResize,
++    }
++}
+--- a/src/window/events.rs
++++ b/src/window/events.rs
+@@ -521,6 +521,12 @@
+                         (ElementState::Pressed, true) => rt.secondary_down(x, y),
+                         (ElementState::Released, true) => rt.secondary_up(x, y),
+                         (ElementState::Pressed, false) => {
++                            // This must precede runtime dispatch/delayed shell work: Wayland
++                            // resize needs winit's currently pressed seat/button serial.
++                            if let Some(edge) = custom_frame::resize_edge(&l.window, l.resize_border, (x * rt.zoom(), y * rt.zoom())) {
++                                let _ = l.window.drag_resize_window(edge);
++                                return;
++                            }
+                             #[cfg(target_os = "macos")]
+                             rt.set_native_titlebar_band(mac::native_titlebar_band(&l.window));
+                             rt.pointer_down(x, y);
+--- a/src/window/handle.rs
++++ b/src/window/handle.rs
+@@ -173,6 +173,15 @@
+     /// apply once the window's host starts.
+     pub fn open(&self) { self.send(|slot| WakeEvent::Window(slot, WindowRequest::Open(None))); }
+     pub fn close(&self) { self.send(|slot| WakeEvent::Window(slot, WindowRequest::Close)); }
++    /// Borrow the existing winit window. Call only on the UI/event-loop thread;
++    /// the borrow cannot outlive the callback. Native operations retain their platform
++    /// limitations. In particular Wayland `is_minimized` returns None, and macOS
++    /// `drag_resize_window` is unsupported. Pointer operations must run immediately
++    /// in the native pressed event; use `custom_frame_resize_border` on Linux.
++    pub fn with_winit_window<R>(&self, f: impl FnOnce(&Window) -> R) -> Result<R, String> {
++        let window = self.window()?;
++        Ok(f(&window))
++    }
+     /// Borrow a raw native handle while alive. Platform thread restrictions still apply;
+     /// do not retain an extracted pointer beyond the callback.
+     pub fn with_raw_handle<R>(&self, f: impl for<'a> FnOnce(winit::raw_window_handle::WindowHandle<'a>) -> R) -> Result<R, String> {
+--- a/src/window/platform_sync.rs
++++ b/src/window/platform_sync.rs
+@@ -1,7 +1,7 @@
+ use winit::dpi::{LogicalPosition, LogicalSize};
+ 
+ use crate::runtime::Runtime;
+-use super::Win;
++use super::{Win, custom_frame};
+ 
+ /// What a built frame hands the window besides its pixels: secure input, the IME, the cursor,
+ /// help tags and the clipboard.
+@@ -57,6 +57,12 @@
+     /// `Hidden` needs focus, so it can't outlive the window being active.
+     pub(super) fn apply_cursor<S>(&mut self, rt: &Runtime<S>, focused: bool) {
+         let want = match rt.cursor() { crate::el::Cursor::Hidden if !focused => crate::el::Cursor::Default, c => c };
++        if let Some(edge) = rt.pointer().and_then(|(x, y)| custom_frame::resize_edge(&self.window, self.resize_border, (x * rt.zoom(), y * rt.zoom()))) {
++            self.window.set_cursor(custom_frame::resize_cursor(edge));
++            // Force the ordinary runtime cursor to be reapplied after leaving the band.
++            self.cursor = crate::cursor::os::OsCursor::new();
++            return;
++        }
+         self.cursor.apply(&self.window, want, rt.pointer().is_some());
+     }
+ }
+--- a/src/window/shell_requests.rs
++++ b/src/window/shell_requests.rs
+@@ -17,7 +17,7 @@
+         #[cfg(target_os = "macos")]
+         if w.native.panel.is_some() || launcher { return minimize_ignored("a panel"); }
+         // Off macOS winit reports a minimize button on a borderless window too.
+-        if self.options.borderless || !w.window.enabled_buttons().contains(winit::window::WindowButtons::MINIMIZE) {
++        if !w.window.enabled_buttons().contains(winit::window::WindowButtons::MINIMIZE) {
+             return minimize_ignored("a window without a minimize button");
+         }
+         #[cfg(target_os = "macos")]
+--- a/src/window/spec.rs
++++ b/src/window/spec.rs
+@@ -72,6 +72,11 @@
+ pub struct WindowOptions {
+     pub transparent: bool,
+     pub borderless: bool,
++    /// App-owned frame hit band in logical window points. Linux only: resize begins
++    /// in the immediate native mouse-down, using winit's pressed Wayland seat serial.
++    /// Zero disables it. Ignored for decorated, maximized, fullscreen or fixed windows.
++    /// macOS requires a separate AppKit resize adapter; winit does not support it.
++    pub custom_frame_resize_border: f32,
+     /// Clicks, and so hover, pass to whatever is below.
+     pub click_through: bool,
+     pub always_on_top: bool,
+@@ -93,7 +98,7 @@
+ impl Default for WindowOptions {
+     fn default() -> Self {
+         Self {
+-            transparent: false, borderless: false, click_through: false,
++            transparent: false, borderless: false, custom_frame_resize_border: 0.0, click_through: false,
+             always_on_top: false, visible: true, position: None, physical_size: None,
+             min_size: None, max_size: None, resizable: true,
+         }
+@@ -118,6 +123,7 @@
+     /// One transparent, borderless, topmost, click-through overlay covering this display.
+     pub fn overlay(display: &Display) -> Self {
+         Self {
++            custom_frame_resize_border: 0.0,
+             transparent: true, borderless: true, click_through: true, always_on_top: true,
+             visible: true, position: Some(display.position), physical_size: Some(display.size),
+             min_size: Some((0.0, 0.0)), max_size: None, resizable: true,
+--- a/src/window/win.rs
++++ b/src/window/win.rs
+@@ -54,6 +54,7 @@
+ /// The open window. Fields drop in order: what's native to the OS, then the surface before its
+ /// window.
+ pub(super) struct Win {
++    pub(super) resize_border: f32,
+     /// The OS accessibility adapter, which goes before the window it answers for.
+     pub(super) a11y: Option<crate::a11y::Adapter>,
+     #[cfg_attr(not(any(target_os = "macos", all(unix, not(target_os = "ios"), not(target_os = "android")))), allow(dead_code))]
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -29,6 +29,7 @@
+ mod launch_drawables;
+ #[cfg(target_os = "macos")]
+ use launch_drawables::LaunchDrawables;
++mod custom_frame;
+ mod chrome;
+ use chrome::{frame_chrome, place_chrome, sync_chrome, titlebar_double_click};
+ mod configure;
