@@ -124,7 +124,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 s,
                 section,
                 "theme family Catppuccin Latte Mocha Light Dark System palette",
-            ) || matches(s, section, "font size")
+            ) || matches(
+                s,
+                section,
+                "font size ui font family terminal font family installed monospace preview",
+            )
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
@@ -411,6 +415,15 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         .wrap(),
                 );
             }
+        }
+        if section == "Appearance"
+            && matches(
+                s,
+                section,
+                "ui font family terminal font family installed monospace preview",
+            )
+        {
+            group = group.child(fonts::selectors(s, a));
         }
         list = list.child(group);
     }

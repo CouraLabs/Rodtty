@@ -71,6 +71,9 @@ struct State {
     preview: Option<vt100::Screen>,
     terminal_rect: Option<[f32; 4]>,
     terminal_metrics: fonts::Metrics,
+    font_catalog: fonts::Catalog,
+    font_ui: rune_kit::ComboboxState,
+    font_terminal: rune_kit::ComboboxState,
 }
 
 impl State {
@@ -126,6 +129,9 @@ impl State {
             preview: None,
             terminal_rect: None,
             terminal_metrics: Default::default(),
+            font_catalog: fonts::Catalog::default(),
+            font_ui: Default::default(),
+            font_terminal: Default::default(),
         }
     }
 
@@ -641,6 +647,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
+    root = root.children(fonts::overlays(state, a));
     root.on_paste(|s: &mut State, content, _| {
         if s.pending.is_none() && s.palette.is_none() && s.workspace.terminal_focus {
             s.paste(content);
@@ -767,6 +774,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 
 fn setup(state: &mut State, wake: rune::Waker) {
     state.wake = wake;
+    state.font_catalog.start(state.wake.clone());
     if rune::tooling::headless_run().is_none() {
         state.new_tab();
         state.workspace_setup();
@@ -786,11 +794,12 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         .collect();
     let changed = generations != state.generations;
     state.generations = generations;
+    let fonts_changed = state.font_catalog.poll();
     let settings_changed = state.poll_settings();
-    let (sans, mono) = state.config.fonts.families();
+    let (sans, mono) = state.font_families();
     tx.set_font_families(sans, mono);
     let metrics_changed = state.refresh_terminal_metrics();
-    state.workspace_poll(tx) || changed || settings_changed || metrics_changed
+    state.workspace_poll(tx) || changed || settings_changed || metrics_changed || fonts_changed
 }
 
 fn preview(state: &mut State) {
@@ -1119,7 +1128,31 @@ fn native_check(
             } else {
                 None
             };
+            let mut font_inventory = None;
             if with_fonts {
+                wait_app(&handle, |s| s.font_catalog.ready)?;
+                let (tx, rx) = std::sync::mpsc::channel();
+                handle.update(move |s, _| {
+                    let mono = s
+                        .font_catalog
+                        .families
+                        .iter()
+                        .find(|f| !f.bundled && f.monospace)
+                        .map(|f| f.name.clone());
+                    let sans = s
+                        .font_catalog
+                        .families
+                        .iter()
+                        .find(|f| !f.bundled && !f.monospace)
+                        .map(|f| f.name.clone());
+                    let _ = tx.send((s.font_catalog.families.len(), mono, sans));
+                });
+                let (count, mono, sans) = rx.recv_timeout(Duration::from_secs(10))?;
+                let mono = mono.context("installed monospace family")?;
+                let sans = sans.context("installed UI family")?;
+                font_inventory = Some(
+                    serde_json::json!({"families":count,"terminal_family":mono,"ui_family":sans}),
+                );
                 let probe = std::env::current_exe()?
                     .with_file_name(format!("rodtty-probe{}", std::env::consts::EXE_SUFFIX));
                 let command = format!("{} --resize-fixture\r", profile::quote(&probe)?);
@@ -1131,11 +1164,13 @@ fn native_check(
                     .parser
                     .screen()
                     .size();
-                handle.update(|s, _| {
+                handle.update(move |s, _| {
                     let tab = &mut s.workspace.tabs[0];
                     tab.edit.insert("// font change preserves this buffer\n");
                     tab.revision += 1;
                     s.save_config(|c| {
+                        c.fonts.ui_family = sans.clone();
+                        c.fonts.terminal_family = mono.clone();
                         c.fonts.ui_size = 15.0;
                         c.fonts.terminal_size = 20.0;
                         c.fonts.editor_size = 18.0;
@@ -1196,6 +1231,8 @@ fn native_check(
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
                 "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"output_after_appearance_change":true});
             if with_fonts {
+                report["font_inventory"] = font_inventory.unwrap();
+                report["live_font_families"] = true.into();
                 report["live_font_sizes"] = true.into();
                 report["fullscreen_pty_resize"] = true.into();
                 report["unsaved_editor_preserved"] = true.into();
