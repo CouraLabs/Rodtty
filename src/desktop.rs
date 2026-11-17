@@ -1848,9 +1848,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
-    fn custom_frame_places_controls_right_and_header_controls_keep_their_clicks() {
-        let mut runtime = runtime();
+    fn right_frame_places_controls_right_and_header_controls_keep_their_clicks() {
+        let mut runtime = rune::Runtime::new(
+            State::init(),
+            |state, cx| view_with_frame(state, cx, frame::Placement::Right),
+            (1200.0, 700.0),
+            rune::Env::new(true, 1.0),
+        );
+        runtime.frame(0.0);
         let minimize = runtime
             .find("window-minimize")
             .expect("custom minimize control");

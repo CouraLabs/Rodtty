@@ -183,6 +183,16 @@
      /// minimize button.
      /// A close or quit asked in the same change wins.
      pub fn minimize(&mut self) {
+--- a/src/window/cpu_frame.rs
++++ b/src/window/cpu_frame.rs
+@@ -291,6 +291,7 @@
+             Native { cloak, frame, mode, a11y_start, ..Default::default() }
+         };
+         self.win = Some(Win {
++            resize_border: if self.options.borderless && self.options.resizable { self.options.custom_frame_resize_border } else { 0.0 },
+             a11y,
+             native,
+             first_frame: FirstFrame::opened(Instant::now()),
 --- a/src/window/create.rs
 +++ b/src/window/create.rs
 @@ -218,6 +218,7 @@
@@ -210,7 +220,7 @@
 +/// Window-local logical coordinates, independent of app zoom. Kept at the native
 +/// boundary so a Wayland request uses the original winit pointer seat and serial.
 +pub(super) fn resize_edge(window: &Window, border: f32, point: (f32, f32)) -> Option<ResizeDirection> {
-+    if !cfg!(any(target_os = "linux", target_os = "macos")) || border <= 0.0 || window.is_decorated() || !window.is_resizable()
++    if !cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) || border <= 0.0 || window.is_decorated() || !window.is_resizable()
 +        || window.is_maximized() || window.fullscreen().is_some() { return None; }
 +    let size = window.inner_size().to_logical::<f32>(window.scale_factor());
 +    let (x, y) = point;
@@ -318,7 +328,7 @@
 +    /// the borrow cannot outlive the callback. Native operations retain their platform
 +    /// limitations. In particular Wayland `is_minimized` returns None, and macOS
 +    /// `drag_resize_window` is unsupported. Pointer operations must run immediately
-+    /// in the native pressed event; use `custom_frame_resize_border` on Linux.
++    /// in the native pressed event; use `custom_frame_resize_border` for the app-owned frame.
 +    pub fn with_winit_window<R>(&self, f: impl FnOnce(&Window) -> R) -> Result<R, String> {
 +        let window = self.window()?;
 +        Ok(f(&window))
@@ -438,8 +448,8 @@
  pub struct WindowOptions {
      pub transparent: bool,
      pub borderless: bool,
-+    /// App-owned frame hit band in logical window points. Linux starts winit resize
-+    /// in the native mouse-down with the pressed Wayland seat serial; macOS tracks
++    /// App-owned frame hit band in logical window points. Linux/Windows start winit
++    /// resize in native mouse-down (preserving the Wayland seat serial); macOS tracks
 +    /// the native AppKit frame/global pointer until mouse-up on the main thread.
 +    /// Zero disables it. Ignored for decorated, maximized, fullscreen or fixed windows.
 +    pub custom_frame_resize_border: f32,
@@ -463,6 +473,21 @@
              transparent: true, borderless: true, click_through: true, always_on_top: true,
              visible: true, position: Some(display.position), physical_size: Some(display.size),
              min_size: Some((0.0, 0.0)), max_size: None, resizable: true,
+@@ -153,6 +159,14 @@
+             .with_decorations(!self.borderless)
+             .with_visible(visible)
+             .with_window_level(if self.always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
++        #[cfg(target_os = "windows")]
++        if self.borderless && self.custom_frame_resize_border > 0.0 {
++            use winit::platform::windows::WindowAttributesExtWindows;
++            // The pinned winit shadow path adds a visible 1px OS border via
++            // WM_NCCALCSIZE. Disable only that opt-in path for app-drawn frames;
++            // leave winit's native sizing styles intact for AeroSnap/restore.
++            attrs = attrs.with_undecorated_shadow(false);
++        }
+         if let Some((w, h)) = self.max_size { attrs = attrs.with_max_inner_size(LogicalSize::new(w, h)); }
+         if let Some((x, y)) = self.position { attrs = attrs.with_position(PhysicalPosition::new(x, y)); }
+         if let Some((w, h)) = self.physical_size { attrs = attrs.with_inner_size(PhysicalSize::new(w, h)); }
 --- a/src/window/win.rs
 +++ b/src/window/win.rs
 @@ -54,6 +54,7 @@

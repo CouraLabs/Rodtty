@@ -291,6 +291,7 @@ impl<S: 'static> Host<S> {
             Native { cloak, frame, mode, a11y_start, ..Default::default() }
         };
         self.win = Some(Win {
+            resize_border: if self.options.borderless && self.options.resizable { self.options.custom_frame_resize_border } else { 0.0 },
             a11y,
             native,
             first_frame: FirstFrame::opened(Instant::now()),
