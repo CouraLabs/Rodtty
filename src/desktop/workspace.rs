@@ -1284,49 +1284,98 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             s.dispatch(AppAction::ShowTerminal, tx)
         }));
     }
+    let mut tab_items = Vec::new();
     for (i, tab) in workspace.tabs.iter().enumerate() {
         let id = tab.id;
-        let name = tab
-            .document
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
-        tabs = tabs
-            .child(
-                button(
-                    a,
-                    format!("editor-tab-{id}"),
-                    format!("{}{}", name, if tab.dirty() { " •" } else { "" }),
-                    move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
-                )
-                .fill(if i == workspace.active && !s.settings {
-                    a.hover_bg()
+        let filename = tab.document.path.file_name().unwrap_or_default();
+        let duplicate = workspace
+            .tabs
+            .iter()
+            .filter(|other| other.document.path.file_name() == Some(filename))
+            .count()
+            > 1;
+        let name = if duplicate {
+            let parent = tab.document.path.parent().unwrap_or(&tab.document.path);
+            let parent_name = parent
+                .file_name()
+                .unwrap_or(parent.as_os_str())
+                .to_string_lossy();
+            // Keep extending the suffix when equal immediate parent names would still collide.
+            let equal_parent = workspace.tabs.iter().any(|other| {
+                other.id != id
+                    && other.document.path.file_name() == Some(filename)
+                    && other.document.path.parent().and_then(|p| p.file_name())
+                        == parent.file_name()
+            });
+            format!(
+                "{} — {}",
+                filename.to_string_lossy(),
+                if equal_parent {
+                    parent.to_string_lossy()
                 } else {
-                    a.panel()
-                })
-                .help(tab.document.path.to_string_lossy()),
+                    parent_name
+                }
             )
-            .child(button(
-                a,
-                format!("editor-close-{id}"),
-                "×",
-                move |s, tx| s.dispatch(AppAction::CloseEditor(Some(id)), tx),
-            ));
+        } else {
+            filename.to_string_lossy().into_owned()
+        };
+        tab_items.push(
+            row()
+                .key(format!("editor-group-{id}"))
+                .gap(2.0)
+                .center_y()
+                .child(super::tabs::interactive(
+                    button(a, format!("editor-tab-{id}"), name, move |s, tx| {
+                        s.dispatch(AppAction::ActivateEditor(i), tx)
+                    })
+                    .w(180.0)
+                    .fill(if i == workspace.active && !s.settings {
+                        a.hover_bg()
+                    } else {
+                        a.panel()
+                    })
+                    .help(tab.document.path.to_string_lossy()),
+                    super::tabs::Target::Editor(id),
+                ))
+                .children(
+                    tab.dirty()
+                        .then(|| text("•").font(ui_label()).color(a.accent())),
+                )
+                .child(
+                    button(a, format!("editor-close-{id}"), "×", move |s, tx| {
+                        s.dispatch(AppAction::CloseEditor(Some(id)), tx)
+                    })
+                    .px(6.0),
+                ),
+        );
     }
     if s.settings_open {
-        tabs = tabs
-            .child(
-                button(a, "settings-tab", "Settings", |s, tx| {
-                    s.dispatch(AppAction::Settings, tx)
-                })
-                .fill(if s.settings { a.hover_bg() } else { a.panel() }),
-            )
-            .child(button(a, "settings-close", "×", |s, tx| {
-                s.dispatch(AppAction::CloseSettings, tx)
-            }));
+        tab_items.insert(
+            s.tab_strips.settings_position.min(tab_items.len()),
+            row()
+                .key("settings-group")
+                .gap(2.0)
+                .center_y()
+                .child(super::tabs::interactive(
+                    button(a, "settings-tab", "Settings", |s, tx| {
+                        s.dispatch(AppAction::Settings, tx)
+                    })
+                    .fill(if s.settings { a.hover_bg() } else { a.panel() }),
+                    super::tabs::Target::Settings,
+                ))
+                .child(
+                    button(a, "settings-close", "×", |s, tx| {
+                        s.dispatch(AppAction::CloseSettings, tx)
+                    })
+                    .px(6.0),
+                ),
+        );
     }
-    pane = pane.child(tabs);
+    pane = pane.child(super::tabs::scroll_strip(
+        tabs.children(tab_items),
+        s,
+        false,
+    ));
     if s.settings {
         return pane.child(super::settings::content(s, a));
     }
@@ -2204,6 +2253,130 @@ mod tests {
     fn open(state: &mut State, path: &std::path::Path) {
         state.open_file(path.to_owned());
         wait(state, |s| !s.workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn editor_tabs_disambiguate_reorder_and_middle_close_through_dirty_policy() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        for (index, folder) in ["client", "host", "shared"].iter().enumerate() {
+            let path = root.path().join(folder).join("config.rs");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, format!("{folder} contents")).unwrap();
+            state.open_file(path);
+            wait(&mut state, |s| s.workspace.tabs.len() == index + 1);
+        }
+        state.workspace.tabs[1].edit.insert("unsaved ");
+        state.activate_editor(1);
+        state.workspace.layout.terminal = false;
+        let active = state.workspace.tabs[1].id;
+        let first = state.workspace.tabs[0].id;
+        let last = state.workspace.tabs[2].id;
+        let mut runtime = runtime_for(state);
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("config.rs — host"))
+        );
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("•"))
+        );
+        let (x, y) = runtime.find(&format!("editor-tab-{first}")).unwrap();
+        let (end, _) = runtime.find(&format!("editor-tab-{last}")).unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_move(end, y);
+        runtime.pointer_up(end, y);
+        runtime.frame(0.0);
+        assert_eq!(runtime.state.workspace.tabs[2].id, first);
+        assert_eq!(
+            runtime.state.workspace.tabs[runtime.state.workspace.active].id,
+            active
+        );
+        assert!(
+            runtime
+                .state
+                .workspace
+                .tabs
+                .iter()
+                .find(|t| t.id == active)
+                .unwrap()
+                .edit
+                .text
+                .contains("unsaved")
+        );
+        let (x, y) = runtime.find(&format!("editor-tab-{active}")).unwrap();
+        runtime.button_down(x, y, rune::PointerButton::Middle);
+        runtime.button_up(x, y, rune::PointerButton::Middle);
+        runtime.frame(0.0);
+        assert!(runtime.find("file-dialog").is_some());
+        assert_eq!(runtime.state.workspace.tabs.len(), 3);
+    }
+
+    #[test]
+    fn settings_tab_can_move_and_middle_close_without_closing_file_editors() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("notes.txt");
+        std::fs::write(&path, "notes").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        state.open_settings(&mut Tx::default());
+        state.workspace.layout.terminal = false;
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime.find("settings-tab").unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.popup_menu().is_some());
+        runtime.resolve_popup(Some("left")).unwrap();
+        runtime.frame(0.0);
+        let settings = runtime.find("settings-tab").unwrap();
+        let file = runtime.find("editor-tab-1").unwrap();
+        assert!(settings.0 < file.0);
+        runtime.button_down(settings.0, settings.1, rune::PointerButton::Middle);
+        runtime.button_up(settings.0, settings.1, rune::PointerButton::Middle);
+        runtime.frame(0.0);
+        assert!(!runtime.state.settings_open);
+        assert_eq!(runtime.state.workspace.tabs.len(), 1);
+    }
+
+    #[test]
+    fn overflowing_editor_tabs_scroll_with_the_mouse_wheel() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        for i in 0..8 {
+            let path = root.path().join(format!("file-{i}.rs"));
+            std::fs::write(&path, "contents").unwrap();
+            state.open_file(path);
+            wait(&mut state, |s| s.workspace.tabs.len() == i + 1);
+        }
+        state.workspace.layout.terminal = false;
+        let mut runtime = runtime_for(state);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("editor-tab-1").unwrap();
+        runtime.wheel_xy(x, y, 0.0, -5000.0);
+        runtime.frame(0.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let last = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("editor-tab-8") && !e.exiting)
+            .unwrap();
+        assert!(last.visible[2] > 0.0);
+        assert_eq!(runtime.state.workspace.tabs.len(), 8);
+        assert_eq!(
+            runtime.state.workspace.tabs[runtime.state.workspace.active].id,
+            8
+        );
     }
 
     #[test]

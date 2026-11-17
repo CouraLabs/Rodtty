@@ -463,3 +463,30 @@ fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_sta
     assert!(new.to_lowercase().contains("uutils"), "{new}");
     assert!(legacy.path().join("history").is_file());
 }
+
+#[test]
+fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
+    let root = tempfile::tempdir().unwrap();
+    let terminal = session(root.path(), Config::default());
+    let title = format!("Agent 日本語 — {}", "long application title ".repeat(12));
+    run(
+        &terminal,
+        &format!("printf '\\033]2;{}\\007'", title),
+        "TITLE_SET",
+    );
+    assert_eq!(
+        terminal.state.lock().unwrap().parser.callbacks().title,
+        title
+    );
+    run(
+        &terminal,
+        "printf '\\033]0;Second app title\\033\\\\'",
+        "TITLE_CHANGED",
+    );
+    assert_eq!(
+        terminal.state.lock().unwrap().parser.callbacks().title,
+        "Second app title"
+    );
+    run(&terminal, "printf '\\033]2;\\007'", "TITLE_CLEARED");
+    assert_eq!(terminal.state.lock().unwrap().parser.callbacks().title, "");
+}

@@ -117,9 +117,11 @@ impl OperationRequest {
             }
         }
         // Finish the potentially expensive/fallible copy before touching a destination.
-        let stage = tempfile::Builder::new()
-            .prefix(".rodtty-operation-")
-            .tempdir_in(&parent)?;
+        let stage = OperationStage(Some(
+            tempfile::Builder::new()
+                .prefix(".rodtty-operation-")
+                .tempdir_in(&parent)?,
+        ));
         let prepared = stage.path().join("item");
         match &self.operation {
             FileOperation::CreateFile => {
@@ -156,6 +158,59 @@ impl OperationRequest {
             path: target,
         })
     }
+}
+
+/// Owns only disposable prepared items and previous destinations. Published items
+/// have left this directory, and a failed rollback explicitly keeps it for recovery.
+struct OperationStage(Option<tempfile::TempDir>);
+
+impl OperationStage {
+    fn path(&self) -> &Path {
+        self.0.as_ref().unwrap().path()
+    }
+
+    fn keep(mut self) -> PathBuf {
+        self.0.take().unwrap().keep()
+    }
+}
+
+impl Drop for OperationStage {
+    fn drop(&mut self) {
+        if let Some(stage) = &self.0 {
+            // TempDir's recursive removal cannot unlink children of read-only
+            // directories copied from the source or moved here as a backup.
+            let _ = make_disposable_removable(stage.path());
+        }
+    }
+}
+
+fn make_disposable_removable(path: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_symlink() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    if metadata.is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            path,
+            fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+        )?;
+    }
+    #[cfg(windows)]
+    if metadata.permissions().readonly() {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions)?;
+    }
+    if metadata.is_dir() {
+        // Continue restoring siblings if an entry cannot be accessed. TempDir
+        // still attempts removal, without touching anything outside its root.
+        for entry in fs::read_dir(path)?.flatten() {
+            let _ = make_disposable_removable(&entry.path());
+        }
+    }
+    Ok(())
 }
 
 fn available_name(target: &Path, directory: bool) -> Result<PathBuf> {
@@ -240,7 +295,31 @@ fn publish(prepared: &Path, target: &Path) -> Result<()> {
         let result = (|| -> Result<()> {
             for entry in fs::read_dir(prepared)? {
                 let entry = entry?;
-                fs::rename(entry.path(), target.join(entry.file_name()))?;
+                let prepared_child = entry.path();
+                let published_child = target.join(entry.file_name());
+                #[cfg(unix)]
+                let permissions = {
+                    use std::os::unix::fs::PermissionsExt;
+                    let metadata = fs::symlink_metadata(&prepared_child)?;
+                    if metadata.is_dir() {
+                        // A cross-parent directory rename needs access to update its
+                        // parent entry. Change only this private staged copy, then
+                        // restore its original permissions after moving it.
+                        let permissions = metadata.permissions();
+                        fs::set_permissions(
+                            &prepared_child,
+                            fs::Permissions::from_mode(permissions.mode() | 0o300),
+                        )?;
+                        Some(permissions)
+                    } else {
+                        None
+                    }
+                };
+                fs::rename(&prepared_child, &published_child)?;
+                #[cfg(unix)]
+                if let Some(permissions) = permissions {
+                    fs::set_permissions(&published_child, permissions)?;
+                }
             }
             fs::set_permissions(target, metadata.permissions())?;
             Ok(())
