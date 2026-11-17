@@ -4011,7 +4011,6 @@ dependencies = [
 [[package]]
 name = "rune-kit"
 version = "0.0.1"
-source = "git+https://github.com/anomalyco/rune?rev=eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90#eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90"
 dependencies = [
  "icu_normalizer",
  "rune",

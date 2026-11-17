@@ -62,3 +62,4 @@ debug = false
 
 [patch."https://github.com/anomalyco/rune"]
 rune = { path = "vendor/rune" }
+rune-kit = { path = "vendor/rune-kit" }

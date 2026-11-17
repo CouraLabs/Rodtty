@@ -65,6 +65,7 @@ struct State {
     settings: bool,
     settings_open: bool,
     settings_query: TextEdit,
+    theme_family_picker: rune_kit::ComboboxState,
     settings_error: Option<String>,
     settings_seen: Option<Vec<u8>>,
     settings_poll: std::time::Instant,
@@ -128,6 +129,7 @@ impl State {
             settings: false,
             settings_open: false,
             settings_query: TextEdit::new(""),
+            theme_family_picker: Default::default(),
             settings_error: (!config_valid).then(|| message.clone()),
             settings_poll: std::time::Instant::now(),
             search: false,
@@ -771,6 +773,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         root = root.child(palette);
     }
     root = root.children(fonts::overlays(state, a, width));
+    root = root.children(settings::overlays(state, a, width));
     root.on_paste(|s: &mut State, content, _| {
         if !s.application_overlay_open() && s.workspace.terminal_focus {
             s.paste(content);
@@ -1313,30 +1316,40 @@ fn native_check(
             // Retain the owner's original choice when this developer harness finishes.
             let (choice_tx, choice_rx) = std::sync::mpsc::channel();
             handle.update(move |s, _| {
-                let _ = choice_tx.send(s.config.appearance);
+                let _ = choice_tx.send((s.config.theme_family, s.config.appearance));
             });
-            let original_appearance = choice_rx.recv_timeout(Duration::from_secs(10))?;
-            for appearance in [
-                config::Appearance::Light,
-                config::Appearance::Dark,
-                config::Appearance::System,
-            ] {
-                handle.update(move |s, _| s.save_config(|c| c.appearance = appearance));
-                wait_app(&handle, move |s| s.config.appearance == appearance)?;
-                let (identity_tx, identity_rx) = std::sync::mpsc::channel();
-                handle.update(move |s, _| {
-                    let _ = identity_tx.send(s.active().map(|session| session.state.clone()));
-                });
-                let active = identity_rx
-                    .recv_timeout(Duration::from_secs(10))?
-                    .context("terminal missing after appearance change")?;
-                anyhow::ensure!(
-                    Arc::ptr_eq(&session, &active),
-                    "appearance change replaced the terminal session"
-                );
+            let (original_family, original_appearance) =
+                choice_rx.recv_timeout(Duration::from_secs(10))?;
+            for &family in config::ThemeFamily::ALL {
+                for appearance in [
+                    config::Appearance::Light,
+                    config::Appearance::Dark,
+                    config::Appearance::System,
+                ] {
+                    handle.update(move |s, _| {
+                        s.save_config(|c| {
+                            c.theme_family = family;
+                            c.appearance = appearance;
+                        })
+                    });
+                    wait_app(&handle, move |s| {
+                        s.config.theme_family == family && s.config.appearance == appearance
+                    })?;
+                    let (identity_tx, identity_rx) = std::sync::mpsc::channel();
+                    handle.update(move |s, _| {
+                        let _ = identity_tx.send(s.active().map(|session| session.state.clone()));
+                    });
+                    let active = identity_rx
+                        .recv_timeout(Duration::from_secs(10))?
+                        .context("terminal missing after appearance change")?;
+                    anyhow::ensure!(
+                        Arc::ptr_eq(&session, &active),
+                        "appearance change replaced the terminal session"
+                    );
+                }
             }
             handle.update(move |s, _| {
-                s.save_config(|c| c.appearance = original_appearance);
+                s.save_config(|c| { c.theme_family = original_family; c.appearance = original_appearance; });
                 s.send(b"printf '\\033[31mANSI \\033[38;5;196mEXTENDED \\033[38;2;12;34;56mTRUECOLOR\\033[0m APPEARANCE_%s\\n' RETAINED\r".to_vec());
             });
             wait_text("APPEARANCE_RETAINED")?;
@@ -1490,7 +1503,7 @@ fn native_check(
             );
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
-                "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"output_after_appearance_change":true});
+                "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"theme_families_preserved_session":9,"family_mode_changes":27,"output_after_appearance_change":true});
             if let Some(frame) = frame_evidence {
                 report["custom_frame"] = frame;
             }
