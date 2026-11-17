@@ -17,10 +17,15 @@
   "linux_runtime": {
     "status": "passed",
     "command": "cargo test --offline --locked --all-targets -- --test-threads=1 --include-ignored",
-    "passed_tests": 107,
+    "passed_tests": 109,
     "mac_layout": "Actual Rune view with left controls at 640x360 and 2x scale; full control bounds, child exclusion, Settings, header Drag/DoubleClick, dirty Close/Cancel preserving the draft.",
     "strict_clippy": "passed",
     "desktop_build": "passed",
     "backend_only_check": "passed"
+  },
+  "linux_native_regression": {
+    "wayland": "passed",
+    "xlib": "passed",
+    "scope": "Actual frame/lifecycle harness with all eight resizes, controls, dirty Close/Cancel, saving, output while closed and same-session relaunch; run before the final OSC-only integration merge."
   }
 }
