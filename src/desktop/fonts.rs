@@ -106,6 +106,28 @@ impl Metrics {
 }
 
 impl State {
+    pub(super) fn font_families(&self) -> (String, String) {
+        let mut preferences = self.config.fonts.clone();
+        if self.font_catalog.ready {
+            if !self
+                .font_catalog
+                .families
+                .iter()
+                .any(|f| f.name.eq_ignore_ascii_case(&preferences.ui_family))
+            {
+                preferences.ui_family = "Geist".into();
+            }
+            if !self
+                .font_catalog
+                .families
+                .iter()
+                .any(|f| f.monospace && f.name.eq_ignore_ascii_case(&preferences.terminal_family))
+            {
+                preferences.terminal_family = "Geist Mono".into();
+            }
+        }
+        preferences.families()
+    }
     pub(super) fn refresh_terminal_metrics(&mut self) -> bool {
         let previous = self.terminal_metrics;
         if previous.style.size == self.config.fonts.terminal_size
@@ -164,6 +186,163 @@ mod tests {
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         frame(rt);
+    }
+    #[test]
+    fn owner_searches_and_selects_ui_and_monospace_terminal_families() {
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.open_settings(&mut Tx::default());
+        state.settings_query.replace_text("font family");
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1200.0, 900.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
+        frame(&mut rt);
+        click(&mut rt, "font-ui-trigger");
+        assert!(rt.find("font-ui-option-Geist").is_some());
+        assert!(rt.find("font-ui-option-Geist Mono").is_some());
+        click(&mut rt, "font-ui-option-Geist Mono");
+        assert_eq!(
+            crate::config::Config::load(root.path())
+                .unwrap()
+                .fonts
+                .ui_family,
+            "Geist Mono"
+        );
+        click(&mut rt, "font-terminal-trigger");
+        assert!(rt.find("font-terminal-option-Geist").is_none());
+        assert!(rt.find("font-terminal-option-Geist Mono").is_some());
+        click(&mut rt, "font-terminal-option-Geist Mono");
+        click(&mut rt, "reset-ui-font-family");
+        assert_eq!(
+            crate::config::Config::load(root.path())
+                .unwrap()
+                .fonts
+                .ui_family,
+            "Geist"
+        );
+        click(&mut rt, "font-ui-trigger");
+        rt.set_viewport((640.0, 900.0), 1.0);
+        rt.update(|s, tx| s.dispatch(AppAction::ShowTerminal, tx));
+        frame(&mut rt);
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "a hidden compact settings pane must not retain its dropdown overlay"
+        );
+    }
+    #[test]
+    #[ignore = "requires a native desktop host with installed proportional and monospace fonts"]
+    fn owner_finds_installed_fonts_by_keyboard_and_keeps_editor_size() {
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        let families = Catalog::discover();
+        let installed_mono = families
+            .iter()
+            .find(|f| !f.bundled && f.monospace)
+            .expect("native host has a monospace family")
+            .name
+            .clone();
+        assert!(families.iter().any(|f| !f.bundled && !f.monospace));
+        eprintln!(
+            "native font inventory: {} families; {} monospace; selecting {}",
+            families.len(),
+            families.iter().filter(|f| f.monospace).count(),
+            installed_mono
+        );
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        workspace_preview(&mut state);
+        state.save_config(|c| c.fonts.editor_size = 22.0);
+        state.open_settings(&mut Tx::default());
+        state.settings_query.replace_text("font family");
+        state.font_catalog.families = families;
+        state.font_catalog.ready = true;
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1600.0, 1000.0),
+            Env {
+                system_dark: false,
+                scale: 1.0,
+            },
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
+        frame(&mut rt);
+        click(&mut rt, "font-terminal-trigger");
+        rt.paste(installed_mono.clone());
+        frame(&mut rt);
+        assert!(
+            rt.find(&format!("font-terminal-option-{installed_mono}"))
+                .is_some()
+        );
+        assert!(
+            rt.find("font-terminal-option-Geist Mono").is_none(),
+            "search filters unrelated families"
+        );
+        rt.key(KeyEvent {
+            key: Key::Enter,
+            mods: Default::default(),
+        });
+        frame(&mut rt);
+        let saved = Config::load(root.path()).unwrap();
+        assert_eq!(saved.fonts.terminal_family, installed_mono);
+        assert_eq!(saved.fonts.editor_size, 22.0);
+        assert!(
+            rt.font_families()
+                .1
+                .starts_with(&format!("\"{installed_mono}\""))
+        );
+        click(&mut rt, "reset-terminal-font-family");
+        assert!(rt.font_families().1.starts_with("\"Geist Mono\""));
+        assert_eq!(Config::load(root.path()).unwrap().fonts.editor_size, 22.0);
+    }
+    #[test]
+    fn disappeared_saved_families_show_the_bundled_fallback_without_rewriting_preferences() {
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.fonts.ui_family = "Rodtty Vanished UI 1229".into();
+        config.fonts.terminal_family = "Rodtty Vanished Mono 1229".into();
+        config.save(root.path()).unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.font_catalog.ready = true;
+        state.open_settings(&mut Tx::default());
+        state.settings_query.replace_text("font family");
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1200.0, 900.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
+        rt.update(|s, tx| {
+            poll(s, 0.0, tx);
+        });
+        frame(&mut rt);
+        assert_eq!(
+            rt.font_families(),
+            ("\"Geist\", \"Geist\"", "\"Geist Mono\", \"Geist Mono\"")
+        );
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_ref().is_some_and(|text| text.contains(
+                    "Rodtty Vanished Mono 1229 is unavailable; using bundled Geist Mono"
+                )))
+        );
+        assert_eq!(
+            Config::load(root.path()).unwrap().fonts.terminal_family,
+            "Rodtty Vanished Mono 1229"
+        );
     }
     #[test]
     fn terminal_unicode_cursor_and_selection_follow_live_sizes_and_display_scale() {
@@ -349,4 +528,272 @@ mod tests {
         frame(&mut rt);
         assert_eq!(rt.selected_text().as_deref(), Some("fn"));
     }
+}
+
+// Discovery owns native font collections on a worker: Fontconfig on Linux,
+// DirectWrite on Windows and CoreText on macOS. Render/input only read this snapshot.
+#[derive(Clone)]
+pub(super) struct FontFamily {
+    pub name: String,
+    pub monospace: bool,
+    pub bundled: bool,
+}
+pub(super) struct Catalog {
+    pub families: Vec<FontFamily>,
+    pending: Option<std::sync::mpsc::Receiver<Vec<FontFamily>>>,
+    pub ready: bool,
+}
+impl Default for Catalog {
+    fn default() -> Self {
+        Self {
+            families: vec![
+                FontFamily {
+                    name: "Geist".into(),
+                    monospace: false,
+                    bundled: true,
+                },
+                FontFamily {
+                    name: "Geist Mono".into(),
+                    monospace: true,
+                    bundled: true,
+                },
+            ],
+            pending: None,
+            ready: false,
+        }
+    }
+}
+impl Catalog {
+    pub(super) fn start(&mut self, wake: rune::Waker) {
+        if self.ready || self.pending.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(Self::discover());
+            wake();
+        });
+    }
+    pub(super) fn poll(&mut self) -> bool {
+        let Some(rx) = &self.pending else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(families) => {
+                self.families = families;
+                self.ready = true;
+                self.pending = None;
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.ready = true;
+                self.pending = None;
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+        }
+    }
+    pub fn discover() -> Vec<FontFamily> {
+        let mut families = Self::default().families;
+        let mut collection = fontique::Collection::new(Default::default());
+        collection.load_system_fonts();
+        let names: Vec<_> = collection.family_names().map(str::to_owned).collect();
+        let mut cache = fontique::SourceCache::new(Default::default());
+        for name in names {
+            if families.iter().any(|f| f.name.eq_ignore_ascii_case(&name)) {
+                continue;
+            }
+            let Some(family) = collection.family_by_name(&name) else {
+                continue;
+            };
+            let fonts = family.fonts();
+            let monospace = !fonts.is_empty()
+                && fonts.iter().all(|font| {
+                    font.load(Some(&mut cache))
+                        .is_some_and(|data| fixed_pitch(data.as_ref(), font.index()))
+                });
+            families.push(FontFamily {
+                name,
+                monospace,
+                bundled: false,
+            });
+        }
+        families.sort_by_cached_key(|f| f.name.to_lowercase());
+        families.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+        families
+    }
+}
+fn fixed_pitch(data: &[u8], index: u32) -> bool {
+    use read_fonts::{FontRef, TableProvider};
+    let Ok(font) = FontRef::from_index(data, index) else {
+        return false;
+    };
+    // Validate actual printable ASCII advances as well as the post metadata.
+    // This excludes icon faces and proportional fonts with misleading names/flags.
+    let Ok(post) = font.post() else { return false };
+    if post.is_fixed_pitch() == 0 {
+        return false;
+    }
+    let (Ok(cmap), Ok(hmtx)) = (font.cmap(), font.hmtx()) else {
+        return false;
+    };
+    let mut width = None;
+    for ch in ' '..='~' {
+        let Some(glyph) = cmap.map_codepoint(ch) else {
+            return false;
+        };
+        let Some(advance) = hmtx.advance(glyph).filter(|a| *a > 0) else {
+            return false;
+        };
+        if width.is_some_and(|w| w != advance) {
+            return false;
+        }
+        width = Some(advance);
+    }
+    true
+}
+fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> El {
+    let options: Vec<_> = s
+        .font_catalog
+        .families
+        .iter()
+        .filter(|f| !terminal || f.monospace)
+        .map(|f| rune_kit::ComboboxOption {
+            id: f.name.clone(),
+            label: f.name.clone(),
+            detail: if f.bundled { "Bundled" } else { "Installed" }.into(),
+            disabled: false,
+        })
+        .collect();
+    let (key, state, current, label) = if terminal {
+        (
+            "font-terminal",
+            &s.font_terminal,
+            &s.config.fonts.terminal_family,
+            "Terminal font family",
+        )
+    } else {
+        (
+            "font-ui",
+            &s.font_ui,
+            &s.config.fonts.ui_family,
+            "UI font family",
+        )
+    };
+    rune_kit::Combobox::new(key, state, &options, move |s: &mut State| {
+        if terminal {
+            &mut s.font_terminal
+        } else {
+            &mut s.font_ui
+        }
+    })
+    .label(label)
+    .current(Some(current))
+    .placeholder(current)
+    .search_placeholder("Search font families")
+    .width(260.0)
+    .max_height(190.0)
+    .on_choose(move |s, family, tx| {
+        s.save_config(|c| {
+            if terminal {
+                c.fonts.terminal_family = family.into();
+            } else {
+                c.fonts.ui_family = family.into();
+            }
+        });
+        let (sans, mono) = s.font_families();
+        tx.set_font_families(sans, mono);
+    })
+    .build(a.kit(), layers)
+}
+pub(super) fn selectors(s: &State, a: &Appearance) -> El {
+    let mut result = col().w_full().gap(6.0);
+    for terminal in [false, true] {
+        let key = if terminal { "terminal" } else { "ui" };
+        let current = if terminal {
+            &s.config.fonts.terminal_family
+        } else {
+            &s.config.fonts.ui_family
+        };
+        result = result
+            .child(
+                text(if terminal {
+                    "Terminal font family · editor follows"
+                } else {
+                    "UI font family"
+                })
+                .font(label())
+                .color(a.ink()),
+            )
+            .child(
+                row()
+                    .gap(6.0)
+                    .scroll_x()
+                    .child(dropdown(s, a, terminal, &mut Vec::new()))
+                    .child(button(
+                        a,
+                        format!("reset-{key}-font-family"),
+                        "Reset",
+                        move |s, tx| {
+                            s.save_config(|c| {
+                                if terminal {
+                                    c.fonts.terminal_family = "Geist Mono".into();
+                                } else {
+                                    c.fonts.ui_family = "Geist".into();
+                                }
+                            });
+                            let (sans, mono) = s.font_families();
+                            tx.set_font_families(sans, mono);
+                        },
+                    )),
+            )
+            .child(
+                text("Aa Bb 0123456789 · Wi il {} =>")
+                    .key(format!("font-{key}-preview"))
+                    .font(if terminal { editor() } else { ui(15.0, 400.0) })
+                    .color(a.ink())
+                    .wrap(),
+            );
+        if s.font_catalog.ready
+            && !s
+                .font_catalog
+                .families
+                .iter()
+                .any(|f| f.name.eq_ignore_ascii_case(current) && (!terminal || f.monospace))
+        {
+            result = result.child(
+                text(format!(
+                    "{current} is unavailable; using bundled {}",
+                    if terminal { "Geist Mono" } else { "Geist" }
+                ))
+                .font(label())
+                .color(a.muted())
+                .wrap(),
+            );
+        }
+    }
+    if !s.font_catalog.ready {
+        result = result.child(
+            text("Finding installed font families…")
+                .font(label())
+                .color(a.muted()),
+        );
+    }
+    result
+}
+pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
+    let mut layers = Vec::new();
+    if s.settings
+        && s.pending.is_none()
+        && s.palette.is_none()
+        && workspace::pane_visibility(s, width).2
+        && "appearance ui font family terminal font family installed monospace preview"
+            .contains(&s.settings_query.text.trim().to_lowercase())
+    {
+        for terminal in [false, true] {
+            let _ = dropdown(s, a, terminal, &mut layers);
+        }
+    }
+    layers
 }
