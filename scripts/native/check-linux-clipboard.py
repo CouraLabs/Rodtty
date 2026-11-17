@@ -20,17 +20,11 @@ import time
 
 
 class Owner:
-    def __init__(self, binary, compositor):
-        self.compositor = compositor
+    def __init__(self, binary):
         env = os.environ.copy()
-        env['QT_QPA_PLATFORM'] = 'wayland'
         self.process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
         assert self.process.stdout.readline().strip() == 'ready', 'native clipboard reader failed'
 
-
-    def activate(self):
-        # data-control reads the native clipboard without focus or input serials.
-        pass
 
     def command(self, command):
         self.process.stdin.write(json.dumps(command) + '\n')
@@ -74,7 +68,7 @@ def main():
         flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'Qt6Core', 'wayland-client'], text=True).split()
         subprocess.run(['c++', '-std=c++17', '-fPIC', '-pie', '-pthread', '-I', str(directory), str(Path(__file__).with_name('linux-clipboard-owner.cpp')), str(obj), '-o', str(helper), *flags], check=True)
         try:
-            owner = Owner(helper, compositor)
+            owner = Owner(helper)
             initial = owner.command({'snapshot': True})
             saved = initial.pop('content')  # Never include owner payloads in a report/log.
             assert initial['clipboard_access'] and saved, 'refusing test writes: native all-MIME snapshot unavailable'
@@ -92,9 +86,13 @@ def main():
                 while not report.with_suffix('.ready.json').exists():
                     assert process.poll() is None and time.monotonic() < deadline, 'native app did not reach copy checkpoint'
                     time.sleep(.025)
-                owner.activate()
-                observed = owner.command({})
-                assert observed['clipboard_access'] and observed['is_fixture'], 'native copy differs from exact Unicode fixture'
+                deadline = time.monotonic() + 15
+                while True:
+                    observed = owner.command({})
+                    if observed['clipboard_access'] and observed['is_fixture']:
+                        break
+                    assert time.monotonic() < deadline, 'native copy differs from exact Unicode fixture'
+                    time.sleep(.025)
                 assert owner.command({'set_fixture': True}).get('fixture_set'), 'clipboard fixture ownership changed'
                 report.with_suffix('.input.json').write_text('{"copy_verified":true}')
                 assert process.wait(30) == 0, 'native app clipboard check failed'
@@ -115,7 +113,7 @@ def main():
                 time.sleep(1.5)
                 owner.close()
                 owner = None
-                reader = Owner(helper, compositor)
+                reader = Owner(helper)
                 independent = reader.command({'verify': saved})
                 restored = restored and independent['original_forms_match']
                 reader.close()

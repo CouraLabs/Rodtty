@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(rt.state.active().unwrap().id(), identity);
         rt.settle_all();
         rt.frame(0.0);
-        board.set_text("printf 'OPTIONAL_RIGHT_CLICK_OK\\n'\n");
+        board.set_text("printf 'OPTIONAL_%s\\n' RIGHT_CLICK_OK\n");
         let (x, y) = rt.find("terminal").unwrap();
         rt.secondary_down(x, y);
         rt.secondary_up(x, y);
@@ -296,6 +296,48 @@ mod tests {
             .unwrap()
             .wait_for("OPTIONAL_RIGHT_CLICK_OK", std::time::Duration::from_secs(5))
             .unwrap();
+        for (via_palette, command, expected) in [
+            (
+                true,
+                "printf 'PALETTE_%s\\n' PASTE_OK\n",
+                "PALETTE_PASTE_OK",
+            ),
+            (
+                false,
+                "printf 'SHORTCUT_%s\\n' PASTE_OK\n",
+                "SHORTCUT_PASTE_OK",
+            ),
+        ] {
+            board.set_text(command);
+            if via_palette {
+                open_palette(&mut rt);
+                press(
+                    &mut rt,
+                    Key::Text("Terminal: Paste".into()),
+                    Default::default(),
+                );
+                press(&mut rt, Key::Enter, Default::default());
+            } else {
+                rt.settle_all();
+                rt.frame(0.0);
+                press(
+                    &mut rt,
+                    Key::Command('v'),
+                    rune::Mods {
+                        ctrl: !cfg!(target_os = "macos"),
+                        cmd: true,
+                        shift: !cfg!(target_os = "macos"),
+                        ..Default::default()
+                    },
+                );
+            }
+            rt.frame(0.0);
+            rt.state
+                .active()
+                .unwrap()
+                .wait_for(expected, std::time::Duration::from_secs(5))
+                .unwrap();
+        }
         rt.state
             .active()
             .unwrap()
@@ -313,7 +355,7 @@ mod tests {
         rt.state
             .active()
             .unwrap()
-            .send(b"printf 'INTERRUPT_OK\\n'\r".to_vec())
+            .send(b"printf 'INTERRUPT_%s\\n' OK\r".to_vec())
             .unwrap();
         rt.state
             .active()

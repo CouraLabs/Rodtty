@@ -9,6 +9,7 @@
 #include "clipboard-data-control-client.h"
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <iostream>
 #include <memory>
@@ -107,6 +108,7 @@ static void publish(ext_data_control_device_v1 *device, const QJsonObject &data)
     wl_display_roundtrip(display);
 }
 int main() {
+    std::signal(SIGPIPE, SIG_IGN);
     display = wl_display_connect(nullptr); if (!display) return 1;
     auto *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, nullptr); wl_display_roundtrip(display);
