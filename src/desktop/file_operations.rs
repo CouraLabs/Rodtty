@@ -22,7 +22,10 @@ impl State {
 
     pub(super) fn begin_file_operation(&mut self, operation: FileOperation, tx: &mut Tx) {
         let selected = self.selected_entry();
-        let copying = matches!(operation, FileOperation::Copy { .. });
+        let copying = matches!(
+            operation,
+            FileOperation::Copy { .. } | FileOperation::Move { .. }
+        );
         let directory = selected
             .as_ref()
             .and_then(|e| {
@@ -35,7 +38,7 @@ impl State {
             .or_else(|| self.workspace.directory.clone())
             .unwrap_or_else(|| self.directory.clone());
         self.workspace.operation_name = TextEdit::new(match &operation {
-            FileOperation::Copy { source } => source
+            FileOperation::Copy { source } | FileOperation::Move { source } => source
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -87,7 +90,7 @@ impl State {
         self.start_file_operation(request, None, tx);
     }
 
-    /// Shared worker/decision flow. Rename and move can extend FileOperation without new prompts.
+    /// Shared worker/decision flow for creation, copying, renaming, and moving.
     pub(super) fn start_file_operation(
         &mut self,
         request: OperationRequest,
@@ -97,6 +100,27 @@ impl State {
         if self.workspace.operation_busy {
             return;
         }
+        let moving = matches!(request.operation, FileOperation::Move { .. });
+        if moving
+            && (self.workspace.tabs.iter().any(|tab| tab.saving)
+                || self.workspace.has_pending_opens())
+        {
+            self.message = "Wait for open files and saves to finish before moving items.".into();
+            return;
+        }
+        if decision
+            .as_ref()
+            .is_some_and(|(_, choice)| *choice == CollisionChoice::Replace)
+            && self
+                .workspace
+                .tabs
+                .iter()
+                .any(|tab| tab.document.path.starts_with(&request.target) && tab.dirty())
+        {
+            self.message = "Destination has unsaved edits. Save or close its editor before Replace, or choose Keep Both or Cancel.".into();
+            self.workspace.operation_error = Some(self.message.clone());
+            return;
+        }
         self.workspace.operation_id += 1;
         if self.io(Job::FileOperation {
             id: self.workspace.operation_id,
@@ -104,6 +128,7 @@ impl State {
             decision,
         }) {
             self.workspace.operation_busy = true;
+            self.workspace.operation_moving = moving;
             self.workspace.operation_result = None;
             self.pending = None;
             self.workspace.operation_error = None;
@@ -137,6 +162,7 @@ impl State {
             return;
         }
         self.workspace.operation_busy = false;
+        self.workspace.operation_moving = false;
         match result {
             Ok(OperationOutcome::Collision(collision)) => {
                 self.message = "Destination exists. Choose Replace, Keep Both, or Cancel.".into();
@@ -144,10 +170,13 @@ impl State {
                 tx.focus_when_shown("operation-cancel", false);
             }
             Ok(OperationOutcome::Completed { request, path }) => {
-                let verb = if matches!(request.operation, FileOperation::Copy { .. }) {
-                    "Copied"
-                } else {
-                    "Created"
+                let verb = match &request.operation {
+                    FileOperation::Move { source } => {
+                        self.remap_moved_paths(source, &path);
+                        "Moved"
+                    }
+                    FileOperation::Copy { .. } => "Copied",
+                    _ => "Created",
                 };
                 self.message = format!("{verb} {}", path.display());
                 self.workspace.operation_result = Some(path.clone());
@@ -213,6 +242,8 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 AppAction::CreateFolder,
             ),
             ("context-copy-file", "Copy To…", AppAction::CopyFile),
+            ("context-rename-file", "Rename…", AppAction::RenameFile),
+            ("context-move-file", "Move To…", AppAction::MoveFile),
         ] {
             let enabled = s.action_disabled(action).is_none();
             menu = menu.child(
@@ -232,7 +263,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     y.clamp(
                         8.0,
                         (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 3.0
+                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 5.0
                             - 28.0)
                             .max(8.0),
                     ),
@@ -270,9 +301,10 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::CreateFile => ("New file", "Create file"),
                 FileOperation::CreateFolder => ("New folder", "Create folder"),
                 FileOperation::Copy { .. } => ("Copy item", "Copy"),
+                FileOperation::Move { .. } => ("Rename or move item", "Move"),
             };
             content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
-            if let FileOperation::Copy { source } = operation {
+            if let FileOperation::Copy { source } | FileOperation::Move { source } = operation {
                 content = content.child(
                     text(format!("From {}", source.display()))
                         .font(ui_label())
@@ -299,6 +331,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
                 .child(text(collision.request.target.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
                 .child(text("Replace removes the existing item after the new item is ready. Keep Both creates a separate copy with an available name.").font(ui_label()).color(a.muted()).wrap());
+            if let Some(error) = &s.workspace.operation_error {
+                content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
+            }
             buttons = buttons
                 .child(button(a, "operation-keep-both", "Keep Both", |s, tx| {
                     s.decide_file_collision(CollisionChoice::KeepBoth, tx)

@@ -12,6 +12,7 @@ pub enum FileOperation {
     CreateFile,
     CreateFolder,
     Copy { source: PathBuf },
+    Move { source: PathBuf },
 }
 #[derive(Clone, Debug)]
 pub struct OperationRequest {
@@ -28,6 +29,7 @@ pub enum CollisionChoice {
 pub struct Collision {
     pub request: OperationRequest,
     version: u64,
+    source_version: Option<u64>,
 }
 #[derive(Debug)]
 pub enum OperationOutcome {
@@ -62,10 +64,14 @@ impl OperationRequest {
             .file_name()
             .context("Enter a file or folder name")?;
         let mut target = parent.join(name);
+        let source_version = match &self.operation {
+            FileOperation::Move { source } => fingerprint(source)?,
+            _ => None,
+        };
         let directory = match &self.operation {
             FileOperation::CreateFolder => true,
             FileOperation::CreateFile => false,
-            FileOperation::Copy { source } => {
+            FileOperation::Copy { source } | FileOperation::Move { source } => {
                 let metadata = fs::symlink_metadata(source).context("Read source")?;
                 if metadata.is_dir()
                     && parent.starts_with(source.canonicalize().context("Open source folder")?)
@@ -94,7 +100,9 @@ impl OperationRequest {
         if let Some(version) = existing {
             match decision {
                 Some((collision, choice))
-                    if collision.request.target == self.target && collision.version == version =>
+                    if collision.request.target == self.target
+                        && collision.version == version
+                        && collision.source_version == source_version =>
                 {
                     match choice {
                         CollisionChoice::Replace => replace = true,
@@ -106,11 +114,14 @@ impl OperationRequest {
                     return Ok(OperationOutcome::Collision(Collision {
                         request: self,
                         version,
+                        source_version,
                     }));
                 }
             }
         }
-        if replace && let FileOperation::Copy { source } = &self.operation {
+        if replace
+            && let FileOperation::Copy { source } | FileOperation::Move { source } = &self.operation
+        {
             let target_metadata = fs::symlink_metadata(&target)?;
             if target_metadata.is_dir() && source.canonicalize()?.starts_with(&target) {
                 bail!("A copy cannot replace a folder containing its source. Choose Keep Both.");
@@ -128,8 +139,25 @@ impl OperationRequest {
                 fs::File::create(&prepared)?;
             }
             FileOperation::CreateFolder => fs::create_dir(&prepared)?,
-            FileOperation::Copy { source } => copy_item(source, &prepared)?,
+            FileOperation::Copy { source } | FileOperation::Move { source } => {
+                copy_item(source, &prepared)?
+            }
         }
+        // Quarantine a move's original only after preparation succeeds. This rename
+        // stays on the source filesystem; publication can therefore cross volumes.
+        // The guard restores the original on every failure before publication.
+        let mut moved = if let FileOperation::Move { source } = &self.operation {
+            if fingerprint(source)? != source_version {
+                bail!("Source changed while preparing the move. Try again.");
+            }
+            let moved = MoveSource::take(source)?;
+            if fingerprint(&moved.path())? != source_version {
+                bail!("Source changed while preparing the move. Try again.");
+            }
+            Some(moved)
+        } else {
+            None
+        };
         let backup = stage.path().join("previous");
         if replace {
             // Recheck after staging as another process may have changed the target meanwhile.
@@ -153,10 +181,56 @@ impl OperationRequest {
             }
             return Err(error);
         }
+        if let Some(moved) = &mut moved {
+            moved.committed = true;
+        }
         Ok(OperationOutcome::Completed {
             request: self,
             path: target,
         })
+    }
+}
+
+/// A quarantined source remains recoverable until publication succeeds.
+struct MoveSource {
+    source: PathBuf,
+    stage: Option<OperationStage>,
+    committed: bool,
+}
+impl MoveSource {
+    fn take(source: &Path) -> Result<Self> {
+        let stage = OperationStage(Some(
+            tempfile::Builder::new()
+                .prefix(".rodtty-move-")
+                .tempdir_in(source.parent().context("Source has no parent")?)?,
+        ));
+        fs::rename(source, stage.path().join("item")).context("Preserve move source")?;
+        Ok(Self {
+            source: source.to_owned(),
+            stage: Some(stage),
+            committed: false,
+        })
+    }
+    fn path(&self) -> PathBuf {
+        self.stage.as_ref().unwrap().path().join("item")
+    }
+}
+impl Drop for MoveSource {
+    fn drop(&mut self) {
+        if !self.committed {
+            let path = self.path();
+            if fs::symlink_metadata(&self.source).is_ok()
+                || fs::rename(&path, &self.source).is_err()
+            {
+                // An external writer may have recreated the source. Never overwrite
+                // it, and never discard the quarantined original in that case.
+                let recovery = self.stage.take().unwrap().keep();
+                eprintln!(
+                    "Move rollback retained original at {}",
+                    recovery.join("item").display()
+                );
+            }
+        }
     }
 }
 

@@ -64,6 +64,7 @@ pub(super) struct Workspace {
     pub entries: Vec<Entry>,
     pub(super) tree: TreeModel<TreeEntry>,
     pub(super) operation_busy: bool,
+    pub(super) operation_moving: bool,
     pub(super) operation_result: Option<PathBuf>,
     pub(super) operation_id: u64,
     pub(super) operation_name: TextEdit,
@@ -107,6 +108,11 @@ pub(super) struct Workspace {
     drag_width: f32,
     drag_share: f32,
 }
+impl Workspace {
+    pub(super) fn has_pending_opens(&self) -> bool {
+        !self.opening.is_empty()
+    }
+}
 impl Default for Workspace {
     fn default() -> Self {
         Self {
@@ -121,6 +127,7 @@ impl Default for Workspace {
             entries: Vec::new(),
             tree: TreeModel::new().key("file-list"),
             operation_busy: false,
+            operation_moving: false,
             operation_result: None,
             operation_id: 0,
             operation_name: TextEdit::new(""),
@@ -300,6 +307,60 @@ impl State {
         self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
     }
 
+    /// Change only path references after a committed move. Keeping the TextEdit
+    /// and saved version retains selection, undo, encoding, and conflict checks.
+    pub(super) fn remap_moved_paths(&mut self, source: &std::path::Path, target: &std::path::Path) {
+        fn remap(path: &mut PathBuf, source: &std::path::Path, target: &std::path::Path) {
+            if let Ok(relative) = path.strip_prefix(source) {
+                *path = if relative.as_os_str().is_empty() {
+                    target.to_owned()
+                } else {
+                    target.join(relative)
+                };
+            }
+        }
+        let w = &mut self.workspace;
+        for tab in &mut w.tabs {
+            if tab.document.path.starts_with(source) {
+                remap(&mut tab.document.path, source, target);
+                tab.baseline += 1;
+                tab.revision += 1;
+                tab.disk_error = None;
+            } else if tab.document.path.starts_with(target) {
+                // Ignore scans from before replacement. The next new-path scan
+                // refreshes clean destinations and protects dirty destinations.
+                tab.baseline += 1;
+            }
+        }
+        for path in &mut w.layout.expanded_folders {
+            remap(path, source, target);
+        }
+        for path in [
+            &mut w.directory,
+            &mut w.layout.explorer_directory,
+            &mut w.layout.active_file,
+            &mut w.outside_root,
+            &mut w.pending_reveal,
+            &mut w.revealed_directory,
+            &mut w.restore_active,
+        ] {
+            if let Some(path) = path {
+                remap(path, source, target);
+            }
+        }
+        for path in &mut w.layout.files {
+            remap(path, source, target);
+        }
+        if let Some(root) = &w.directory {
+            w.address.replace_text(root.to_string_lossy());
+        }
+        w.tree_dirty = true;
+        w.scan_token += 1;
+        w.last_scan = Instant::now() - Duration::from_secs(3);
+        self.invalidate_diff(true);
+        self.persist_workspace();
+    }
+
     pub(super) fn reveal_file_result(&mut self, path: PathBuf, tx: &mut Tx) {
         if let Some(root) = self.workspace.directory.clone()
             && path.starts_with(&root)
@@ -454,6 +515,10 @@ impl State {
     }
 
     pub(super) fn open_file(&mut self, path: PathBuf) {
+        if self.workspace.operation_moving {
+            self.message = "Wait for the move to finish before opening files.".into();
+            return;
+        }
         if let Some(i) = self
             .workspace
             .tabs
@@ -593,6 +658,10 @@ impl State {
         }
     }
     pub(super) fn save_file(&mut self, id: u64, overwrite: bool, after: Option<Action>) {
+        if self.workspace.operation_moving {
+            self.message = "Wait for the move to finish before saving.".into();
+            return;
+        }
         let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id) else {
             return;
         };
@@ -627,6 +696,10 @@ impl State {
         self.request_action(action, tx);
     }
     fn reload_external(&mut self, id: u64) {
+        if self.workspace.operation_moving {
+            self.message = "Wait for the move to finish before reloading.".into();
+            return;
+        }
         if let Some(tab) = self.workspace.tabs.iter().find(|t| t.id == id)
             && !tab.saving
         {
@@ -1035,7 +1108,9 @@ impl State {
                 changed = true;
             }
         }
-        if !self.workspace.scan_busy && self.workspace.last_scan.elapsed() > Duration::from_secs(1)
+        if !self.workspace.operation_moving
+            && !self.workspace.scan_busy
+            && self.workspace.last_scan.elapsed() > Duration::from_secs(1)
         {
             let directory = self
                 .workspace
@@ -1062,7 +1137,8 @@ impl State {
                 self.workspace.last_scan = Instant::now();
             }
         }
-        if self.workspace.diff_pending.is_none()
+        if !self.workspace.operation_moving
+            && self.workspace.diff_pending.is_none()
             && self.workspace.layout.editor
             && self.workspace.last_diff.elapsed() > Duration::from_secs(2)
             && let Some(tab) = self.workspace.tabs.get(self.workspace.active)
@@ -2586,6 +2662,62 @@ mod tests {
             },
         );
         press(runtime, Key::Text(value.into()), Default::default());
+    }
+
+    #[test]
+    fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("draft.txt");
+        let target = root.path().join("renamed.txt");
+        std::fs::write(&source, b"\xef\xbb\xbffirst\r\nsecond\r\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let mut state = state(root.path());
+        open(&mut state, &source);
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "draft\nsecond\n");
+        let id = runtime.state.workspace.tabs[0].id;
+        let cursor = (
+            runtime.state.workspace.tabs[0].edit.anchor,
+            runtime.state.workspace.tabs[0].edit.focus,
+        );
+        runtime.update(|s, _| {
+            s.workspace.tree.select(source.to_str().unwrap());
+        });
+        runtime.update(|s, tx| s.dispatch(AppAction::RenameFile, tx));
+        runtime.frame(1.0);
+        fill(&mut runtime, "operation-name", "renamed.txt");
+        click(&mut runtime, "operation-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(!source.exists());
+        let tab = &runtime.state.workspace.tabs[0];
+        assert_eq!(tab.document.path, target);
+        assert_eq!(tab.id, id);
+        assert_eq!((tab.edit.anchor, tab.edit.focus), cursor);
+        assert_eq!(tab.edit.text, "draft\nsecond\n");
+        assert!(tab.dirty());
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"\xef\xbb\xbfdraft\r\nsecond\r\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+        let layout = Layout::load(root.path()).unwrap();
+        assert_eq!(layout.files, vec![target]);
     }
 
     #[test]

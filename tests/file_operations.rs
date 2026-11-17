@@ -466,3 +466,26 @@ fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_u
         b"copied content"
     );
 }
+
+#[test]
+fn moving_a_folder_keeps_disk_bytes_and_removes_only_the_source() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("original");
+    let target = root.path().join("renamed");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("notes.txt"), b"\xef\xbb\xbffirst\r\nsecond\r\n").unwrap();
+    let outcome = OperationRequest {
+        operation: FileOperation::Move {
+            source: source.clone(),
+        },
+        target: target.clone(),
+    }
+    .execute(None)
+    .unwrap();
+    assert!(matches!(outcome, OperationOutcome::Completed { path, .. } if path == target));
+    assert!(!source.exists());
+    assert_eq!(
+        fs::read(target.join("notes.txt")).unwrap(),
+        b"\xef\xbb\xbffirst\r\nsecond\r\n"
+    );
+}
