@@ -234,7 +234,7 @@ impl Document {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub path: PathBuf,
     pub name: String,
@@ -266,4 +266,54 @@ pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)
             .then(a.name.cmp(&b.name))
     });
     Ok((root, entries))
+}
+
+/// A host tree snapshot. Only expanded folders are read; individual folder errors
+/// retain the rest of the tree so a disappearing child cannot blank its siblings.
+#[derive(Debug)]
+pub struct TreeListing {
+    pub root: PathBuf,
+    pub entries: Vec<Entry>,
+    pub errors: Vec<(PathBuf, String)>,
+}
+
+pub fn list_tree(
+    path: &Path,
+    expanded: &[PathBuf],
+    hidden: bool,
+    ignored: &[PathBuf],
+    reveal: Option<&Path>,
+) -> Result<TreeListing> {
+    let (root, entries) = list_directory(path, true)?;
+    let mut listing = TreeListing {
+        root,
+        entries: Vec::new(),
+        errors: Vec::new(),
+    };
+    let mut stack: Vec<_> = entries.into_iter().rev().collect();
+    while let Some(entry) = stack.pop() {
+        let revealed = reveal.is_some_and(|p| p.starts_with(&entry.path));
+        if !revealed
+            && ((!hidden && entry.name.starts_with('.'))
+                || ignored.iter().any(|p| entry.path.starts_with(p)))
+        {
+            continue;
+        }
+        if entry.directory && expanded.contains(&entry.path) {
+            match list_directory(&entry.path, true) {
+                Ok((_, children)) => stack.extend(children.into_iter().rev().map(|mut child| {
+                    // Preserve a symlink folder's position under the chosen root.
+                    if let Some(name) = child.path.file_name() {
+                        child.path = entry.path.join(name);
+                    }
+                    child
+                })),
+                Err(error) => listing
+                    .errors
+                    .push((entry.path.clone(), format!("{error:#}"))),
+            }
+        }
+        listing.entries.push(entry);
+    }
+    Ok(listing)
 }

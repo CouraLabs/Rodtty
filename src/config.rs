@@ -45,9 +45,27 @@ pub struct Config {
     pub scrollback: usize,
     pub history: bool,
     pub fonts: FontPreferences,
+    pub explorer: ExplorerPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ExplorerPreferences {
+    pub follow_terminal: bool,
+    pub show_hidden: bool,
+    pub respect_ignore: bool,
+}
+impl Default for ExplorerPreferences {
+    fn default() -> Self {
+        Self {
+            follow_terminal: false,
+            show_hidden: false,
+            respect_ignore: true,
+        }
+    }
 }
 
 impl Default for Config {
@@ -59,6 +77,7 @@ impl Default for Config {
             scrollback: 10_000,
             history: true,
             fonts: FontPreferences::default(),
+            explorer: ExplorerPreferences::default(),
             extra: Default::default(),
         }
     }

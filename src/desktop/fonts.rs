@@ -248,6 +248,14 @@ mod tests {
         );
         frame(&mut rt);
         let before = rect(&rt, "file-editor-1")[3];
+        let tree_label_height = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|e| e.text.as_deref() == Some("Cargo.toml"))
+                .expect("visible explorer label")
+                .rect[3]
+        };
+        let tree_before = tree_label_height(&rt);
         std::fs::write(root.path().join("settings.json"), r#"{"fonts":{"ui_family":"Rodtty Missing UI Face 1827","terminal_family":"Rodtty Missing Mono Face 1827","ui_size":16,"terminal_size":18,"editor_size":22}}"#).unwrap();
         rt.update(|s, tx| {
             s.settings_poll = Instant::now() - Duration::from_secs(1);
@@ -257,6 +265,10 @@ mod tests {
         assert!(rt.font_families().0.ends_with("\"Geist\""));
         assert!(rt.font_families().1.ends_with("\"Geist Mono\""));
         assert!(rect(&rt, "file-editor-1")[3] > before);
+        assert!(
+            tree_label_height(&rt) > tree_before,
+            "explorer labels follow UI sizing"
+        );
         assert_eq!(
             rt.elements()
                 .into_iter()
