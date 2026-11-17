@@ -6069,12 +6069,19 @@ mod tests {
         };
         git(&["init", "-b", "main"]);
         let path = root.path().join("notes.txt");
-        std::fs::write(&path, "head\n").unwrap();
+        let context = (0..80)
+            .map(|n| format!("unchanged {n}\n"))
+            .collect::<String>();
+        let head = format!("head\n{context}TAIL_HEAD\n");
+        let staged = format!("index\n{context}TAIL_INDEX\n");
+        let disk = format!("disk\n{context}TAIL_DISK\n");
+        let buffer = format!("buffer\n{context}TAIL_BUFFER\n");
+        std::fs::write(&path, &head).unwrap();
         git(&["add", "notes.txt"]);
         git(&["commit", "-m", "fixture"]);
-        std::fs::write(&path, "index\n").unwrap();
+        std::fs::write(&path, &staged).unwrap();
         git(&["add", "notes.txt"]);
-        std::fs::write(&path, "disk\n").unwrap();
+        std::fs::write(&path, &disk).unwrap();
         let index_path = root.path().join(".git/index");
         let index_before = std::fs::read(&index_path).unwrap();
         std::fs::write(
@@ -6084,7 +6091,7 @@ mod tests {
         .unwrap();
         let mut state = state(root.path());
         open(&mut state, &path);
-        state.workspace.tabs[0].edit.replace_text("buffer\n");
+        state.workspace.tabs[0].edit.replace_text(&buffer);
         let mut runtime = runtime_for(state);
         for (control, old, new) in [
             ("diff-current", "head", "buffer"),
@@ -6146,8 +6153,24 @@ mod tests {
         assert_eq!(runtime.state.workspace.diff.mode(), DiffMode::Unified);
         assert!(runtime.find("diff-next").is_some());
         assert!(runtime.find("return-terminal").is_some());
-        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "buffer\n");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "disk\n");
+        // Drive actual hunk buttons and inspect clipped rendered text, rather than
+        // asserting the diff model's private navigation cursor.
+        click(&mut runtime, "diff-next");
+        click(&mut runtime, "diff-next");
+        runtime.settle_all();
+        runtime.frame(0.0);
+        let visible_text = |rt: &rune::Runtime<State>, text: &str| {
+            rt.elements().iter().any(|e| {
+                e.text.as_deref() == Some(text) && e.visible[2] > 0.0 && e.visible[3] > 0.0
+            })
+        };
+        assert!(visible_text(&runtime, "@@ -79,4 +79,4 @@"));
+        click(&mut runtime, "diff-prev");
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(visible_text(&runtime, "head"));
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, buffer);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), disk);
         assert_eq!(std::fs::read(index_path).unwrap(), index_before);
     }
 
