@@ -1194,6 +1194,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
             ));
     }
     let danger = a.danger();
+    let dark = a.dark;
     let mut tree_style = TreeStyle::from_kit(a.kit())
         .label(ui_label(), a.ink(), a.ink())
         .radius(6.0);
@@ -1206,8 +1207,16 @@ fn explorer(s: &State, a: &Appearance) -> El {
     )
     .name("Host files")
     .style(tree_style)
-    .row(move |node, _| {
-        let item = TreeItem::new(&node.label).badge(&node.badge);
+    .row(move |node, row| {
+        let mut item = TreeItem::new(&node.label).badge(&node.badge);
+        if let Some(entry) = &node.entry {
+            item = item.icon(file_icons::resolve(
+                &entry.path,
+                entry.directory,
+                row.expanded == Some(true),
+                dark,
+            ));
+        }
         if node.entry.as_ref().is_some_and(|entry| entry.missing) {
             item.label_color(danger)
         } else {
@@ -1913,6 +1922,75 @@ pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Developer render scene for recognizable artwork, selected rows, and dirty editor tabs.
+pub(super) fn icons_demo(s: &mut State) {
+    demo(s, false);
+    let root = PathBuf::from("/workspace/icons");
+    s.workspace.directory = Some(root.clone());
+    s.workspace.address.replace_text(root.to_string_lossy());
+    s.workspace.layout.terminal = false;
+    s.workspace.entries = [
+        ("alpine", true),
+        ("alpine/Dockerfile", false),
+        ("src", true),
+        ("src/index.ts", false),
+        ("unknown-folder", true),
+        ("Dockerfile", false),
+        ("package.json", false),
+        ("main.rs", false),
+        ("types.d.ts", false),
+        ("mystery.rodttyunknown", false),
+    ]
+    .into_iter()
+    .map(|(name, directory)| Entry {
+        path: root.join(name),
+        name: PathBuf::from(name)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        directory,
+        missing: false,
+    })
+    .collect();
+    s.workspace.layout.expanded_folders = vec![root.join("alpine"), root.join("src")];
+    s.workspace.tabs.clear();
+    for (index, name) in ["main.rs", "client/index.ts", "server/index.ts"]
+        .into_iter()
+        .enumerate()
+    {
+        let saved = TextFile::decode(b"// Saved file contents\n".to_vec()).unwrap();
+        let edit = TextEdit::new(if index == 0 {
+            "// Unsaved changes remain visible beside the Rust artwork\n"
+        } else {
+            &saved.text
+        });
+        s.workspace.tabs.push(Tab {
+            id: index as u64 + 1,
+            document: Document {
+                path: root.join(name),
+                saved,
+                existed: true,
+            },
+            edit,
+            mode: View::Edit,
+            external: None,
+            disk_error: None,
+            dismissed: false,
+            saving: false,
+            revision: u64::from(index == 0),
+            baseline: 0,
+            after_save: None,
+        });
+    }
+    s.workspace.active = 0;
+    s.workspace.next_id = 4;
+    s.rebuild_tree();
+    s.workspace
+        .tree
+        .select(&root.join("main.rs").to_string_lossy());
+}
+
 /// Tooling-only scene: inspect a nested tree of the actual selected host folder.
 pub(super) fn host_tree_demo(s: &mut State) {
     let root = s.directory.clone();
@@ -1945,6 +2023,167 @@ pub(super) fn host_tree_demo(s: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn image_bytes(runtime: &rune::Runtime<State>, page: usize, uv: [f32; 4]) -> Vec<u8> {
+        let page = &runtime.images.pages[page];
+        let [x, y, w, h] = uv.map(|v| v as usize);
+        (y..y + h)
+            .flat_map(|row| {
+                let start = (row * page.width as usize + x) * 4;
+                page.data[start..start + w * 4].to_vec()
+            })
+            .collect()
+    }
+
+    fn assert_displayed_artwork(
+        runtime: &mut rune::Runtime<State>,
+        label: &str,
+        expected: &'static rune::Icon,
+    ) {
+        let elements = runtime.elements();
+        let file = elements
+            .iter()
+            .position(|e| e.role == "treeitem" && e.label.as_deref() == Some(label))
+            .unwrap_or_else(|| panic!("missing row {label}"));
+        let artwork = elements
+            .iter()
+            .find(|e| e.parent == Some(file) && e.key.as_deref() == Some("icon"))
+            .expect("artwork before the label");
+        let image = runtime
+            .instances
+            .iter()
+            .find(|i| {
+                i.params[1] == rune::render::KIND_IMAGE
+                    && (i.rect[0] - artwork.rect[0]).abs() < 1.0
+                    && (i.rect[1] - artwork.rect[1]).abs() < 1.0
+            })
+            .expect("full-color SVG image");
+        let actual = image_bytes(runtime, image.params[0] as usize, image.uv);
+        let reference = runtime
+            .text
+            .color_icon(expected, 16, Color::BLACK, false)
+            .expect("reference upstream SVG")
+            .clone();
+        let placed = runtime.images.place(&reference, [16.0, 16.0]).unwrap();
+        assert_eq!(
+            actual,
+            image_bytes(runtime, placed.page, placed.rect.map(|v| v as f32)),
+            "wrong displayed artwork for {label}: expected {}",
+            expected.name
+        );
+    }
+
+    macro_rules! artwork {
+        ($name:literal) => {{
+            static EXPECTED: rune::Icon = rune::Icon {
+                name: $name,
+                view: 32.0,
+                body: include_str!(concat!("../../assets/vscode-icons/icons/", $name)),
+            };
+            &EXPECTED
+        }};
+    }
+
+    #[test]
+    fn explorer_artwork_matches_exact_names_compound_extensions_folders_and_current_appearance() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        for name in [
+            "Dockerfile",
+            "package.json",
+            "main.rs",
+            "types.d.ts",
+            "mystery.rodttyunknown",
+        ] {
+            std::fs::write(root.path().join(name), "fixture\n").unwrap();
+        }
+        for name in ["src", "alpine", "unrecognized-folder"] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        let mut state = state(root.path());
+        state.workspace.layout.explorer = true;
+        state.config.appearance = config::Appearance::System;
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        assert_displayed_artwork(&mut runtime, "Dockerfile", artwork!("file_type_docker.svg"));
+        assert_displayed_artwork(&mut runtime, "package.json", artwork!("file_type_npm.svg"));
+        assert_displayed_artwork(
+            &mut runtime,
+            "types.d.ts",
+            artwork!("file_type_typescriptdef.svg"),
+        );
+        assert_displayed_artwork(
+            &mut runtime,
+            "mystery.rodttyunknown",
+            artwork!("default_file.svg"),
+        );
+        assert_displayed_artwork(&mut runtime, "main.rs", artwork!("file_type_rust.svg"));
+        assert_displayed_artwork(&mut runtime, "src", artwork!("folder_type_src.svg"));
+        assert_displayed_artwork(
+            &mut runtime,
+            "unrecognized-folder",
+            artwork!("default_folder.svg"),
+        );
+        click(&mut runtime, root.path().join("src").to_str().unwrap());
+        assert_displayed_artwork(&mut runtime, "src", artwork!("folder_type_src_opened.svg"));
+        runtime.set_system_dark(false);
+        runtime.frame(1.0);
+        assert_displayed_artwork(
+            &mut runtime,
+            "main.rs",
+            artwork!("file_type_light_rust.svg"),
+        );
+        assert_displayed_artwork(
+            &mut runtime,
+            "alpine",
+            artwork!("folder_type_light_alpine.svg"),
+        );
+        assert_displayed_artwork(&mut runtime, "src", artwork!("folder_type_src_opened.svg"));
+        click(&mut runtime, root.path().join("alpine").to_str().unwrap());
+        assert_displayed_artwork(
+            &mut runtime,
+            "alpine",
+            artwork!("folder_type_light_alpine_opened.svg"),
+        );
+        click(
+            &mut runtime,
+            root.path().join("unrecognized-folder").to_str().unwrap(),
+        );
+        assert_displayed_artwork(
+            &mut runtime,
+            "unrecognized-folder",
+            artwork!("default_folder_opened.svg"),
+        );
+    }
+
+    #[test]
+    fn explorer_displays_offline_file_artwork_beside_file_labels() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let mut state = state(root.path());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let runtime = runtime_for(state);
+        let elements = runtime.elements();
+        let file = elements
+            .iter()
+            .position(|e| e.role == "treeitem" && e.label.as_deref() == Some("main.rs"))
+            .unwrap();
+        let artwork = elements
+            .iter()
+            .find(|e| e.parent == Some(file) && e.key.as_deref() == Some("icon"))
+            .expect("file artwork before the label");
+        assert!(
+            runtime
+                .instances
+                .iter()
+                .any(|i| i.params[1] == rune::render::KIND_IMAGE
+                    && (i.rect[0] - artwork.rect[0]).abs() < 1.0
+                    && (i.rect[1] - artwork.rect[1]).abs() < 1.0),
+            "file artwork paints as a full-color SVG image"
+        );
+    }
     fn state(root: &std::path::Path) -> State {
         let mut state = State::with_root(root.to_owned());
         state.directory = root.to_owned();
