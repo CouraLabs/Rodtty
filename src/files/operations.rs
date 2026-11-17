@@ -253,7 +253,41 @@ fn publish(prepared: &Path, target: &Path) -> Result<()> {
         // symlink creation itself is exclusive, including dangling links.
         copy_item(prepared, target)
     } else {
-        fs::hard_link(prepared, target).context("Create destination file")
+        // Prefer the host's exclusive rename, which also works on filesystems without
+        // hard links. Tempfile falls back to a hard link on older Unix hosts; if
+        // neither is supported, reserve a new file before copying any bytes.
+        let path = tempfile::TempPath::try_from_path(prepared)?;
+        match path.persist_noclobber(target) {
+            Ok(()) => {
+                // Windows persistence normalizes attributes, including read-only.
+                #[cfg(windows)]
+                if let Err(error) = fs::set_permissions(target, metadata.permissions()) {
+                    let _ = fs::remove_file(target);
+                    return Err(error).context("Preserve destination permissions");
+                }
+                Ok(())
+            }
+            Err(prepared) => {
+                let mut source = fs::File::open(&prepared.path)?;
+                let mut destination = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(target)
+                    .context("Create destination file")?;
+                let result = (|| -> Result<()> {
+                    std::io::copy(&mut source, &mut destination).context("Copy prepared file")?;
+                    destination
+                        .set_permissions(metadata.permissions())
+                        .context("Preserve destination permissions")?;
+                    Ok(())
+                })();
+                if result.is_err() {
+                    drop(destination);
+                    let _ = fs::remove_file(target);
+                }
+                result
+            }
+        }
     }
 }
 

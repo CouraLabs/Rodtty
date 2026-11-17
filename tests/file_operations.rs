@@ -234,6 +234,33 @@ fn a_read_only_source_folder_can_be_copied_with_its_permissions_preserved() {
 }
 
 #[test]
+fn copying_a_read_only_file_preserves_contents_and_permissions_without_changing_the_source() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source.txt");
+    let target = root.path().join("copy.txt");
+    fs::write(&source, "read-only source").unwrap();
+    let original_permissions = fs::metadata(&source).unwrap().permissions();
+    let mut read_only = original_permissions.clone();
+    read_only.set_readonly(true);
+    fs::set_permissions(&source, read_only).unwrap();
+    let result = copy(&source, &target).execute(None);
+    let source_permissions = fs::metadata(&source).unwrap().permissions();
+    let target_permissions = fs::metadata(&target).map(|m| m.permissions());
+    fs::set_permissions(&source, original_permissions.clone()).unwrap();
+    if target_permissions.is_ok() {
+        fs::set_permissions(&target, original_permissions).unwrap();
+    }
+    assert!(matches!(
+        result.unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    assert!(source_permissions.readonly());
+    assert!(target_permissions.unwrap().readonly());
+    assert_eq!(fs::read_to_string(source).unwrap(), "read-only source");
+    assert_eq!(fs::read_to_string(target).unwrap(), "read-only source");
+}
+
+#[test]
 fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_ui_thread() {
     use rodtty::{
         config::Config,
