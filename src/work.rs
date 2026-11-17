@@ -30,7 +30,7 @@ impl Default for Layout {
             follow: false,
             hidden: false,
             explorer_width: 240.0,
-            editor_share: 0.52,
+            editor_share: 0.42,
             terminal: true,
             editor: true,
             files: Vec::new(),

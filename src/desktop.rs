@@ -49,6 +49,7 @@ struct State {
     commands: Vec<actions::Command>,
     palette: Option<palette::Palette>,
     palette_query: TextEdit,
+    workspace_menu: bool,
     handle: Option<rune::AppHandle<State>>,
     root: PathBuf,
     shell: Option<PathBuf>,
@@ -101,6 +102,7 @@ impl State {
             commands,
             palette: None,
             palette_query: TextEdit::new(""),
+            workspace_menu: false,
             workspace: workspace::Workspace::default(),
             handle: None,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
@@ -260,6 +262,10 @@ fn button(
     let label = label.into();
     let key = key.into();
     let help = match key.as_str() {
+        "settings" => "Open Settings",
+        "workspace-menu" => "Workspace menu",
+        "return-terminal" => "Return to terminal",
+        "new-tab" => "New terminal tab",
         "explorer-hide" => "Hide file explorer",
         "explorer-up" => "Open parent folder",
         "explorer-refresh" => "Refresh files",
@@ -442,6 +448,92 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     })
 }
 
+fn terminal_tabs(state: &State, a: &Appearance) -> El {
+    let mut tabs = row()
+        .key("tabs")
+        .w_full()
+        .h(38.0)
+        .px(8.0)
+        .gap(4.0)
+        .center_y()
+        .fill(a.panel());
+    let mut list = row()
+        .key("terminal-tabs")
+        .grow(1.0)
+        .min_w(0.0)
+        .scroll_x()
+        .gap(4.0);
+    for (i, session) in state.sessions.iter().enumerate() {
+        let exited = session
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .exit
+            .is_some();
+        list = list.child(
+            button(
+                a,
+                format!("tab-{i}"),
+                format!("{}  Terminal {}", if exited { "○" } else { "›_" }, i + 1),
+                move |s, tx| s.dispatch(AppAction::ActivateTerminal(i), tx),
+            )
+            .max_w(240.0)
+            .fill(if i == state.active {
+                a.hover_bg()
+            } else {
+                a.panel()
+            }),
+        );
+    }
+    if state.preview.is_some() {
+        list = list.child(
+            button(a, "preview-tab", "›_  Terminal", |s, tx| {
+                s.dispatch(AppAction::ShowTerminal, tx)
+            })
+            .w(168.0)
+            .fill(a.hover_bg()),
+        );
+    }
+    tabs = tabs.child(list).child(button(a, "new-tab", "+", |s, tx| {
+        s.dispatch(AppAction::NewTerminal, tx)
+    }));
+    tabs
+}
+
+fn workspace_menu_items() -> [(&'static str, &'static str, AppAction); 6] {
+    [
+        ("palette", "Command Palette…", AppAction::CommandPalette),
+        ("menu-settings", "Settings", AppAction::Settings),
+        ("find", "Find in Terminal…", AppAction::FindTerminal),
+        ("close-tab", "End Terminal Session…", AppAction::EndTerminal),
+        ("menu-close-window", "Close Window", AppAction::CloseWindow),
+        ("quit", "Quit Rodtty…", AppAction::Quit),
+    ]
+}
+
+fn workspace_menu(a: &Appearance) -> El {
+    let mut menu = col()
+        .key("workspace-menu-popover")
+        .w(276.0)
+        .px(6.0)
+        .py(6.0)
+        .gap(3.0)
+        .radius(10.0)
+        .fill(a.panel())
+        .border(1.0, a.hover_bg())
+        .modal_tx(true, |s: &mut State, tx| {
+            s.workspace_menu = false;
+            tx.focus("workspace-menu", true);
+        });
+    for (key, title, action) in workspace_menu_items() {
+        menu = menu.child(button(a, key, title, move |s, tx| s.dispatch(action, tx)).w_full());
+    }
+    el().absolute(0.0, 44.0)
+        .w_full()
+        .h_full()
+        .child(row().w_full().px(8.0).child(el().grow(1.0)).child(menu))
+}
+
 fn view(state: &State, cx: &mut Cx<State>) -> El {
     let a = &Appearance::resolve(
         state.config.theme_family,
@@ -452,128 +544,90 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     cx.focus_ring(2.0, 1.0, a.accent());
     cx.help_look(a.tooltip());
     cx.caption_color(a.ink());
-    let mut tabs = row()
-        .key("tabs")
-        .w_full()
-        .h(40.0)
-        .px(16.0)
-        .gap(6.0)
-        .center_y()
-        .fill(a.panel());
-    for (i, session) in state.sessions.iter().enumerate() {
-        let exited = session
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .exit
-            .is_some();
-        tabs = tabs.child(
-            button(
-                a,
-                format!("tab-{i}"),
-                format!("{} {}", if exited { "○" } else { "●" }, i + 1),
-                move |s, tx| s.dispatch(AppAction::ActivateTerminal(i), tx),
+    let cwd = state
+        .active()
+        .map(Session::cwd)
+        .unwrap_or_else(|| state.directory.clone());
+    let folder = state.workspace.directory.as_ref().unwrap_or(&cwd);
+    let mut root = col().key("root").w_full().h_full().fill(a.bg()).child(
+        row()
+            .key("workspace-header")
+            .w_full()
+            .h(44.0)
+            .px(12.0)
+            .gap(6.0)
+            .center_y()
+            .fill(a.panel())
+            .child(
+                text("Rodtty")
+                    .font(TextStyle::new(13.0, 600.0))
+                    .color(a.muted()),
             )
-            .border(
-                1.0,
-                if i == state.active {
-                    a.accent()
+            .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
+            .child(
+                text(
+                    folder
+                        .file_name()
+                        .unwrap_or(folder.as_os_str())
+                        .to_string_lossy(),
+                )
+                .key("active-folder")
+                .font(LABEL)
+                .color(a.ink())
+                .truncate()
+                .min_w(0.0)
+                .grow(1.0)
+                .help(folder.to_string_lossy()),
+            )
+            .child(
+                button(a, "files", "Files", |s, tx| {
+                    s.dispatch(AppAction::ToggleExplorer, tx)
+                })
+                .fill(if state.workspace.layout.explorer {
+                    a.hover_bg()
                 } else {
                     a.panel()
-                },
-            ),
-        );
-    }
-    if state.preview.is_some() {
-        tabs = tabs.child(text("●  1   Preview").font(LABEL).color(a.accent()));
-    }
-    tabs = tabs.child(button(a, "new-tab", "+  New tab", |s, tx| {
-        s.dispatch(AppAction::NewTerminal, tx)
-    }));
-    let mut root = col()
-        .key("root")
-        .w_full()
-        .h_full()
-        .fill(a.bg())
-        .child(
-            row()
-                .key("app-toolbar")
-                .w_full()
-                .h(52.0)
-                .scroll_x()
-                .px(16.0)
-                .gap(10.0)
-                .center_y()
-                .child(
-                    text("RODTTY")
-                        .font(TextStyle::new(15.0, 600.0))
-                        .color(a.ink()),
-                )
-                .child(
-                    text("WORKSPACE")
-                        .font(TextStyle::new(10.0, 500.0))
-                        .color(a.accent()),
-                )
-                .child(el().grow(1.0))
-                .child(button(a, "files", "Files", |s, tx| {
-                    s.dispatch(AppAction::ToggleExplorer, tx)
-                }))
-                .child(button(a, "toggle-terminal", "Terminal", |s, tx| {
-                    s.dispatch(AppAction::ToggleTerminal, tx)
-                }))
-                .child(button(a, "toggle-editor", "Editor", |s, tx| {
+                }),
+            )
+            .child(
+                button(a, "toggle-terminal", "Terminal", |s, tx| {
+                    if s.workspace.body_width < 880.0 {
+                        s.dispatch(AppAction::ShowTerminal, tx)
+                    } else {
+                        s.dispatch(AppAction::ToggleTerminal, tx)
+                    }
+                })
+                .fill(if state.workspace.terminal_focus {
+                    a.hover_bg()
+                } else {
+                    a.panel()
+                }),
+            )
+            .child(
+                button(a, "toggle-editor", "Editor", |s, tx| {
                     s.dispatch(AppAction::ToggleEditor, tx)
-                }))
-                .child(button(a, "find", "Find", |s, tx| {
-                    s.dispatch(AppAction::FindTerminal, tx)
-                }))
-                .child(button(a, "settings", "Settings", |s, tx| {
-                    s.dispatch(AppAction::Settings, tx)
-                }))
-                .child(button(a, "close-tab", "End session", |s, tx| {
-                    s.dispatch(AppAction::EndTerminal, tx)
-                }))
-                .child(button(a, "palette", "Actions", |s, tx| {
-                    s.dispatch(AppAction::CommandPalette, tx)
-                }))
-                .child(button(a, "quit", "Quit", |s, tx| {
-                    s.dispatch(AppAction::Quit, tx)
-                })),
-        )
-        .child(tabs);
-    if state.search {
-        root = root.child(
-            row()
-                .px(16.0)
-                .py(8.0)
-                .gap(8.0)
-                .fill(a.panel())
-                .child(
-                    text_input(&state.query, LABEL)
-                        .key("search-query")
-                        .w(320.0)
-                        .h(30.0)
-                        .color(a.ink())
-                        .caret(a.accent(), a.selection())
-                        .on_edit(|s: &mut State| &mut s.query)
-                        .on_submit(|s: &mut State, tx| {
-                            s.message = if s
-                                .active()
-                                .is_some_and(|session| session.find(&s.query.text))
-                            {
-                                "Match found".into()
-                            } else {
-                                "No match in retained scrollback".into()
-                            };
-                            tx.blur();
-                        }),
-                )
-                .child(button(a, "close-search", "Close search", |s, _| {
-                    s.search = false
-                })),
-        );
-    }
-    root = root.child(workspace::body(state, a));
+                })
+                .fill(if !state.workspace.terminal_focus {
+                    a.hover_bg()
+                } else {
+                    a.panel()
+                }),
+            )
+            .child(button(a, "settings", "⚙", |s, tx| {
+                s.dispatch(AppAction::Settings, tx)
+            }))
+            .child(button(a, "workspace-menu", "···", |s, tx| {
+                s.workspace_menu = !s.workspace_menu;
+                if s.workspace_menu {
+                    tx.focus_when_shown("palette", true);
+                }
+            })),
+    );
+    let width = cx
+        .layout_size("root")
+        .map(|r| r[0])
+        .unwrap_or(state.workspace.body_width);
+    root = root.child(workspace::body(state, a, width));
     let cwd = if state.preview.is_some() {
         PathBuf::from("~/projects")
     } else {
@@ -585,21 +639,31 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     root = root.child(
         row()
             .w_full()
-            .h(30.0)
-            .px(16.0)
+            .h(25.0)
+            .px(12.0)
             .gap(10.0)
             .center_y()
             .fill(a.panel())
-            .child(text(cwd.to_string_lossy()).font(LABEL).color(a.muted()))
+            .child(
+                text(cwd.to_string_lossy())
+                    .font(LABEL)
+                    .color(a.muted())
+                    .truncate()
+                    .min_w(0.0)
+                    .shrink(),
+            )
             .child(el().grow(1.0))
             .child(
                 text(if state.message.is_empty() {
-                    "Ctrl+Shift+P actions · Ctrl+Shift+T new tab · Ctrl+C interrupt"
+                    "Ctrl+Shift+P  Actions"
                 } else {
                     &state.message
                 })
                 .font(LABEL)
-                .color(a.muted()),
+                .color(a.muted())
+                .truncate()
+                .min_w(0.0)
+                .shrink(),
             ),
     );
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
@@ -640,6 +704,9 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     }
     if let Some(dialog) = workspace::file_dialog(state, a) {
         root = root.child(dialog);
+    }
+    if state.workspace_menu {
+        root = root.child(workspace_menu(a));
     }
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
@@ -713,6 +780,30 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if state.palette.is_some() {
         return state.palette_key(event, tx);
+    }
+    if state.workspace_menu {
+        let items = workspace_menu_items();
+        let index = items
+            .iter()
+            .position(|(key, _, _)| Some(*key) == tx.focused())
+            .unwrap_or(0);
+        match event.key {
+            Key::Escape => {
+                state.workspace_menu = false;
+                tx.focus("workspace-menu", true);
+            }
+            Key::Up | Key::Down => {
+                let next = if event.key == Key::Down {
+                    (index + 1) % items.len()
+                } else {
+                    (index + items.len() - 1) % items.len()
+                };
+                tx.focus(items[next].0, true);
+            }
+            Key::Enter => state.dispatch(items[index].2, tx),
+            _ => return false,
+        }
+        return true;
     }
     if (if cfg!(target_os = "macos") {
         event.mods.cmd
@@ -814,6 +905,12 @@ fn settings_preview(state: &mut State) {
     preview(state);
     state.open_settings(&mut Tx::default());
 }
+fn real_diff_preview(state: &mut State) {
+    preview(state);
+    if let Err(error) = workspace::real_diff_demo(state) {
+        state.message = format!("Could not render real Git fixture: {error:#}");
+    }
+}
 fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
@@ -871,6 +968,7 @@ pub fn run() -> Result<()> {
             ("preview", preview),
             ("workspace", workspace_preview),
             ("diff", diff_preview),
+            ("real-diff", real_diff_preview),
             ("palette", palette_preview),
             ("settings", settings_preview),
         ],
@@ -1216,6 +1314,44 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    #[test]
+    fn compact_workspace_menu_supports_keyboard_settings_and_palette_entry() {
+        let mut runtime = runtime();
+        assert!(runtime.find("quit").is_none());
+        assert!(runtime.find("close-tab").is_none());
+        let (x, y) = runtime.find("workspace-menu").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("workspace-menu-popover").is_some());
+        press(&mut runtime, Key::Down, Default::default());
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("workspace-menu-popover").is_none());
+        assert!(runtime.find("settings-search").is_some());
+        let (x, y) = runtime.find("workspace-menu").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Escape, Default::default());
+        assert!(runtime.find("workspace-menu-popover").is_none());
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("workspace-menu") && e.focused)
+        );
+        let (x, y) = runtime.find("workspace-menu").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_some());
+        assert!(runtime.find("workspace-menu-popover").is_none());
     }
 
     #[test]

@@ -46,6 +46,8 @@ impl Tab {
 
 pub(super) struct Workspace {
     pub terminal_focus: bool,
+    pub explorer_revealed: bool,
+    pub show_empty_editor: bool,
     orphan_edit: TextEdit,
     pub layout: Layout,
     pub tabs: Vec<Tab>,
@@ -84,6 +86,8 @@ impl Default for Workspace {
     fn default() -> Self {
         Self {
             terminal_focus: true,
+            explorer_revealed: false,
+            show_empty_editor: false,
             orphan_edit: TextEdit::new(""),
             layout: Layout::default(),
             tabs: Vec::new(),
@@ -159,7 +163,12 @@ impl State {
         }
     }
     pub(super) fn toggle_files(&mut self) {
-        self.workspace.layout.explorer = !self.workspace.layout.explorer;
+        if self.workspace.body_width < 1120.0 {
+            self.workspace.explorer_revealed = !self.workspace.explorer_revealed;
+            self.workspace.layout.explorer = true;
+        } else {
+            self.workspace.layout.explorer = !self.workspace.layout.explorer;
+        }
         if self.workspace.layout.explorer && self.workspace.directory.is_none() {
             self.navigate(
                 self.active()
@@ -196,6 +205,7 @@ impl State {
     }
     pub(super) fn activate_editor(&mut self, index: usize) {
         self.settings = false;
+        self.workspace.explorer_revealed = false;
         self.workspace.terminal_focus = false;
         self.workspace.active = index;
         self.workspace.layout.editor = true;
@@ -875,6 +885,19 @@ fn explorer(s: &State, a: &Appearance) -> El {
                 .h(28.0)
                 .gap(4.0)
                 .center_y()
+                .radius(6.0)
+                .px(6.0)
+                .fill(
+                    if workspace
+                        .tabs
+                        .get(workspace.active)
+                        .is_some_and(|t| t.document.path == entry.path)
+                    {
+                        a.hover_bg()
+                    } else {
+                        a.panel()
+                    },
+                )
                 .hover(a.hover_bg())
                 .on_press_tx(move |s: &mut State, tx| {
                     tx.blur();
@@ -913,7 +936,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
     pane
 }
 
-fn editor(s: &State, a: &Appearance) -> El {
+fn editor(s: &State, a: &Appearance, width: f32) -> El {
     let workspace = &s.workspace;
     let mut pane = col()
         .key("editor-pane")
@@ -922,7 +945,20 @@ fn editor(s: &State, a: &Appearance) -> El {
         .min_w(0.0)
         .fill(a.bg())
         .on_layout(|s: &mut State, r| s.workspace.editor_width = r[2]);
-    let mut tabs = row().h(34.0).w_full().scroll_x().fill(a.panel());
+    let mut tabs = row()
+        .key("editor-tabs")
+        .h(38.0)
+        .px(6.0)
+        .gap(3.0)
+        .center_y()
+        .w_full()
+        .scroll_x()
+        .fill(a.panel());
+    if width < 880.0 {
+        tabs = tabs.child(button(a, "return-terminal", "‹ Terminal", |s, tx| {
+            s.dispatch(AppAction::ShowTerminal, tx)
+        }));
+    }
     for (i, tab) in workspace.tabs.iter().enumerate() {
         let id = tab.id;
         let name = tab
@@ -939,14 +975,12 @@ fn editor(s: &State, a: &Appearance) -> El {
                     format!("{}{}", name, if tab.dirty() { " •" } else { "" }),
                     move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
                 )
-                .border(
-                    1.0,
-                    if i == workspace.active {
-                        a.accent()
-                    } else {
-                        a.panel()
-                    },
-                ),
+                .fill(if i == workspace.active && !s.settings {
+                    a.hover_bg()
+                } else {
+                    a.panel()
+                })
+                .help(tab.document.path.to_string_lossy()),
             )
             .child(button(
                 a,
@@ -957,9 +991,12 @@ fn editor(s: &State, a: &Appearance) -> El {
     }
     if s.settings_open {
         tabs = tabs
-            .child(button(a, "settings-tab", "Settings", |s, tx| {
-                s.dispatch(AppAction::Settings, tx)
-            }))
+            .child(
+                button(a, "settings-tab", "Settings", |s, tx| {
+                    s.dispatch(AppAction::Settings, tx)
+                })
+                .fill(if s.settings { a.hover_bg() } else { a.panel() }),
+            )
             .child(button(a, "settings-close", "×", |s, tx| {
                 s.dispatch(AppAction::CloseSettings, tx)
             }));
@@ -977,53 +1014,58 @@ fn editor(s: &State, a: &Appearance) -> El {
         );
     };
     let id = tab.id;
-    let mut controls = row()
-        .w_full()
-        .h(36.0)
-        .gap(4.0)
-        .center_y()
-        .scroll_x()
-        .child(button(
-            a,
-            "file-save",
-            if tab.saving { "Saving…" } else { "Save" },
-            move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
-        ))
-        .child(button(a, "file-edit", "Edit", |s, tx| {
+    let mut modes = row().grow(1.0).min_w(0.0).gap(2.0).scroll_x().child(
+        button(a, "file-edit", "Edit", |s, tx| {
             s.dispatch(AppAction::EditFile, tx)
-        }));
+        })
+        .h(26.0)
+        .fill(if tab.mode == View::Edit {
+            a.hover_bg()
+        } else {
+            a.bg()
+        }),
+    );
     for (key, label, mode) in [
         ("diff-current", "Current", Comparison::Current),
         ("diff-unstaged", "Unstaged", Comparison::Unstaged),
         ("diff-staged", "Staged", Comparison::Staged),
     ] {
-        controls = controls.child(
+        modes = modes.child(
             button(a, key, label, move |s, tx| {
                 s.dispatch(AppAction::Compare(mode), tx)
             })
-            .border(
-                1.0,
-                if tab.mode == View::Diff(mode) {
-                    a.accent().alpha(0.5)
-                } else {
-                    a.panel()
-                },
-            ),
+            .h(26.0)
+            .fill(if tab.mode == View::Diff(mode) {
+                a.hover_bg()
+            } else {
+                a.bg()
+            }),
         );
     }
-    controls = controls
-        .child(button(a, "file-find", "Find", |s, tx| {
-            s.dispatch(AppAction::FindEditor, tx)
-        }))
-        .child(button(a, "editor-hide", "Hide", |s, tx| {
-            s.dispatch(AppAction::ToggleEditor, tx)
-        }));
+    let controls = row()
+        .w_full()
+        .h(36.0)
+        .px(8.0)
+        .gap(6.0)
+        .center_y()
+        .child(modes)
+        .child(
+            button(
+                a,
+                "file-save",
+                if tab.saving { "Saving…" } else { "Save" },
+                move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
+            )
+            .h(26.0),
+        );
     pane = pane.child(controls).child(
         text(tab.document.path.to_string_lossy())
             .font(TextStyle::new(10.0, 400.0))
             .color(a.muted())
             .truncate()
-            .w_full(),
+            .w_full()
+            .px(10.0)
+            .py(4.0),
     );
     if let Some(error) = &tab.disk_error {
         pane = pane.child(
@@ -1229,47 +1271,103 @@ fn editor(s: &State, a: &Appearance) -> El {
     pane
 }
 
-pub(super) fn body(s: &State, a: &Appearance) -> El {
+pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
     let workspace = &s.workspace;
-    let show_editor = workspace.layout.editor && (!workspace.tabs.is_empty() || s.settings_open);
-    let terminal = workspace.layout.terminal || !show_editor;
+    let available_editor = workspace.layout.editor
+        && (!workspace.tabs.is_empty() || s.settings_open || workspace.show_empty_editor);
+    let narrow = width < 880.0;
+    let show_editor = available_editor && (!narrow || !workspace.terminal_focus);
+    let terminal = if narrow {
+        !show_editor
+    } else {
+        workspace.layout.terminal || !show_editor
+    };
+    let explorer_visible = workspace.layout.explorer
+        && width
+            >= if available_editor && workspace.layout.terminal {
+                1120.0
+            } else {
+                880.0
+            };
     let mut body = row()
         .key("workspace")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
         .on_layout(|s: &mut State, r| s.workspace.body_width = r[2]);
-    if workspace.layout.explorer {
+    if explorer_visible {
         body = body.child(explorer(s, a)).child(
             el().key("explorer-divider")
                 .w(5.0)
                 .h_full()
-                .fill(a.panel())
+                .center()
+                .child(el().w(1.0).h_full().fill(a.hover_bg()))
                 .hover(a.accent().alpha(0.3))
                 .on_drag(|s: &mut State, d, _| {
                     if d.phase == Phase::Down {
                         s.workspace.drag_width = s.workspace.layout.explorer_width;
                     }
                     s.workspace.layout.explorer_width = (s.workspace.drag_width + d.dx)
-                        .clamp(160.0, (s.workspace.body_width * 0.45).max(160.0));
+                        .clamp(160.0, (s.workspace.body_width * 0.35).max(160.0));
                 }),
         );
     }
     let mut main = row().grow(1.0).min_w(0.0).h_full().min_h(0.0);
     if terminal {
-        let pane = col()
+        let mut pane = col()
             .key("terminal-pane")
             .h_full()
             .min_h(0.0)
             .min_w(0.0)
-            .px(12.0)
-            .py(10.0)
-            .child(grid(s, a));
-        main = main.child(if show_editor {
-            pane.grow(1.0 - workspace.layout.editor_share)
+            .child(terminal_tabs(s, a));
+        if s.search {
+            pane = pane.child(
+                row()
+                    .w_full()
+                    .px(12.0)
+                    .py(6.0)
+                    .gap(6.0)
+                    .fill(a.panel())
+                    .child(
+                        text_input(&s.query, LABEL)
+                            .key("search-query")
+                            .single_line()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .h(29.0)
+                            .placeholder("Find in terminal…", a.muted())
+                            .color(a.ink())
+                            .caret(a.accent(), a.selection())
+                            .on_edit(|s: &mut State| &mut s.query)
+                            .on_submit(|s: &mut State, tx| {
+                                s.message = if s
+                                    .active()
+                                    .is_some_and(|session| session.find(&s.query.text))
+                                {
+                                    "Match found".into()
+                                } else {
+                                    "No match in retained scrollback".into()
+                                };
+                                tx.blur();
+                            }),
+                    )
+                    .child(button(a, "close-search", "×", |s, _| s.search = false)),
+            );
+        }
+        pane = pane.child(
+            col()
+                .grow(1.0)
+                .min_h(0.0)
+                .w_full()
+                .px(16.0)
+                .py(12.0)
+                .child(grid(s, a)),
+        );
+        main = main.child(pane.grow(if show_editor {
+            1.0 - workspace.layout.editor_share
         } else {
-            pane.grow(1.0)
-        });
+            1.0
+        }));
     }
     if show_editor {
         if terminal {
@@ -1277,14 +1375,15 @@ pub(super) fn body(s: &State, a: &Appearance) -> El {
                 el().key("editor-divider")
                     .w(5.0)
                     .h_full()
-                    .fill(a.panel())
+                    .center()
+                    .child(el().w(1.0).h_full().fill(a.hover_bg()))
                     .hover(a.accent().alpha(0.3))
                     .on_drag(|s: &mut State, d, _| {
                         if d.phase == Phase::Down {
                             s.workspace.drag_share = s.workspace.layout.editor_share;
                         }
                         let width = s.workspace.body_width
-                            - if s.workspace.layout.explorer {
+                            - if s.workspace.layout.explorer && s.workspace.body_width >= 1120.0 {
                                 s.workspace.layout.explorer_width + 5.0
                             } else {
                                 0.0
@@ -1294,13 +1393,17 @@ pub(super) fn body(s: &State, a: &Appearance) -> El {
                     }),
             );
         }
-        main = main.child(editor(s, a).grow(if terminal {
+        main = main.child(editor(s, a, width).grow(if terminal {
             workspace.layout.editor_share
         } else {
             1.0
         }));
     }
-    body.child(main)
+    body = body.child(main);
+    if !explorer_visible && workspace.explorer_revealed {
+        body = body.child(explorer(s, a).absolute(0.0, 0.0).border(1.0, a.hover_bg()));
+    }
+    body
 }
 
 pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
@@ -1377,7 +1480,9 @@ pub(super) fn demo(s: &mut State, diff: bool) {
         after_save: None,
     });
     s.workspace.next_id = 2;
+    s.workspace.terminal_focus = false;
     s.workspace.layout.explorer = true;
+    s.workspace.layout.editor = true;
     s.workspace.directory = Some(PathBuf::from("/workspace/rodtty"));
     s.workspace.address.replace_text("/workspace/rodtty");
     s.workspace.entries = vec![
@@ -1411,6 +1516,51 @@ pub(super) fn demo(s: &mut State, diff: bool) {
     }
 }
 
+/// Developer render scene: inspect a changed file from the real repository passed via --cwd.
+/// This uses the same read-only Git boundary as the interactive workspace.
+pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
+    let directory = s.directory.clone();
+    let repo = crate::git::inspect(&directory)?
+        .ok_or_else(|| anyhow::anyhow!("--cwd must name a Git repository"))?;
+    let path = repo
+        .files
+        .keys()
+        .find(|path| path.is_file())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("The preview repository has no changed text file"))?;
+    let document = Document::open(&path)?;
+    let result = crate::git::diff(&path, &document.saved.text, Comparison::Current)?;
+    s.workspace.tabs = vec![Tab {
+        id: 1,
+        edit: TextEdit::new(&document.saved.text),
+        document,
+        mode: View::Diff(Comparison::Current),
+        external: None,
+        disk_error: None,
+        dismissed: false,
+        saving: false,
+        revision: 0,
+        baseline: 0,
+        after_save: None,
+    }];
+    s.workspace.next_id = 2;
+    s.workspace.terminal_focus = false;
+    s.workspace.layout.explorer = true;
+    s.workspace.layout.editor = true;
+    s.workspace.terminal_focus = false;
+    s.workspace.directory = Some(directory.clone());
+    s.workspace
+        .address
+        .replace_text(directory.to_string_lossy());
+    s.workspace.entries = crate::files::list_directory(&directory, false)?.1;
+    s.workspace.repo = Some(repo);
+    s.workspace.diff = DiffState::new(rune_kit::diff::parse(&result.patch));
+    s.workspace.diff_label = result.label;
+    s.workspace.diff_patch = result.patch;
+    s.workspace.worker = Some(Worker::new(s.wake.clone()));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1434,6 +1584,106 @@ mod tests {
     fn open(state: &mut State, path: &std::path::Path) {
         state.open_file(path.to_owned());
         wait(state, |s| !s.workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn responsive_workspace_keeps_editor_contents_and_remembers_pane_widths() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("notes.txt");
+        std::fs::write(&path, "saved notes").unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        state.workspace.tabs[0].edit.insert("draft ");
+        state.workspace.layout.explorer = true;
+        state.workspace.layout.explorer_width = 224.0;
+        state.workspace.layout.editor_share = 0.4;
+        let draft = state.workspace.tabs[0].edit.text.clone();
+        let mut runtime = runtime_for(state);
+        assert!(runtime.find("explorer").is_some());
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("editor-pane").is_some());
+        runtime.set_viewport((1000.0, 700.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_none());
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("editor-pane").is_some());
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("editor-pane").is_some());
+        assert!(runtime.find("terminal-pane").is_none());
+        let (x, y) = runtime.find("return-terminal").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("editor-pane").is_none());
+        let (x, y) = runtime.find("toggle-editor").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        assert!(runtime.find("editor-pane").is_some());
+        assert!(runtime.find("terminal-pane").is_none());
+        runtime.set_viewport((1200.0, 700.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_some());
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("editor-pane").is_some());
+        assert_eq!(runtime.state.workspace.layout.explorer_width, 224.0);
+        assert_eq!(runtime.state.workspace.layout.editor_share, 0.4);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "saved notes");
+    }
+
+    #[test]
+    fn new_workspace_keeps_the_explorer_beside_the_terminal_until_space_is_needed() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(root.path());
+        state.workspace.layout.explorer = true;
+        // Older saved workspaces may request an editor without any open files.
+        state.workspace.layout.editor = true;
+        let mut runtime = runtime_for(state);
+        runtime.set_viewport((1000.0, 600.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_some());
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("editor-pane").is_none());
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_none());
+        let (x, y) = runtime.find("files").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_some());
+        let (x, y) = runtime.find("settings").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_none());
+        assert!(runtime.find("settings-search").is_some());
+        assert!(runtime.find("terminal-pane").is_none());
+        let (x, y) = runtime.find("return-terminal").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.state.settings_open);
+        runtime.set_viewport((1200.0, 700.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        assert!(runtime.find("explorer").is_some());
+        assert!(runtime.find("terminal-pane").is_some());
+        assert!(runtime.find("settings-search").is_some());
     }
 
     #[test]
@@ -1735,6 +1985,100 @@ mod tests {
         state.workspace.layout.follow = true;
         state.workspace_poll(&mut Tx::default());
         assert_eq!(state.workspace.directory.as_deref(), Some(child.as_path()));
+    }
+
+    #[test]
+    fn workspace_controls_inspect_current_unstaged_and_staged_git_without_writes() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.test",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-b", "main"]);
+        let path = root.path().join("notes.txt");
+        std::fs::write(&path, "head\n").unwrap();
+        git(&["add", "notes.txt"]);
+        git(&["commit", "-m", "fixture"]);
+        std::fs::write(&path, "index\n").unwrap();
+        git(&["add", "notes.txt"]);
+        std::fs::write(&path, "disk\n").unwrap();
+        let index_path = root.path().join(".git/index");
+        let index_before = std::fs::read(&index_path).unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        state.workspace.tabs[0].edit.replace_text("buffer\n");
+        let mut runtime = runtime_for(state);
+        for (control, old, new) in [
+            ("diff-current", "head", "buffer"),
+            ("diff-unstaged", "index", "disk"),
+            ("diff-staged", "head", "index"),
+        ] {
+            let (x, y) = runtime.find(control).unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.0);
+            runtime.update(|s, _| wait(s, |s| !s.workspace.diff_patch.is_empty()));
+            runtime.settle_all();
+            runtime.frame(0.0);
+            assert!(runtime.find("git-diff").is_some());
+            assert!(runtime.find("file-editor-1").is_none());
+            assert!(
+                runtime
+                    .state
+                    .workspace
+                    .diff_patch
+                    .contains(&format!("-{old}\n"))
+            );
+            assert!(
+                runtime
+                    .state
+                    .workspace
+                    .diff_patch
+                    .contains(&format!("+{new}\n"))
+            );
+        }
+        let (x, y) = runtime.find("diff-split").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        runtime.update(|s, tx| {
+            s.workspace_poll(tx);
+        });
+        assert_eq!(runtime.state.workspace.diff.mode(), DiffMode::Split);
+        let (x, y) = runtime.find("diff-auto").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        runtime.settle_all();
+        runtime.frame(0.0);
+        runtime.update(|s, tx| {
+            s.workspace_poll(tx);
+        });
+        runtime.frame(0.0);
+        assert_eq!(runtime.state.workspace.diff.mode(), DiffMode::Unified);
+        assert!(runtime.find("diff-next").is_some());
+        assert!(runtime.find("return-terminal").is_some());
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "buffer\n");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "disk\n");
+        assert_eq!(std::fs::read(index_path).unwrap(), index_before);
     }
 
     #[test]
