@@ -127,6 +127,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
+        } else if section == "Files" {
+            matches(
+                s,
+                section,
+                "explorer follow terminal show hidden files respect ignore rules",
+            )
         } else if section == "Bundled Commands" {
             profile::utility_names()
                 .iter()
@@ -265,6 +271,45 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     .color(a.muted())
                     .wrap(),
                 );
+            }
+            "Files" => {
+                for (key, title, enabled, action) in [
+                    (
+                        "settings-explorer-follow",
+                        "Follow Terminal",
+                        s.config.explorer.follow_terminal,
+                        AppAction::ToggleFollow,
+                    ),
+                    (
+                        "settings-explorer-hidden",
+                        "Show hidden files",
+                        s.config.explorer.show_hidden,
+                        AppAction::ToggleHidden,
+                    ),
+                    (
+                        "settings-explorer-ignore",
+                        "Respect Git ignore rules",
+                        s.config.explorer.respect_ignore,
+                        AppAction::ToggleIgnore,
+                    ),
+                ] {
+                    if matches(s, section, title) {
+                        group = group.child(button(
+                            a,
+                            key,
+                            format!("{title}: {}", if enabled { "on" } else { "off" }),
+                            move |s, tx| s.dispatch(action, tx),
+                        ));
+                    }
+                }
+                group = group.child(button(
+                    a,
+                    "reset-explorer-preferences",
+                    "Reset file preferences",
+                    |s, _| {
+                        s.save_config(|config| config.explorer = Default::default());
+                    },
+                ));
             }
             "Bundled Commands" => {
                 for name in profile::utility_names() {

@@ -29,10 +29,18 @@ pub(super) enum AppAction {
     Compare(Comparison),
     CloseWindow,
     Quit,
+    ExplorerRootAddress,
+    ExplorerSetRoot,
+    ExplorerTerminalRoot,
+    ExplorerReveal,
+    ExplorerFocus,
+    ExplorerCollapseAll,
+    ExplorerOpenSelection,
     ExplorerParent,
     RefreshExplorer,
     ToggleFollow,
     ToggleHidden,
+    ToggleIgnore,
 }
 
 pub(super) struct Command {
@@ -151,6 +159,42 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             AppAction::PasteTerminal,
         ),
         (
+            "explorer-root",
+            "Explorer: Choose Root Folder",
+            "",
+            AppAction::ExplorerRootAddress,
+        ),
+        (
+            "explorer-terminal-root",
+            "Explorer: Use Terminal Folder as Root",
+            "",
+            AppAction::ExplorerTerminalRoot,
+        ),
+        (
+            "explorer-reveal",
+            "Explorer: Reveal Terminal Folder",
+            "",
+            AppAction::ExplorerReveal,
+        ),
+        (
+            "explorer-focus",
+            "Explorer: Focus Tree",
+            "",
+            AppAction::ExplorerFocus,
+        ),
+        (
+            "explorer-collapse",
+            "Explorer: Collapse All Folders",
+            "",
+            AppAction::ExplorerCollapseAll,
+        ),
+        (
+            "explorer-open",
+            "Explorer: Open Selected Item",
+            "",
+            AppAction::ExplorerOpenSelection,
+        ),
+        (
             "explorer-parent",
             "Explorer: Open Parent Folder",
             "",
@@ -173,6 +217,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             "Explorer: Toggle Hidden Files",
             "",
             AppAction::ToggleHidden,
+        ),
+        (
+            "explorer-ignore",
+            "Explorer: Toggle Ignore Rules",
+            "",
+            AppAction::ToggleIgnore,
         ),
         (
             "settings",
@@ -422,6 +472,42 @@ impl State {
             }
             AppAction::CloseWindow => self.request_action(workspace::Action::Window, tx),
             AppAction::Quit => self.request_action(workspace::Action::Quit, tx),
+            AppAction::ExplorerRootAddress => {
+                self.workspace.layout.explorer = true;
+                tx.focus_when_shown("explorer-address", true);
+            }
+            AppAction::ExplorerSetRoot => {
+                let path = PathBuf::from(&self.workspace.address.text);
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    self.workspace
+                        .directory
+                        .as_ref()
+                        .unwrap_or(&self.directory)
+                        .join(path)
+                };
+                self.navigate(path);
+            }
+            AppAction::ExplorerTerminalRoot => {
+                let cwd = self
+                    .active()
+                    .map(Session::cwd)
+                    .unwrap_or_else(|| self.directory.clone());
+                self.navigate(cwd);
+                self.workspace.layout.explorer = true;
+            }
+            AppAction::ExplorerReveal => {
+                self.workspace.layout.explorer = true;
+                self.reveal_terminal(tx);
+            }
+            AppAction::ExplorerFocus => {
+                self.workspace.layout.explorer = true;
+                self.workspace.terminal_focus = false;
+                tx.focus_when_shown("file-list", false);
+            }
+            AppAction::ExplorerCollapseAll => self.collapse_tree(),
+            AppAction::ExplorerOpenSelection => self.open_tree_selection(),
             AppAction::ExplorerParent => {
                 if let Some(parent) = self
                     .workspace
@@ -437,12 +523,13 @@ impl State {
                 self.workspace.last_scan = Instant::now() - Duration::from_secs(3)
             }
             AppAction::ToggleFollow => {
-                self.workspace.layout.follow = !self.workspace.layout.follow;
-                self.workspace.last_follow = None;
+                self.save_config(|c| c.explorer.follow_terminal = !c.explorer.follow_terminal);
             }
             AppAction::ToggleHidden => {
-                self.workspace.layout.hidden = !self.workspace.layout.hidden;
-                self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+                self.save_config(|c| c.explorer.show_hidden = !c.explorer.show_hidden);
+            }
+            AppAction::ToggleIgnore => {
+                self.save_config(|c| c.explorer.respect_ignore = !c.explorer.respect_ignore);
             }
         }
     }

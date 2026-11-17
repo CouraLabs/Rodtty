@@ -31,9 +31,9 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 - The terminal displays ANSI colors, Unicode, alternate-screen applications, and a cursor; supports resizing, selection, clipboard paste/copy, and scrollback search.
 - Closing the window keeps sessions running. Relaunching Rodtty or using its tray entry reopens the same instance. Ending a tab or selecting Quit requires confirmation. A computer restart creates fresh sessions.
 
-Select **Files** to open the explorer at the active terminal's directory. Browse folders using the list, Up button, or folder path field. It navigates independently by default; **Follow** tracks subsequent terminal directory changes. The `.*` button includes hidden files, and Git status badges show changed/untracked entries.
+Select **Files** to open the explorer at the active terminal's directory. Expand folders in place and use the Up button or folder path field for explicit root changes. **Follow** reveals the terminal directory inside the chosen root and offers a root-change action outside it. **Hidden** includes hidden files, **Ignore** respects Git ignore rules, and Git status badges show changed/untracked entries.
 
-Select a file to open an editor tab beside the terminal. Drag the pane dividers to resize the explorer and editor. **Terminal**, **Editor**, and **Hide** control pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
+Double-click a file, or select it and press Enter, to open an editor tab beside the terminal. Drag the pane dividers to resize the explorer and editor. **Terminal**, **Editor**, and **Hide** control pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
 
 The editor provides syntax highlighting, undo/redo, find/replace, and save. It edits UTF-8 files up to 2 MiB, preserves BOMs and line endings, and checks for external changes approximately once a second. Clean buffers reload automatically; dirty buffers retain their edits and offer Reload or Keep edits. A conflicting save requires explicit Overwrite. Closing a dirty tab/window or quitting offers Save / Discard / Cancel.
 
@@ -83,13 +83,25 @@ With history enabled, commands append to the shared history file at each prompt.
   "appearance": "system",
   "disabled": ["rm"],
   "scrollback": 10000,
-  "history": true
+  "history": true,
+  "explorer": { "follow_terminal": false, "show_hidden": false, "respect_ignore": true }
 }
 ```
 
 New tabs inherit the active tab's directory but begin with the host environment and Rodtty-specific startup file. Host Bash/Zsh startup files are loaded only when explicitly sourced. Startup-file PATH changes are followed by prepending the session's managed utility directory.
 
 Command selection configures a convenience environment. Explicit host executable paths and arbitrary host programs remain available; it is not a sandbox. The exact limits of deliberate shell/environment overrides are recorded in the feasibility report.
+
+The explorer keeps one chosen host folder as its root. Click folders to expand them;
+use the arrow keys, Home/End, Page Up/Down, or type a name to select an item.
+Enter opens the selected file through the shared file-opening action. Use the path
+field or the command palette to choose a new root. Follow Terminal reveals its
+current directory within that root and offers an explicit root change when it
+moves outside. The explorer continues to browse host files while using SSH.
+Hidden-file, Git-ignore and Follow Terminal preferences live in `settings.json`
+and are also available under Files in Settings. Root and expanded folders live in
+`workspace-state.json`; refresh retains expansion and selection. File and Git scans
+run on the file worker, with loading and folder errors shown in the explorer.
 
 ## Validation
 
@@ -102,7 +114,7 @@ cargo test --locked --test terminal real_vim_accepts_keyboard_input_and_saves_a_
 
 The last check requires an installed `vim`. CI defines native Linux, Windows, and macOS jobs. Those jobs have not run until the workflow is published and executed.
 
-Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery):
+Render the workspace with labelled sample content (`preview` shows only the terminal, `workspace` includes the editor, `diff` includes Git-style changes, and `palette` shows action discovery; `tree` reads nested folders from the actual host startup location):
 
 ```sh
 target/debug/rodtty --scene workspace --snap target/workspace-preview.png --size 1440x860 --scale 1
