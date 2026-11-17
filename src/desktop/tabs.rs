@@ -10,6 +10,7 @@ pub(super) enum Target {
 }
 
 pub(super) struct Tabs {
+    pub context_open: bool,
     pub settings_position: usize,
     pub preview_root: Option<tempfile::TempDir>,
     terminal_scroll: Rc<Cell<f32>>,
@@ -20,6 +21,7 @@ pub(super) struct Tabs {
 impl Default for Tabs {
     fn default() -> Self {
         Self {
+            context_open: false,
             preview_root: None,
             settings_position: usize::MAX,
             rects: HashMap::new(),
@@ -181,43 +183,49 @@ pub(super) fn interactive(tab: El, target: Target) -> El {
         }
     })
     .on_secondary_press(move |s: &mut State, point, tx| {
-        let Some((index, count)) = s.tab_index(target) else {
-            return;
-        };
-        let mut menu = rune::PopupMenu::new();
-        if matches!(target, Target::Terminal(_)) {
-            menu = menu.item(rune::PopupItem::new("new", "New terminal tab"));
-        } else if matches!(target, Target::Editor(_)) {
-            menu = menu.item(rune::PopupItem::new("save", "Save file"));
-        }
-        menu = menu
-            .item(rune::PopupItem::new("left", "Move tab left").enabled(index > 0))
-            .item(rune::PopupItem::new("right", "Move tab right").enabled(index + 1 < count))
-            .separator()
-            .item(rune::PopupItem::new("close", "Close tab"));
-        tx.popup_menu(menu, point, move |s: &mut State, chosen, tx| {
-            let action = match chosen {
-                Some("new") => Some(AppAction::NewTerminal),
-                Some("save") => match target {
-                    Target::Editor(id) => Some(AppAction::SaveEditor(Some(id))),
-                    _ => None,
-                },
-                Some("close") => Some(close(target)),
-                Some("left" | "right") => s.tab_index(target).map(|(i, n)| {
-                    AppAction::MoveTab(
-                        target,
-                        if chosen == Some("left") {
-                            i.saturating_sub(1)
-                        } else {
-                            (i + 1).min(n - 1)
-                        },
-                    )
-                }),
-                _ => None,
-            };
-            if let Some(action) = action {
-                s.dispatch(action, tx);
-            }
-        });
+        context_menu(s, target, point, tx);
     })
+}
+
+pub(super) fn context_menu(s: &mut State, target: Target, point: rune::PointerPress, tx: &mut Tx) {
+    let Some((index, count)) = s.tab_index(target) else {
+        return;
+    };
+    let mut menu = rune::PopupMenu::new();
+    if matches!(target, Target::Terminal(_)) {
+        menu = menu.item(rune::PopupItem::new("new", "New terminal tab"));
+    } else if matches!(target, Target::Editor(_)) {
+        menu = menu.item(rune::PopupItem::new("save", "Save file"));
+    }
+    menu = menu
+        .item(rune::PopupItem::new("left", "Move tab left").enabled(index > 0))
+        .item(rune::PopupItem::new("right", "Move tab right").enabled(index + 1 < count))
+        .separator()
+        .item(rune::PopupItem::new("close", "Close tab"));
+    s.tab_strips.context_open = true;
+    tx.popup_menu(menu, point, move |s: &mut State, chosen, tx| {
+        s.tab_strips.context_open = false;
+        let action = match chosen {
+            Some("new") => Some(AppAction::NewTerminal),
+            Some("save") => match target {
+                Target::Editor(id) => Some(AppAction::SaveEditor(Some(id))),
+                _ => None,
+            },
+            Some("close") => Some(close(target)),
+            Some("left" | "right") => s.tab_index(target).map(|(i, n)| {
+                AppAction::MoveTab(
+                    target,
+                    if chosen == Some("left") {
+                        i.saturating_sub(1)
+                    } else {
+                        (i + 1).min(n - 1)
+                    },
+                )
+            }),
+            _ => None,
+        };
+        if let Some(action) = action {
+            s.dispatch(action, tx);
+        }
+    });
 }

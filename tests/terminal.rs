@@ -468,7 +468,7 @@ fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_sta
 fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     let root = tempfile::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
-    let title = format!("Agent 日本語 — {}", "long application title ".repeat(12));
+    let title = format!("Agent; 日本語 — {};;", "long application title ".repeat(12));
     run(
         &terminal,
         &format!("printf '\\033]2;{}\\007'", title),
@@ -480,13 +480,23 @@ fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     );
     run(
         &terminal,
-        "printf '\\033]0;Second app title\\033\\\\'",
+        "printf '\\033]0;Second; app 日本語; title\\033\\\\'",
         "TITLE_CHANGED",
     );
     assert_eq!(
         terminal.state.lock().unwrap().parser.callbacks().title,
-        "Second app title"
+        "Second; app 日本語; title"
     );
+    let child = root.path().join("project; 日本語;");
+    std::fs::create_dir(&child).unwrap();
+    run(
+        &terminal,
+        &format!("cd {}", rodtty::profile::quote(&child).unwrap()),
+        "TITLE_DIRECTORY_CHANGED",
+    );
+    assert_eq!(terminal.cwd(), child);
+    assert_eq!(terminal.tab_title(), "Second; app 日本語; title");
     run(&terminal, "printf '\\033]2;\\007'", "TITLE_CLEARED");
     assert_eq!(terminal.state.lock().unwrap().parser.callbacks().title, "");
+    assert_eq!(terminal.tab_title(), "›_  Term project; 日本語;");
 }

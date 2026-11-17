@@ -27,16 +27,25 @@ impl vt100::Callbacks for TerminalEvents {
         self.title = String::from_utf8_lossy(title).into_owned();
     }
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
-        if params.first() == Some(&b"7".as_slice())
-            && let Some(path) = params
-                .get(1)
-                .and_then(|p| std::str::from_utf8(p).ok())
-                .and_then(|p| p.strip_prefix("file://localhost"))
-        {
-            let path = PathBuf::from(path);
-            if path.is_dir() {
-                self.cwd = Some(path);
+        match params {
+            // vt100 routes OSC 0/2 here when semicolons split the title into
+            // additional parameters. They belong to the title, not its syntax.
+            [b"0" | b"2", title @ ..] if !title.is_empty() => {
+                self.title = String::from_utf8_lossy(&title.join(&b';')).into_owned();
             }
+            [b"7", location @ ..] if !location.is_empty() => {
+                let location = location.join(&b';');
+                if let Some(path) = std::str::from_utf8(&location)
+                    .ok()
+                    .and_then(|p| p.strip_prefix("file://localhost"))
+                {
+                    let path = PathBuf::from(path);
+                    if path.is_dir() {
+                        self.cwd = Some(path);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     fn unhandled_csi(
