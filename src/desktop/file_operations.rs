@@ -274,16 +274,19 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 );
             }
             content = content.child(text("Name").font(ui_label()).color(a.muted())).child(
-                text_input(&s.workspace.operation_name,ui_label()).key("operation-name").label("File or folder name").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_name).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                text_input(&s.workspace.operation_name,ui_label()).key("operation-name").label("File or folder name").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).fill(a.bg()).border(1.0,a.hover_bg()).radius(5.0).px(8.0).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_name).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
                 .child(text("Destination folder").font(ui_label()).color(a.muted())).child(
-                text_input(&s.workspace.operation_destination,ui_label()).key("operation-destination").label("Destination folder").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_destination).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                text_input(&s.workspace.operation_destination,ui_label()).key("operation-destination").label("Destination folder").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).fill(a.bg()).border(1.0,a.hover_bg()).radius(5.0).px(8.0).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_destination).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
                 .child(text("Choose an existing host folder. Relative paths start at the explorer root.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {
                 content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
             }
-            buttons = buttons.child(button(a, "operation-submit", verb, |s, tx| {
-                s.submit_file_operation(tx)
-            }));
+            buttons = buttons.child(
+                button(a, "operation-submit", verb, |s, tx| {
+                    s.submit_file_operation(tx)
+                })
+                .border(1.0, a.accent()),
+            );
         }
         OperationPrompt::Collision(collision) => {
             content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
@@ -308,4 +311,25 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .py(16.0)
             .child(content.child(buttons)),
     )
+}
+
+/// Labelled renderer scene, using a temporary sample rather than any owner file.
+pub(super) fn collision_demo(s: &mut State) {
+    let Ok(root) = tempfile::Builder::new()
+        .prefix("rodtty-copy-preview-")
+        .tempdir()
+    else {
+        return;
+    };
+    let target = root.path().join("notes.txt");
+    if std::fs::write(&target, "existing preview notes").is_err() {
+        return;
+    }
+    let request = OperationRequest {
+        operation: FileOperation::CreateFile,
+        target,
+    };
+    if let Ok(OperationOutcome::Collision(collision)) = request.execute(None) {
+        s.pending = Some(Pending::Operation(OperationPrompt::Collision(collision)));
+    }
 }

@@ -961,6 +961,10 @@ fn real_diff_preview(state: &mut State) {
         state.message = format!("Could not render real Git fixture: {error:#}");
     }
 }
+fn file_collision_preview(state: &mut State) {
+    workspace_preview(state);
+    file_operations::collision_demo(state);
+}
 fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
@@ -1020,6 +1024,7 @@ pub fn run() -> Result<()> {
             ("diff", diff_preview),
             ("real-diff", real_diff_preview),
             ("palette", palette_preview),
+            ("file-collision", file_collision_preview),
             ("tree", tree_preview),
             ("settings", settings_preview),
         ],
