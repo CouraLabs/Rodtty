@@ -22,6 +22,13 @@ pub(super) enum FilePrompt {
     Unsaved { id: u64, action: Action },
     Conflict { id: u64, after: Option<Action> },
 }
+struct DeferredSaveConflict {
+    id: u64,
+    token: u64,
+    revision: u64,
+    baseline: u64,
+    after: Option<Action>,
+}
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum View {
     Edit,
@@ -58,6 +65,7 @@ pub(super) struct TreeEntry {
 pub(super) struct Workspace {
     pub autosave_preferences: config::AutosavePreferences,
     pub autosave_context: Option<u64>,
+    deferred_save_conflicts: Vec<DeferredSaveConflict>,
     pub terminal_focus: bool,
     pub explorer_revealed: bool,
     pub show_empty_editor: bool,
@@ -130,6 +138,7 @@ impl Default for Workspace {
         Self {
             autosave_preferences: Default::default(),
             autosave_context: None,
+            deferred_save_conflicts: Vec::new(),
             terminal_focus: true,
             explorer_revealed: false,
             show_empty_editor: false,
@@ -1195,6 +1204,10 @@ impl State {
                     }
                 }
                 Event::Save { id, token, result } => {
+                    let prompt_available = !self.application_overlay_open()
+                        && self.pending.is_none()
+                        && self.workspace.removal.is_none()
+                        && !self.workspace.operation_busy;
                     if let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id)
                         && tab.saving
                         && tab.save_token == token
@@ -1219,8 +1232,27 @@ impl State {
                                 self.invalidate_diff(false);
                             }
                             Err(SaveFailure::Conflict) => {
-                                self.pending =
-                                    Some(Pending::File(FilePrompt::Conflict { id, after }));
+                                if prompt_available
+                                    || matches!(self.pending, Some(Pending::File(FilePrompt::Unsaved {id: current, ..} | FilePrompt::Conflict {id: current, ..})) if current == id)
+                                {
+                                    self.pending =
+                                        Some(Pending::File(FilePrompt::Conflict { id, after }));
+                                } else {
+                                    // A background save must not replace another
+                                    // file's active Save/Discard/Cancel decision.
+                                    self.workspace
+                                        .deferred_save_conflicts
+                                        .retain(|conflict| conflict.id != id);
+                                    self.workspace.deferred_save_conflicts.push(
+                                        DeferredSaveConflict {
+                                            id,
+                                            token,
+                                            revision: tab.revision,
+                                            baseline: tab.baseline,
+                                            after,
+                                        },
+                                    );
+                                }
                                 self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
                             }
                             Err(SaveFailure::Io(error)) => {
@@ -1442,6 +1474,31 @@ impl State {
         if self.workspace.diff.mode() != mode {
             self.workspace.diff.set_mode(mode);
             changed = true;
+        }
+        if self.pending.is_none()
+            && !self.application_overlay_open()
+            && !self.workspace.operation_busy
+            && self.workspace.removal.is_none()
+            && !self.shutdown_saved
+        {
+            while !self.workspace.deferred_save_conflicts.is_empty() {
+                let conflict = self.workspace.deferred_save_conflicts.remove(0);
+                if self.workspace.tabs.iter().any(|tab| {
+                    tab.id == conflict.id
+                        && tab.save_token == conflict.token
+                        && tab.revision == conflict.revision
+                        && tab.baseline == conflict.baseline
+                        && tab.dirty()
+                        && !tab.saving
+                }) {
+                    self.pending = Some(Pending::File(FilePrompt::Conflict {
+                        id: conflict.id,
+                        after: conflict.after,
+                    }));
+                    changed = true;
+                    break;
+                }
+            }
         }
         changed |= self.poll_autosave(tx);
         tx.wake_after(Duration::from_millis(200));
@@ -4812,6 +4869,135 @@ mod tests {
         press(&mut runtime, Key::Enter, Default::default());
         assert!(runtime.find("command-palette").is_some());
         assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[test]
+    fn autosave_conflict_waits_for_another_files_close_decision() {
+        use super::super::tests::runtime_for;
+        for newer_edit in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let a = root.path().join("a.txt");
+            let b = root.path().join("b.txt");
+            std::fs::write(&a, "a original").unwrap();
+            std::fs::write(&b, "b original").unwrap();
+            std::fs::write(
+                root.path().join("settings.json"),
+                r#"{"autosave":{"policy":"after_delay","delay_ms":100}}"#,
+            )
+            .unwrap();
+            let mut state = state(root.path());
+            open(&mut state, &a);
+            state.open_file(b.clone());
+            wait(&mut state, |s| s.workspace.tabs.len() == 2);
+            let mut runtime = runtime_for(state);
+            runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+            runtime.frame(0.0);
+            fill(&mut runtime, "file-editor-1", "a draft");
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            std::fs::write(&a, "a external").unwrap();
+            std::thread::sleep(Duration::from_millis(130));
+            // Enqueue the due save; keep its real worker result undrained while the
+            // owner makes a close decision in another file.
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            assert!(runtime.state.workspace.tabs[0].saving);
+            runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(1), tx));
+            runtime.frame(0.0);
+            fill(&mut runtime, "file-editor-2", "b draft");
+            runtime.update(|s, tx| s.dispatch(AppAction::CloseEditor(Some(2)), tx));
+            pump_autosave(&mut runtime, Duration::from_millis(50));
+            assert!(matches!(
+                runtime.state.pending,
+                Some(Pending::File(FilePrompt::Unsaved { id: 2, .. }))
+            ));
+            assert_eq!(std::fs::read_to_string(&a).unwrap(), "a external");
+            assert_eq!(std::fs::read_to_string(&b).unwrap(), "b original");
+            click(&mut runtime, "file-cancel");
+            if newer_edit {
+                runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+                runtime.frame(0.0);
+                fill(&mut runtime, "file-editor-1", "a newer draft");
+                pump_autosave(&mut runtime, Duration::from_millis(50));
+                assert!(
+                    runtime.state.pending.is_none(),
+                    "the older queued conflict must expire when the editor generation changes"
+                );
+            }
+            wait_runtime(&mut runtime, |s| {
+                matches!(
+                    s.pending,
+                    Some(Pending::File(FilePrompt::Conflict { id: 1, .. }))
+                )
+            });
+            assert_eq!(
+                runtime.state.workspace.tabs[0].edit.text,
+                if newer_edit {
+                    "a newer draft"
+                } else {
+                    "a draft"
+                }
+            );
+            assert_eq!(runtime.state.workspace.tabs[1].edit.text, "b draft");
+            click(&mut runtime, "file-cancel");
+            pump_autosave(&mut runtime, Duration::from_millis(150));
+            assert!(runtime.find("file-dialog").is_none());
+        }
+    }
+
+    #[test]
+    fn autosave_keeps_preview_edit_promotion_undo_redo_and_find_replace() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("draft.txt");
+        std::fs::write(&path, "original").unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"after_delay","delay_ms":100}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, path.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        assert!(runtime.state.workspace.tabs[0].preview);
+        fill(&mut runtime, "file-editor-1", "draft token");
+        assert!(!runtime.state.workspace.tabs[0].preview);
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft token");
+        let command = rune::Mods {
+            cmd: true,
+            ctrl: true,
+            ..Default::default()
+        };
+        press(&mut runtime, Key::Command('z'), command);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "original");
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        press(
+            &mut runtime,
+            Key::Command('z'),
+            rune::Mods {
+                shift: true,
+                ..command
+            },
+        );
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "draft token");
+        assert!(!runtime.state.workspace.tabs[0].dirty());
+        runtime.update(|s, tx| s.dispatch(AppAction::ReplaceEditor, tx));
+        runtime.frame(0.0);
+        fill(&mut runtime, "editor-find", "token");
+        fill(&mut runtime, "editor-replace", "replacement");
+        click(&mut runtime, "replace-all");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft replacement");
+        assert!(!runtime.state.workspace.tabs[0].preview);
     }
 
     #[cfg(target_os = "linux")]
