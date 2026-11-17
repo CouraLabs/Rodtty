@@ -1,0 +1,43 @@
+--- a/src/kit.rs
++++ b/src/kit.rs
+@@ -228,6 +228,10 @@
+ 
+ #[derive(Clone, Debug)]
+ pub struct Kit {
++    /// Optional app-authored syntax roles shared by editors and diffs.
++    pub syntax: Option<crate::syntax::SyntaxTheme>,
++    /// Optional selection color authored for this appearance.
++    pub selection_color: Option<Color>,
+     pub dark: bool,
+     pub c: Palette,
+     pub elevation: Elevation,
+@@ -278,7 +282,7 @@
+     /// The text selection highlight of the kit's fields. Pass it to `El::selection_color` on
+     /// `El::selectable` text so its selection looks the same.
+     pub fn selection(&self) -> Color {
+-        self.alpha(self.c.text_accent, 0.3)
++        self.selection_color.unwrap_or_else(|| self.alpha(self.c.text_accent, 0.3))
+     }
+ 
+     /// A straight-alpha colour as painted on `backdrop`: re-solved for that surface when the
+--- a/src/neutral.rs
++++ b/src/neutral.rs
+@@ -135,6 +135,8 @@
+                 disclosure: tok::motion::DEFAULT,
+             },
+             blend_over: None,
++            syntax: None,
++            selection_color: None,
+             ring: None,
+             invalid_text: false,
+         }
+--- a/src/syntax.rs
++++ b/src/syntax.rs
+@@ -407,6 +407,7 @@
+     /// The hues are fixed rather than taken from the theme's status colours: those vary too much
+     /// between themes (OpenCode's "info" is magenta) to keep the token kinds apart.
+     pub fn from_kit(k: &Kit) -> SyntaxTheme {
++        if let Some(theme) = &k.syntax { return theme.clone(); }
+         let c = &k.c;
+         let text_l = c.text_base.to_oklab()[0];
+         let (l, chroma) =

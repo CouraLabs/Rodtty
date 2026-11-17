@@ -121,15 +121,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         "Bundled Commands",
     ] {
         let visible = if section == "Appearance" {
-            matches(
-                s,
-                section,
-                "theme family Catppuccin Latte Mocha Light Dark System palette",
-            ) || matches(
-                s,
-                section,
-                "font size ui font family terminal font family installed monospace preview",
-            )
+            matches(s, section, THEME_SEARCH)
+                || matches(
+                    s,
+                    section,
+                    "font size ui font family terminal font family installed monospace preview",
+                )
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
@@ -208,38 +205,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             group = group.child(sizes.child(buttons));
         }
         match section {
-            "Appearance"
-                if matches(
-                    s,
-                    section,
-                    "theme family Catppuccin Latte Mocha Light Dark System palette",
-                ) =>
-            {
-                use crate::config::{Appearance as Mode, ThemeFamily};
-                let mut families = row().gap(6.0).scroll_x();
-                for &family in ThemeFamily::ALL {
-                    families = families.child(
-                        button(
-                            a,
-                            format!("theme-family-{}", family.label()),
-                            family.label(),
-                            move |s, _| s.save_config(|c| c.theme_family = family),
-                        )
-                        .role("radio")
-                        .checked(s.config.theme_family == family)
-                        .border(
-                            1.0,
-                            if s.config.theme_family == family {
-                                a.accent()
-                            } else {
-                                a.panel()
-                            },
-                        ),
-                    );
-                }
+            "Appearance" if matches(s, section, THEME_SEARCH) => {
+                use crate::config::Appearance as Mode;
                 group = group
                     .child(text("Theme family").font(ui_label()).color(a.muted()))
-                    .child(families)
+                    .child(family_picker(s, a, &mut Vec::new()))
                     .child(button(a, "reset-theme-family", "Reset family", |s, _| {
                         s.save_config(|c| c.theme_family = Config::default().theme_family);
                     }));
@@ -265,15 +235,25 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         ),
                     );
                 }
-                group = group.child(choices)
-                    .child(text(format!("{} · applies immediately", a.name)).font(ui_label()).color(a.muted()).wrap())
+                group = group
+                    .child(choices)
+                    .child(
+                        text(format!("{} · applies immediately", a.name))
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap(),
+                    )
                     .child(palette_preview(s.config.theme_family, Mode::Light))
                     .child(palette_preview(s.config.theme_family, Mode::Dark))
                     .child(button(a, "reset-appearance", "Reset appearance", |s, _| {
                         s.save_config(|c| c.appearance = Config::default().appearance);
                     }))
-                    .child(text("Catppuccin palette © 2021 Catppuccin · MIT · github.com/catppuccin/palette")
-                        .font(ui_label()).color(a.muted()).wrap_anywhere());
+                    .child(
+                        text(a.notes)
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap_anywhere(),
+                    );
             }
             "Appearance" | "Editor" => {}
             "Terminal" => {
@@ -438,6 +418,64 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
     page.child(list)
 }
 
+const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Light Dark System palette";
+
+fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::ThemeFamily;
+    let options: Vec<_> = ThemeFamily::ALL
+        .iter()
+        .map(|family| rune_kit::ComboboxOption {
+            id: family.label().into(),
+            label: family.label().into(),
+            detail: match family {
+                ThemeFamily::OneDarkPro => "Rodtty light adaptation / Dark",
+                ThemeFamily::Gruvbox => "Medium contrast Light / Dark",
+                ThemeFamily::Dracula => "Alucard / Dracula",
+                ThemeFamily::NightOwl => "Light Owl / Night Owl",
+                ThemeFamily::Catppuccin => "Latte / Mocha",
+                ThemeFamily::TokyoNight => "Light / Night",
+                _ => "Light / Dark",
+            }
+            .into(),
+            disabled: false,
+        })
+        .collect();
+    rune_kit::Combobox::new(
+        "theme-family",
+        &s.theme_family_picker,
+        &options,
+        |s: &mut State| {
+            s.font_ui.close();
+            s.font_terminal.close();
+            &mut s.theme_family_picker
+        },
+    )
+    .label("Theme family")
+    .current(Some(s.config.theme_family.label()))
+    .search_placeholder("Search nine theme families")
+    .width(280.0)
+    .max_height(256.0)
+    .on_choose(|s, label, _| {
+        if let Some(&family) = ThemeFamily::ALL.iter().find(|f| f.label() == label) {
+            s.save_config(|c| c.theme_family = family);
+        }
+    })
+    .build(a.kit(), layers)
+    .w(280.0)
+}
+
+pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
+    let mut layers = Vec::new();
+    if s.settings
+        && !s.application_overlay_open()
+        && workspace::pane_visibility(s, width).2
+        && matches(s, "Appearance", THEME_SEARCH)
+    {
+        let _ = family_picker(s, a, &mut layers);
+    }
+    layers
+}
+
 fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appearance) -> El {
     let p = Appearance::resolve(family, mode, false);
     let mut swatches = row().gap(3.0);
@@ -510,6 +548,355 @@ mod tests {
             "canvas {actual:?}, expected {hex}"
         );
     }
+    #[test]
+    fn owner_selects_dracula_family_and_keeps_both_appearances_on_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        click(&mut runtime, "settings");
+        runtime.update(|s, _| s.settings_query.replace_text("theme"));
+        runtime.frame(0.0);
+        click(&mut runtime, "theme-family-trigger");
+        click(&mut runtime, "theme-family-option-Dracula");
+        assert_canvas(&runtime, "#282a36");
+        click(&mut runtime, "appearance-light");
+        assert_canvas(&runtime, "#fffbeb");
+        let reopened = self::runtime(root.path());
+        assert_canvas(&reopened, "#fffbeb");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["theme_family"], "dracula");
+        assert_eq!(saved["appearance"], "light");
+    }
+
+    #[test]
+    fn all_nine_families_apply_both_previews_live_system_json_and_independent_resets() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("theme"));
+        rt.frame(0.0);
+        // Independently specified upstream canvas values, not derived from the resolver.
+        let families = [
+            (
+                "Catppuccin",
+                "catppuccin",
+                "#eff1f5",
+                "#1e1e2e",
+                "Catppuccin Latte",
+                "Catppuccin Mocha",
+            ),
+            (
+                "Dracula",
+                "dracula",
+                "#fffbeb",
+                "#282a36",
+                "Dracula Alucard",
+                "Dracula",
+            ),
+            (
+                "Tokyo Night",
+                "tokyo_night",
+                "#e6e7ed",
+                "#1a1b26",
+                "Tokyo Night Light",
+                "Tokyo Night Night",
+            ),
+            (
+                "Nord",
+                "nord",
+                "#eceff4",
+                "#2e3440",
+                "Nord Light",
+                "Nord Dark",
+            ),
+            (
+                "Gruvbox",
+                "gruvbox",
+                "#fbf1c7",
+                "#282828",
+                "Gruvbox Light (medium)",
+                "Gruvbox Dark (medium)",
+            ),
+            (
+                "One Dark Pro",
+                "one_dark_pro",
+                "#fafafa",
+                "#282c34",
+                "One Dark Pro Light (Rodtty adaptation)",
+                "One Dark Pro Dark",
+            ),
+            (
+                "Night Owl",
+                "night_owl",
+                "#fbfbfb",
+                "#011627",
+                "Light Owl",
+                "Night Owl",
+            ),
+            ("Ayu", "ayu", "#fafafa", "#0a0e14", "Ayu Light", "Ayu Dark"),
+            (
+                "Solarized",
+                "solarized",
+                "#fdf6e3",
+                "#002b36",
+                "Solarized Light",
+                "Solarized Dark",
+            ),
+        ];
+        assert_eq!(crate::config::ThemeFamily::ALL.len(), 9);
+        for (label, json_name, light, dark, light_name, dark_name) in families {
+            click(&mut rt, "theme-family-trigger");
+            rt.paste(label);
+            for _ in 0..45 {
+                rt.frame(1.0 / 60.0);
+            }
+            click(&mut rt, &format!("theme-family-option-{label}"));
+            for name in [light_name, dark_name] {
+                assert!(
+                    rt.elements()
+                        .iter()
+                        .any(|e| e.text.as_deref() == Some(name)),
+                    "missing preview {name}"
+                );
+            }
+            for (control, value, canvas) in [
+                ("appearance-light", "light", light),
+                ("appearance-dark", "dark", dark),
+            ] {
+                click(&mut rt, control);
+                assert_canvas(&rt, canvas);
+                let saved: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(root.path().join("settings.json")).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(saved["theme_family"], json_name);
+                assert_eq!(saved["appearance"], value);
+                assert_canvas(&runtime(root.path()), canvas);
+            }
+            click(&mut rt, "appearance-system");
+            for size in [(680.0, 800.0), (1400.0, 1000.0)] {
+                rt.set_viewport(size, 1.0);
+                for (host_dark, canvas) in [(false, light), (true, dark)] {
+                    rt.set_system_dark(host_dark);
+                    for _ in 0..45 {
+                        rt.frame(1.0 / 60.0);
+                    }
+                    assert_canvas(&rt, canvas);
+                    assert!(rt.find("theme-family-trigger").is_some());
+                }
+            }
+            // External JSON changes enter through the actual file polling boundary.
+            let mut external = Config::load(root.path()).unwrap();
+            external.appearance = crate::config::Appearance::Light;
+            external.save(root.path()).unwrap();
+            rt.update(|s, _| {
+                s.settings_poll = Instant::now() - Duration::from_secs(1);
+                s.poll_settings();
+            });
+            for _ in 0..45 {
+                rt.frame(1.0 / 60.0);
+            }
+            assert_canvas(&rt, light);
+            click(&mut rt, "reset-appearance");
+            assert_canvas(&rt, dark);
+            assert_eq!(
+                Config::load(root.path()).unwrap().theme_family.label(),
+                label
+            );
+            click(&mut rt, "reset-theme-family");
+            assert_canvas(&rt, "#1e1e2e");
+            assert_eq!(
+                Config::load(root.path()).unwrap().appearance,
+                crate::config::Appearance::System
+            );
+        }
+    }
+
+    #[test]
+    fn every_family_recolors_rendered_ansi_without_rewriting_program_rgb_or_terminal_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        rt.update(|s, _| {
+            let mut parser = vt100::Parser::new(8, 30, 0);
+            parser.process(
+                b"\x1b[41m \x1b[101m \x1b[48;5;196m \x1b[48;2;12;34;56m \x1b[0m output stays",
+            );
+            s.preview = Some(parser.screen().clone());
+            s.selection = Some(((1, 0), (1, 5)));
+        });
+        // Normal / bright red literals from the pinned primary palettes; custom light
+        // ANSI pairs are the explicitly documented Rodtty adaptation contracts.
+        for (family, light, dark) in [
+            ("catppuccin", ["#d20f39", "#de293e"], ["#f38ba8", "#f37799"]),
+            ("dracula", ["#cb3a2a", "#cb3a2a"], ["#ff5555", "#ff6e6e"]),
+            (
+                "tokyo_night",
+                ["#8c4351", "#8c4351"],
+                ["#f7768e", "#f7768e"],
+            ),
+            ("nord", ["#994950", "#994950"], ["#bf616a", "#bf616a"]),
+            ("gruvbox", ["#cc241d", "#9d0006"], ["#cc241d", "#fb4934"]),
+            (
+                "one_dark_pro",
+                ["#c23f4a", "#c23f4a"],
+                ["#e05561", "#ff616e"],
+            ),
+            ("night_owl", ["#de3d3b", "#de3d3b"], ["#EF5350", "#EF5350"]),
+            ("ayu", ["#f07171", "#f07171"], ["#f07178", "#f07178"]),
+            ("solarized", ["#dc322f", "#cb4b16"], ["#dc322f", "#cb4b16"]),
+        ] {
+            for (mode, expected) in [("light", light), ("dark", dark)] {
+                let config: Config = serde_json::from_value(
+                    serde_json::json!({"theme_family":family,"appearance":mode}),
+                )
+                .unwrap();
+                config.save(root.path()).unwrap();
+                rt.update(|s, _| {
+                    s.settings_poll = Instant::now() - Duration::from_secs(1);
+                    s.poll_settings();
+                });
+                for _ in 0..45 {
+                    rt.frame(1.0 / 60.0);
+                }
+                let terminal = rt.presented("terminal").unwrap().0;
+                let metrics = rt.state.terminal_metrics;
+                for (column, expected) in [expected[0], expected[1], "#ff0000", "#0c2238"]
+                    .iter()
+                    .enumerate()
+                {
+                    let x = terminal[0] + (column as f32 + 0.5) * metrics.width;
+                    let fill = rt
+                        .instances
+                        .iter()
+                        .find(|i| {
+                            (i.rect[1] - terminal[1]).abs() < 0.01
+                                && i.rect[3] == metrics.height
+                                && i.rect[0] <= x
+                                && x < i.rect[0] + i.rect[2]
+                                && i.rect[2] < 2.0 * metrics.width
+                        })
+                        .expect("rendered terminal cell")
+                        .fill;
+                    let c = rune::theme::hex(expected).unwrap();
+                    assert_eq!(
+                        fill,
+                        [c.r, c.g, c.b, c.a],
+                        "{family} {mode} column {column}"
+                    );
+                }
+                assert_eq!(rt.state.selection, Some(((1, 0), (1, 5))));
+            }
+        }
+    }
+
+    #[test]
+    fn ayu_light_settings_labels_remain_readable_on_the_light_canvas() {
+        let root = tempfile::tempdir().unwrap();
+        let config: Config =
+            serde_json::from_value(serde_json::json!({"theme_family":"ayu","appearance":"light"}))
+                .unwrap();
+        config.save(root.path()).unwrap();
+        let mut rt = runtime(root.path());
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("theme"));
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        let label = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Theme family"))
+            .unwrap()
+            .rect;
+        let glyph = rt
+            .instances
+            .iter()
+            .find(|i| {
+                i.params[1] == rune::render::KIND_GLYPH
+                    && i.rect[0] >= label[0]
+                    && i.rect[0] < label[0] + label[2]
+                    && i.rect[1] >= label[1]
+                    && i.rect[1] < label[1] + label[3]
+            })
+            .expect("drawn theme label");
+        let luminance = |c: [f32; 4]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let fg = luminance(glyph.fill);
+        let bg = luminance(rt.clear_color());
+        assert!(
+            (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05) >= 4.5,
+            "theme label contrast: {:?}",
+            glyph.fill
+        );
+    }
+
+    #[test]
+    fn editor_and_read_only_diff_draw_the_selected_familys_keyword_palette() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        for (family, light, dark) in [
+            ("catppuccin", "#8839ef", "#cba6f7"),
+            ("dracula", "#a3144d", "#ff79c6"),
+            ("tokyo_night", "#65359d", "#bb9af7"),
+            ("one_dark_pro", "#884bb3", "#c678dd"),
+            ("night_owl", "#994cc3", "#c792ea"),
+        ] {
+            for (mode, expected) in [("light", light), ("dark", dark)] {
+                let config: Config = serde_json::from_value(
+                    serde_json::json!({"theme_family":family,"appearance":mode}),
+                )
+                .unwrap();
+                config.save(root.path()).unwrap();
+                for diff in [false, true] {
+                    rt.update(move |s, _| {
+                        s.settings_poll = Instant::now() - Duration::from_secs(1);
+                        s.poll_settings();
+                        s.workspace.tabs.clear();
+                        workspace::demo(s, diff);
+                    });
+                    for _ in 0..45 {
+                        rt.frame(1.0 / 60.0);
+                    }
+                    let c = rune::theme::hex(expected).unwrap();
+                    assert!(
+                        rt.instances
+                            .iter()
+                            .any(|i| i.params[1] == rune::render::KIND_GLYPH
+                                && i.fill == [c.r, c.g, c.b, c.a]),
+                        "missing {family} {mode} keyword in diff={diff}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_settings_theme_dropdown_is_searchable_and_selectable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        rt.set_viewport((680.0, 800.0), 1.0);
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "settings");
+        rt.update(|s, _| s.settings_query.replace_text("theme"));
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "theme-family-trigger");
+        assert!(rt.find("theme-family-option-Dracula").is_some());
+        rt.paste("solar");
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+        click(&mut rt, "theme-family-option-Solarized");
+        assert_canvas(&rt, "#002b36");
+        assert_eq!(
+            Config::load(root.path()).unwrap().theme_family.label(),
+            "Solarized"
+        );
+    }
+
     #[test]
     fn owner_changes_and_resets_independent_live_font_sizes() {
         let root = tempfile::tempdir().unwrap();

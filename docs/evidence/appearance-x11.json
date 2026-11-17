@@ -1,0 +1,14 @@
+{
+  "appearance_changes_preserved_session": true,
+  "arch": "x86_64",
+  "family_mode_changes": 27,
+  "os": "linux",
+  "output_after_appearance_change": true,
+  "output_while_closed": true,
+  "passed": true,
+  "reopened_from_second_launch": true,
+  "same_session": true,
+  "theme_families_preserved_session": 9,
+  "window_backend": "Xlib",
+  "window_closed": true
+}

@@ -8,12 +8,51 @@ use std::path::{Path, PathBuf};
 pub enum ThemeFamily {
     #[default]
     Catppuccin,
+    Dracula,
+    TokyoNight,
+    Nord,
+    Gruvbox,
+    OneDarkPro,
+    NightOwl,
+    Ayu,
+    Solarized,
 }
 impl ThemeFamily {
-    pub const ALL: &[Self] = &[Self::Catppuccin];
+    pub const ALL: &[Self] = &[
+        Self::Catppuccin,
+        Self::Dracula,
+        Self::TokyoNight,
+        Self::Nord,
+        Self::Gruvbox,
+        Self::OneDarkPro,
+        Self::NightOwl,
+        Self::Ayu,
+        Self::Solarized,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Self::Catppuccin => "Catppuccin",
+            Self::Dracula => "Dracula",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Nord => "Nord",
+            Self::Gruvbox => "Gruvbox",
+            Self::OneDarkPro => "One Dark Pro",
+            Self::NightOwl => "Night Owl",
+            Self::Ayu => "Ayu",
+            Self::Solarized => "Solarized",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Catppuccin => "catppuccin",
+            Self::Dracula => "dracula",
+            Self::TokyoNight => "tokyonight",
+            Self::Nord => "nord",
+            Self::Gruvbox => "gruvbox",
+            Self::OneDarkPro => "onedarkpro",
+            Self::NightOwl => "nightowl",
+            Self::Ayu => "ayu",
+            Self::Solarized => "solarized",
         }
     }
 }
