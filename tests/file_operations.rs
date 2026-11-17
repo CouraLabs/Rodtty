@@ -489,3 +489,186 @@ fn moving_a_folder_keeps_disk_bytes_and_removes_only_the_source() {
         b"\xef\xbb\xbffirst\r\nsecond\r\n"
     );
 }
+
+#[test]
+fn renaming_an_item_to_its_existing_name_is_a_successful_noop() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("notes.txt");
+    fs::write(&source, "notes").unwrap();
+    assert!(matches!(OperationRequest {
+        operation: FileOperation::Move { source: source.clone() },
+        target: source.clone(),
+    }.execute(None).unwrap(), OperationOutcome::Completed { path, .. } if path == source));
+    assert_eq!(fs::read_to_string(source).unwrap(), "notes");
+}
+
+#[cfg(unix)]
+#[test]
+fn renaming_a_readonly_folder_preserves_its_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("file"), "retained").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+    let outcome = OperationRequest {
+        operation: FileOperation::Move {
+            source: source.clone(),
+        },
+        target: target.clone(),
+    }
+    .execute(None);
+    let result = outcome
+        .as_ref()
+        .is_ok_and(|o| matches!(o, OperationOutcome::Completed { .. }));
+    // Always restore fixture permissions, including when the operation fails.
+    let actual = if target.exists() { &target } else { &source };
+    let mode = fs::metadata(actual).unwrap().permissions().mode() & 0o777;
+    fs::set_permissions(actual, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result, "{outcome:?}");
+    assert_eq!(mode, 0o555);
+    assert!(!source.exists());
+    assert_eq!(fs::read_to_string(target.join("file")).unwrap(), "retained");
+}
+
+#[test]
+fn moving_requires_current_collision_versions_and_cancel_does_not_remove_the_source() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source.txt");
+    let target = root.path().join("target.txt");
+    fs::write(&source, "source version one").unwrap();
+    fs::write(&target, "target version one").unwrap();
+    let request = OperationRequest {
+        operation: FileOperation::Move {
+            source: source.clone(),
+        },
+        target: target.clone(),
+    };
+    let ticket = collision(request.clone());
+    fs::write(&source, "source version two").unwrap();
+    let renewed = match request
+        .clone()
+        .execute(Some((ticket, CollisionChoice::Replace)))
+        .unwrap()
+    {
+        OperationOutcome::Collision(ticket) => ticket,
+        other => panic!("changed source must renew the decision: {other:?}"),
+    };
+    assert_eq!(fs::read_to_string(&source).unwrap(), "source version two");
+    fs::write(&target, "target version two").unwrap();
+    let renewed = match request
+        .clone()
+        .execute(Some((renewed, CollisionChoice::Replace)))
+        .unwrap()
+    {
+        OperationOutcome::Collision(ticket) => ticket,
+        other => panic!("changed destination must renew the decision: {other:?}"),
+    };
+    assert!(matches!(
+        request
+            .clone()
+            .execute(Some((renewed, CollisionChoice::Cancel)))
+            .unwrap(),
+        OperationOutcome::Cancelled
+    ));
+    assert_eq!(fs::read_to_string(&source).unwrap(), "source version two");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "target version two");
+    let ticket = collision(request.clone());
+    assert!(matches!(
+        request
+            .execute(Some((ticket, CollisionChoice::Replace)))
+            .unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    assert!(!source.exists());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "source version two");
+    assert_eq!(
+        fs::read_dir(root.path()).unwrap().count(),
+        1,
+        "operation staging is cleaned"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn moving_across_filesystems_uses_safe_publication_without_following_symlink_loops() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    // Deliberately use a different host filesystem for this small operation
+    // fixture; Session/PTY profiles continue using the suite's target TMPDIR.
+    let destination = tempfile::Builder::new()
+        .prefix("rodtty-move-volume-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    if fs::metadata(root.path()).unwrap().dev() == fs::metadata(destination.path()).unwrap().dev() {
+        return;
+    }
+    let source = root.path().join("source");
+    let target = destination.path().join("target");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("file.txt"), b"\xef\xbb\xbfmove\r\n").unwrap();
+    fs::set_permissions(source.join("file.txt"), fs::Permissions::from_mode(0o640)).unwrap();
+    symlink(".", source.join("loop")).unwrap();
+    assert!(matches!(
+        OperationRequest {
+            operation: FileOperation::Move {
+                source: source.clone()
+            },
+            target: target.clone(),
+        }
+        .execute(None)
+        .unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    assert!(!source.exists());
+    assert_eq!(
+        fs::read(target.join("file.txt")).unwrap(),
+        b"\xef\xbb\xbfmove\r\n"
+    );
+    assert_eq!(
+        fs::metadata(target.join("file.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+    assert_eq!(fs::read_link(target.join("loop")).unwrap(), Path::new("."));
+    assert_eq!(
+        fs::read_dir(root.path()).unwrap().count(),
+        0,
+        "source quarantine cleaned"
+    );
+    assert_eq!(
+        fs::read_dir(destination.path()).unwrap().count(),
+        1,
+        "destination stage cleaned"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn moving_a_selected_link_keeps_its_referent_and_moves_only_the_link() {
+    let root = tempfile::tempdir().unwrap();
+    let referent = root.path().join("referent.txt");
+    let source = root.path().join("source-link");
+    let target = root.path().join("target-link");
+    fs::write(&referent, "original referent").unwrap();
+    std::os::unix::fs::symlink(&referent, &source).unwrap();
+    assert!(matches!(
+        OperationRequest {
+            operation: FileOperation::Move {
+                source: source.clone()
+            },
+            target: target.clone(),
+        }
+        .execute(None)
+        .unwrap(),
+        OperationOutcome::Completed { .. }
+    ));
+    assert!(fs::symlink_metadata(source).is_err());
+    assert!(fs::symlink_metadata(&target).unwrap().is_symlink());
+    assert_eq!(fs::read_link(target).unwrap(), referent);
+    assert_eq!(fs::read_to_string(referent).unwrap(), "original referent");
+}

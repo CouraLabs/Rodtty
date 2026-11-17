@@ -64,6 +64,20 @@ impl OperationRequest {
             .file_name()
             .context("Enter a file or folder name")?;
         let mut target = parent.join(name);
+        if let FileOperation::Move { source } = &self.operation {
+            let original = source
+                .parent()
+                .context("Source has no parent")?
+                .canonicalize()?
+                .join(source.file_name().context("Source has no name")?);
+            if original == target {
+                fs::symlink_metadata(source).context("Read source")?;
+                return Ok(OperationOutcome::Completed {
+                    request: self,
+                    path: target,
+                });
+            }
+        }
         let source_version = match &self.operation {
             FileOperation::Move { source } => fingerprint(source)?,
             _ => None,
@@ -127,6 +141,20 @@ impl OperationRequest {
                 bail!("A copy cannot replace a folder containing its source. Choose Keep Both.");
             }
         }
+        // Prefer the host's exclusive rename. This preserves object identity and
+        // handles read-only source folders without needing to alter their mode.
+        // Filesystems without this primitive retain the staged-copy fallback.
+        if !replace && let FileOperation::Move { source } = &self.operation {
+            if fingerprint(source)? != source_version {
+                bail!("Source changed while preparing the move. Try again.");
+            }
+            if rename_exclusive(source, &target)? {
+                return Ok(OperationOutcome::Completed {
+                    request: self,
+                    path: target,
+                });
+            }
+        }
         // Finish the potentially expensive/fallible copy before touching a destination.
         let stage = OperationStage(Some(
             tempfile::Builder::new()
@@ -150,34 +178,41 @@ impl OperationRequest {
             if fingerprint(source)? != source_version {
                 bail!("Source changed while preparing the move. Try again.");
             }
-            let moved = MoveSource::take(source)?;
-            if fingerprint(&moved.path())? != source_version {
-                bail!("Source changed while preparing the move. Try again.");
-            }
-            Some(moved)
+            Some(MoveSource::take(source, source_version)?)
         } else {
             None
         };
-        let backup = stage.path().join("previous");
-        if replace {
-            // Recheck after staging as another process may have changed the target meanwhile.
-            if fingerprint(&target)? != existing {
-                bail!(
-                    "Destination changed while preparing the operation. Try again to review the new version."
-                );
-            }
-            fs::rename(&target, &backup).context("Preserve existing destination")?;
-        }
-        if let Err(error) = publish(&prepared, &target) {
+        let publication = (|| -> Result<()> {
+            let backup = stage.path().join("previous");
             if replace {
-                // Never overwrite an item another process created while publication failed.
-                if fs::symlink_metadata(&target).is_ok() || fs::rename(&backup, &target).is_err() {
-                    let recovery = stage.keep();
+                // Recheck after staging as another process may have changed the target meanwhile.
+                if fingerprint(&target)? != existing {
                     bail!(
-                        "{error:#}. Previous destination preserved at {}",
-                        recovery.join("previous").display()
+                        "Destination changed while preparing the operation. Try again to review the new version."
                     );
                 }
+                fs::rename(&target, &backup).context("Preserve existing destination")?;
+            }
+            if let Err(error) = publish(&prepared, &target) {
+                if replace {
+                    // Never overwrite an item another process created while publication failed.
+                    if fs::symlink_metadata(&target).is_ok()
+                        || fs::rename(&backup, &target).is_err()
+                    {
+                        let recovery = stage.keep();
+                        bail!(
+                            "{error:#}. Previous destination preserved at {}",
+                            recovery.join("previous").display()
+                        );
+                    }
+                }
+                return Err(error);
+            }
+            Ok(())
+        })();
+        if let Err(error) = publication {
+            if let Some(moved) = &mut moved {
+                moved.restore().with_context(|| format!("{error:#}"))?;
             }
             return Err(error);
         }
@@ -191,6 +226,44 @@ impl OperationRequest {
     }
 }
 
+/// Return false when the host/filesystem needs the staged move fallback.
+fn rename_exclusive(source: &Path, target: &Path) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use nix::libc;
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let source = CString::new(source.as_os_str().as_bytes())?;
+        let target = CString::new(target.as_os_str().as_bytes())?;
+        // Both C strings stay alive for the syscall; no pointer escapes it.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                libc::AT_FDCWD,
+                target.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP | libc::EXDEV)
+        ) {
+            return Ok(false);
+        }
+        return Err(error).context("Move source without replacing destination");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (source, target);
+        Ok(false)
+    }
+}
+
 /// A quarantined source remains recoverable until publication succeeds.
 struct MoveSource {
     source: PathBuf,
@@ -198,38 +271,58 @@ struct MoveSource {
     committed: bool,
 }
 impl MoveSource {
-    fn take(source: &Path) -> Result<Self> {
+    fn take(source: &Path, version: Option<u64>) -> Result<Self> {
         let stage = OperationStage(Some(
             tempfile::Builder::new()
                 .prefix(".rodtty-move-")
                 .tempdir_in(source.parent().context("Source has no parent")?)?,
         ));
         fs::rename(source, stage.path().join("item")).context("Preserve move source")?;
-        Ok(Self {
+        let mut moved = Self {
             source: source.to_owned(),
             stage: Some(stage),
             committed: false,
-        })
+        };
+        let checked = fingerprint(&moved.path());
+        if !matches!(&checked, Ok(current) if *current == version) {
+            moved
+                .restore()
+                .context("Source changed while preparing the move")?;
+            checked?;
+            bail!("Source changed while preparing the move. Try again.");
+        }
+        Ok(moved)
     }
     fn path(&self) -> PathBuf {
         self.stage.as_ref().unwrap().path().join("item")
     }
 }
+impl MoveSource {
+    fn restore(&mut self) -> Result<()> {
+        let path = self.path();
+        let restored = (|| -> Result<()> {
+            if !rename_exclusive(&path, &self.source)? {
+                publish(&path, &self.source)?;
+            }
+            Ok(())
+        })();
+        self.committed = true;
+        if let Err(error) = restored {
+            let recovery = self.stage.take().unwrap().keep();
+            bail!(
+                "Could not restore move source: {error:#}. Original preserved at {}",
+                recovery.join("item").display()
+            );
+        }
+        Ok(())
+    }
+}
 impl Drop for MoveSource {
     fn drop(&mut self) {
-        if !self.committed {
-            let path = self.path();
-            if fs::symlink_metadata(&self.source).is_ok()
-                || fs::rename(&path, &self.source).is_err()
-            {
-                // An external writer may have recreated the source. Never overwrite
-                // it, and never discard the quarantined original in that case.
-                let recovery = self.stage.take().unwrap().keep();
-                eprintln!(
-                    "Move rollback retained original at {}",
-                    recovery.join("item").display()
-                );
-            }
+        if !self.committed
+            && let Err(error) = self.restore()
+        {
+            eprintln!("{error:#}");
         }
     }
 }
@@ -456,6 +549,11 @@ fn fingerprint(path: &Path) -> Result<Option<u64>> {
     metadata.len().hash(&mut hash);
     metadata.modified().ok().hash(&mut hash);
     metadata.permissions().readonly().hash(&mut hash);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode().hash(&mut hash);
+    }
     if metadata.is_symlink() {
         fs::read_link(path)?.hash(&mut hash);
     } else if metadata.is_dir() {
