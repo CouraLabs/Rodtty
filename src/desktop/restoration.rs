@@ -479,4 +479,29 @@ mod tests {
         runtime.pointer_up(x, y);
         runtime.frame(0.0);
     }
+
+    #[test]
+    fn cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(fixture.path().into());
+        state.directory = fixture.path().into();
+        state.restore_startup();
+        let mut runtime =
+            rune::Runtime::new(state, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+        runtime.frame(0.0);
+        runtime.update(|s, tx| {
+            s.dispatch(AppAction::ToggleEditor, tx);
+            s.dispatch(AppAction::ToggleExplorer, tx);
+            s.persist_workspace();
+        });
+        drop(runtime);
+        let mut fresh = fixture_state(fixture.path().into());
+        fresh.directory = fixture.path().into();
+        fresh.restore_startup();
+        let mut runtime =
+            rune::Runtime::new(fresh, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+        runtime.frame(0.0);
+        assert!(runtime.find("editor-pane").is_some());
+        assert!(runtime.find("file-list").is_some());
+    }
 }

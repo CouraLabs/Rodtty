@@ -94,6 +94,7 @@ pub(super) struct Workspace {
     restore_active: Option<PathBuf>,
     restore_editor: Option<bool>,
     restore_focus: Option<bool>,
+    restore_explorer: Option<bool>,
     pub(super) restoration_warnings: Vec<String>,
     pub(super) last_persist: Instant,
     last_saved: Option<Vec<u8>>,
@@ -162,6 +163,7 @@ impl Default for Workspace {
             restore_active: None,
             restore_editor: None,
             restore_focus: None,
+            restore_explorer: None,
             restoration_warnings: Vec::new(),
             last_persist: Instant::now(),
             last_saved: None,
@@ -197,6 +199,7 @@ impl State {
                 if !layout.files.is_empty() {
                     self.workspace.restore_editor = Some(layout.editor);
                     self.workspace.restore_focus = Some(layout.terminal_focus);
+                    self.workspace.restore_explorer = Some(layout.explorer_revealed);
                 }
                 self.workspace.restore_active = layout.active_file.clone();
                 self.workspace.directory = layout.explorer_directory.clone();
@@ -221,6 +224,8 @@ impl State {
                     });
                 }
                 let paths = layout.files.clone();
+                self.workspace.show_empty_editor = layout.empty_editor;
+                self.workspace.explorer_revealed = layout.explorer_revealed;
                 self.workspace.layout = layout;
                 self.workspace.layout.follow = self.config.explorer.follow_terminal;
                 self.workspace.layout.hidden = self.config.explorer.show_hidden;
@@ -352,6 +357,9 @@ impl State {
             }
         }
         let w = &mut self.workspace;
+        if let Some(path) = w.tree.cursor() {
+            w.layout.selected_path = Some(PathBuf::from(path));
+        }
         for tab in &mut w.tabs {
             if tab.document.path.starts_with(source) {
                 remap(&mut tab.document.path, source, target);
@@ -371,6 +379,7 @@ impl State {
             &mut w.directory,
             &mut w.layout.explorer_directory,
             &mut w.layout.active_file,
+            &mut w.layout.selected_path,
             &mut w.outside_root,
             &mut w.pending_reveal,
             &mut w.revealed_directory,
@@ -629,6 +638,8 @@ impl State {
         }
         let workspace = &mut self.workspace;
         workspace.layout.explorer_directory = workspace.directory.clone();
+        workspace.layout.empty_editor = workspace.show_empty_editor;
+        workspace.layout.explorer_revealed = workspace.explorer_revealed;
         workspace.layout.files = workspace
             .tabs
             .iter()
@@ -1048,6 +1059,8 @@ impl State {
                                 self.workspace.restore_focus.take().unwrap_or(true)
                                     || !visible
                                     || self.workspace.tabs.is_empty();
+                            self.workspace.explorer_revealed =
+                                self.workspace.restore_explorer.take().unwrap_or(false);
                             self.message = self.workspace.restoration_warnings.join("\n");
                         }
                     }
@@ -3518,6 +3531,14 @@ mod tests {
             s.navigate(source.clone());
             s.workspace.layout.expanded_folders = vec![source.join("nested")];
         });
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "dirty.txt")
+        });
+        runtime.update(|s, _| {
+            s.workspace
+                .tree
+                .select(source.join("nested/dirty.txt").to_str().unwrap());
+        });
         click(&mut runtime, "operation-submit");
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         assert!(!source.exists());
@@ -3560,6 +3581,7 @@ mod tests {
         assert_eq!(layout.explorer_directory, Some(target.clone()));
         assert!(layout.expanded_folders.contains(&target.join("nested")));
         assert_eq!(layout.active_file, Some(target.join("nested/dirty.txt")));
+        assert_eq!(layout.selected_path, Some(target.join("nested/dirty.txt")));
         assert_eq!(
             layout.files,
             vec![
