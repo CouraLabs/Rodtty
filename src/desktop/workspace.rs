@@ -1329,6 +1329,21 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                         s.dispatch(AppAction::ActivateEditor(i), tx)
                     })
                     .w(180.0)
+                    .pl(30.0)
+                    .child(
+                        el().pin(Some(8.0), Some(0.0), None, Some(0.0))
+                            .w(16.0)
+                            .center()
+                            .a11y_hidden()
+                            .child(
+                                rune::icon(
+                                    file_icons::resolve(&tab.document.path, false, false, a.dark),
+                                    16.0,
+                                )
+                                .color(a.muted())
+                                .key(format!("editor-file-icon-{id}")),
+                            ),
+                    )
                     .fill(if i == workspace.active && !s.settings {
                         a.hover_bg()
                     } else {
@@ -2004,9 +2019,15 @@ pub(super) fn icons_demo(s: &mut State) {
     .collect();
     s.workspace.layout.expanded_folders = vec![root.join("alpine"), root.join("src")];
     s.workspace.tabs.clear();
-    for (index, name) in ["main.rs", "client/index.ts", "server/index.ts"]
-        .into_iter()
-        .enumerate()
+    for (index, name) in [
+        "main.rs",
+        "client/index.ts",
+        "server/index.ts",
+        "Dockerfile",
+        "mystery.rodttyunknown",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let saved = TextFile::decode(b"// Saved file contents\n".to_vec()).unwrap();
         let edit = TextEdit::new(if index == 0 {
@@ -2033,7 +2054,7 @@ pub(super) fn icons_demo(s: &mut State) {
         });
     }
     s.workspace.active = 0;
-    s.workspace.next_id = 4;
+    s.workspace.next_id = 6;
     s.rebuild_tree();
     s.workspace
         .tree
@@ -2084,6 +2105,83 @@ mod tests {
             .collect()
     }
 
+    fn assert_tab_artwork(
+        runtime: &mut rune::Runtime<State>,
+        id: u64,
+        expected: &'static rune::Icon,
+    ) {
+        let elements = runtime.elements();
+        let key = format!("editor-file-icon-{id}");
+        let artwork = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(&key))
+            .expect("editor tab has artwork beside its label");
+        assert_image_artwork(runtime, artwork.rect, expected);
+    }
+
+    fn assert_image_artwork(
+        runtime: &mut rune::Runtime<State>,
+        rect: [f32; 4],
+        expected: &'static rune::Icon,
+    ) {
+        if expected.name == "default_file.svg" {
+            let glyph = runtime
+                .instances
+                .iter()
+                .find(|i| {
+                    i.params[1] == rune::render::KIND_GLYPH
+                        && (i.rect[0] - rect[0]).abs() <= 1.01
+                        && (i.rect[1] - rect[1]).abs() <= 1.01
+                })
+                .expect("generic document silhouette paints in the theme's icon color");
+            let side = if glyph.uv[2] == 0.0 {
+                glyph.rect[2]
+            } else {
+                glyph.uv[2]
+            } as usize;
+            let actual_uv = [glyph.uv[0] as usize, glyph.uv[1] as usize];
+            let actual_page = glyph.params[2] as usize;
+            let sample = |atlas: &rune::text::Atlas, page, [x, y]: [usize; 2]| {
+                let data = atlas.page_data(page).unwrap();
+                (y..y + side)
+                    .flat_map(|row| data[row * 2048 + x..row * 2048 + x + side].to_vec())
+                    .collect::<Vec<_>>()
+            };
+            let actual = sample(&runtime.text.atlas, actual_page, actual_uv);
+            let reference = runtime.text.icon_quad(expected, 16, [0.0; 2]).unwrap();
+            let margin = (side - 16) / 2;
+            let uv = reference.atlas_uv().map(|v| v as usize - margin);
+            assert_eq!(
+                actual,
+                sample(&runtime.text.atlas, reference.atlas_page(), uv),
+                "generic fallback retains the upstream document silhouette"
+            );
+            return;
+        }
+        let image = runtime
+            .instances
+            .iter()
+            .find(|i| {
+                i.params[1] == rune::render::KIND_IMAGE
+                    && (i.rect[0] - rect[0]).abs() < 1.0
+                    && (i.rect[1] - rect[1]).abs() < 1.0
+            })
+            .expect("full-color SVG image");
+        let actual = image_bytes(runtime, image.params[0] as usize, image.uv);
+        let reference = runtime
+            .text
+            .color_icon(expected, 16, Color::BLACK, false)
+            .expect("reference upstream SVG")
+            .clone();
+        let placed = runtime.images.place(&reference, [16.0, 16.0]).unwrap();
+        assert_eq!(
+            actual,
+            image_bytes(runtime, placed.page, placed.rect.map(|v| v as f32)),
+            "wrong displayed artwork: expected {}",
+            expected.name
+        );
+    }
+
     fn assert_displayed_artwork(
         runtime: &mut rune::Runtime<State>,
         label: &str,
@@ -2098,28 +2196,7 @@ mod tests {
             .iter()
             .find(|e| e.parent == Some(file) && e.key.as_deref() == Some("icon"))
             .expect("artwork before the label");
-        let image = runtime
-            .instances
-            .iter()
-            .find(|i| {
-                i.params[1] == rune::render::KIND_IMAGE
-                    && (i.rect[0] - artwork.rect[0]).abs() < 1.0
-                    && (i.rect[1] - artwork.rect[1]).abs() < 1.0
-            })
-            .expect("full-color SVG image");
-        let actual = image_bytes(runtime, image.params[0] as usize, image.uv);
-        let reference = runtime
-            .text
-            .color_icon(expected, 16, Color::BLACK, false)
-            .expect("reference upstream SVG")
-            .clone();
-        let placed = runtime.images.place(&reference, [16.0, 16.0]).unwrap();
-        assert_eq!(
-            actual,
-            image_bytes(runtime, placed.page, placed.rect.map(|v| v as f32)),
-            "wrong displayed artwork for {label}: expected {}",
-            expected.name
-        );
+        assert_image_artwork(runtime, artwork.rect, expected);
     }
 
     macro_rules! artwork {
@@ -2131,6 +2208,39 @@ mod tests {
             };
             &EXPECTED
         }};
+    }
+
+    #[test]
+    fn editor_artwork_keeps_parent_labels_dirty_marks_and_tab_actions_when_appearance_changes() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        icons_demo(&mut state);
+        state.config.appearance = config::Appearance::Dark;
+        let mut runtime = runtime_for(state);
+        runtime.set_viewport((1600.0, 800.0), 1.0);
+        runtime.frame(1.0);
+        assert_tab_artwork(&mut runtime, 1, artwork!("file_type_rust.svg"));
+        assert_tab_artwork(&mut runtime, 4, artwork!("file_type_docker.svg"));
+        assert_tab_artwork(&mut runtime, 5, artwork!("default_file.svg"));
+        for label in ["index.ts — client", "index.ts — server", "•"] {
+            assert!(
+                runtime
+                    .elements()
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some(label)),
+                "retains visible {label}"
+            );
+        }
+        click(&mut runtime, "editor-tab-2");
+        assert_eq!(runtime.state.workspace.active, 1);
+        assert_tab_artwork(&mut runtime, 2, artwork!("file_type_typescript.svg"));
+        runtime.update(|s, _| s.config.appearance = config::Appearance::Light);
+        runtime.frame(1.0);
+        assert_tab_artwork(&mut runtime, 1, artwork!("file_type_light_rust.svg"));
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        click(&mut runtime, "editor-close-2");
+        assert_eq!(runtime.state.workspace.tabs.len(), 4);
     }
 
     #[test]

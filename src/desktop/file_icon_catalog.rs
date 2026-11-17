@@ -2,7 +2,7 @@
 use rune::Icon;
 #[rustfmt::skip]
 pub(super) static ARTWORK: &[(&str, Icon)] = &[
-    ("default_file.svg", Icon { name: "default_file.svg", view: 32.0, body: include_str!("../../assets/vscode-icons/icons/default_file.svg") }),
+    ("default_file.svg", Icon { name: "default_file.svg", view: 32.0, body: include_str!("../../assets/vscode-icons/adaptive/default_file.svg") }),
     ("default_folder.svg", Icon { name: "default_folder.svg", view: 32.0, body: include_str!("../../assets/vscode-icons/icons/default_folder.svg") }),
     ("default_folder_opened.svg", Icon { name: "default_folder_opened.svg", view: 32.0, body: include_str!("../../assets/vscode-icons/icons/default_folder_opened.svg") }),
     ("file_type_access.svg", Icon { name: "file_type_access.svg", view: 32.0, body: include_str!("../../assets/vscode-icons/icons/file_type_access.svg") }),

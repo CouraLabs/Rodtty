@@ -4,7 +4,10 @@ Upstream: https://github.com/vscode-icons/vscode-icons
 Revision: `814aab8318900f47efeae6f1c4691494ae764199`
 Copyright: The vscode-icons Contributors and the respective branded artwork owners.
 
-The SVG files in `icons/` are unmodified upstream artwork. They are distributed
+The SVG files in `icons/` are unmodified upstream artwork. Rodtty's
+`adaptive/default_file.svg` derivative retains the original generic document path
+and replaces its fixed pale gray fill with `currentColor` for contrast on both
+light and dark backgrounds; this derivative remains under CC BY-SA 4.0. They are distributed
 under **Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)**,
 except branded icons, which retain their respective copyright licenses. The
 upstream license statement is at:
