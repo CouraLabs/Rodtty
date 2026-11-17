@@ -26,7 +26,9 @@ Primary API contracts:
 
 The Freedesktop adapter also removes its newly-created empty destination
 placeholder if same-filesystem rename fails, preventing an untracked empty Trash
-item after a read-only-directory error. Source contents/permissions are unchanged.
+item after a read-only-directory error. Cleanup checks the device/inode identity
+and only unlinks an empty regular file or removes an empty directory, preserving
+a destination replaced or populated by another process. Source contents/permissions are unchanged.
 An isolated real Trash fixture caught this through the public removal API.
 
 Upstream crate archive SHA-256: `1e13ed7a76ae8b9053f33493745ebb4cd2e5ee1cccd9823bb96ec97b78ec4844`.

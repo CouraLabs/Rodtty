@@ -617,12 +617,40 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         || (key == "settings-confirm-deletion"
                             && matches(s, section, "confirm deletion move trash remove files"))
                     {
-                        group = group.child(button(
-                            a,
-                            key,
-                            format!("{title}: {}", if enabled { "on" } else { "off" }),
-                            move |s, tx| s.dispatch(action, tx),
-                        ));
+                        group = group.child(
+                            row()
+                                .gap(6.0)
+                                .center_y()
+                                .child(button(
+                                    a,
+                                    key,
+                                    format!("{title}: {}", if enabled { "on" } else { "off" }),
+                                    move |s, tx| s.dispatch(action, tx),
+                                ))
+                                .child(button(a, format!("reset-{key}"), "Reset", move |s, _| {
+                                    s.save_config(|config| {
+                                        let defaults = Config::default().explorer;
+                                        match action {
+                                            AppAction::ToggleDeletionConfirmation => {
+                                                config.explorer.confirm_deletion =
+                                                    defaults.confirm_deletion
+                                            }
+                                            AppAction::ToggleFollow => {
+                                                config.explorer.follow_terminal =
+                                                    defaults.follow_terminal
+                                            }
+                                            AppAction::ToggleHidden => {
+                                                config.explorer.show_hidden = defaults.show_hidden
+                                            }
+                                            AppAction::ToggleIgnore => {
+                                                config.explorer.respect_ignore =
+                                                    defaults.respect_ignore
+                                            }
+                                            _ => unreachable!(),
+                                        }
+                                    });
+                                })),
+                        );
                     }
                 }
                 group = group.child(button(
@@ -830,6 +858,60 @@ mod tests {
             "canvas {actual:?}, expected {hex}"
         );
     }
+    #[test]
+    fn file_preferences_reset_individually_without_changing_other_choices() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.explorer.confirm_deletion = false;
+        config.explorer.follow_terminal = true;
+        config.explorer.show_hidden = true;
+        config.explorer.respect_ignore = false;
+        config.save(root.path()).unwrap();
+        let mut rt = runtime(root.path());
+        click(&mut rt, "settings");
+        for (query, control, expected) in [
+            (
+                "Trash",
+                "reset-settings-confirm-deletion",
+                [true, true, true, false],
+            ),
+            (
+                "Follow Terminal",
+                "reset-settings-explorer-follow",
+                [true, false, true, false],
+            ),
+            (
+                "hidden files",
+                "reset-settings-explorer-hidden",
+                [true, false, false, false],
+            ),
+            (
+                "ignore rules",
+                "reset-settings-explorer-ignore",
+                [true, false, false, true],
+            ),
+        ] {
+            rt.update(|s, _| s.settings_query.replace_text(query));
+            rt.frame(0.0);
+            click(&mut rt, control);
+            rt.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            let saved = Config::load(root.path()).unwrap().explorer;
+            assert_eq!(
+                [
+                    saved.confirm_deletion,
+                    saved.follow_terminal,
+                    saved.show_hidden,
+                    saved.respect_ignore
+                ],
+                expected,
+            );
+            assert_eq!(rt.state.workspace.layout.follow, expected[1]);
+            assert_eq!(rt.state.workspace.layout.hidden, expected[2]);
+        }
+    }
+
     #[test]
     fn behavior_settings_save_and_reset_terminal_close_and_directory_choices() {
         use crate::config::{NewTerminalDirectory, TerminalClosePolicy};

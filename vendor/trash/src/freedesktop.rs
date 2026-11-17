@@ -14,7 +14,7 @@ use std::{
     io::{BufRead, BufReader, ErrorKind, Write},
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        fs::PermissionsExt,
+        fs::{MetadataExt, PermissionsExt},
     },
     path::{Component, Path, PathBuf},
 };
@@ -593,20 +593,23 @@ fn move_items_no_replace(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result
     let src = src.as_ref();
     let dst = dst.as_ref();
 
-    try_creating_placeholders(src, dst)?;
+    let placeholder = try_creating_placeholders(src, dst)?;
 
     // Try to rename first (fastest option for same filesystem)
     let Err(e) = std::fs::rename(src, dst) else { return Ok(()) };
 
     let needs_cross_device_copy = e.kind() == ErrorKind::CrossesDevices;
     if !needs_cross_device_copy {
-        // This invocation exclusively created an empty destination placeholder.
-        // A failed rename must not leave an untracked empty item in Trash.
-        // remove_dir refuses nonempty directories and never removes source data.
-        if fs::symlink_metadata(dst).is_ok_and(|metadata| metadata.is_dir()) {
-            let _ = fs::remove_dir(dst);
-        } else {
-            let _ = fs::remove_file(dst);
+        // Remove only our still-empty placeholder, never a replaced destination.
+        // remove_dir also refuses a placeholder another process populated.
+        if let Ok(metadata) = fs::symlink_metadata(dst) {
+            if metadata.dev() == placeholder.dev() && metadata.ino() == placeholder.ino() {
+                if metadata.is_dir() {
+                    let _ = fs::remove_dir(dst);
+                } else if metadata.is_file() && metadata.len() == 0 {
+                    let _ = fs::remove_file(dst);
+                }
+            }
         }
         return Err((src.to_owned(), e));
     }
@@ -630,18 +633,19 @@ fn move_items_no_replace(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result
     Ok(())
 }
 
-fn try_creating_placeholders(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), FsError> {
+fn try_creating_placeholders(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<fs::Metadata, FsError> {
     let src = src.as_ref();
     let dst = dst.as_ref();
     let metadata = src.symlink_metadata().map_err(|e| (src.to_owned(), e))?;
     if metadata.is_dir() {
         // NOTE create_dir fails if the directory already exists
         std::fs::create_dir(dst).map_err(|e| (dst.to_owned(), e))?;
+        fs::symlink_metadata(dst).map_err(|e| (dst.to_owned(), e))
     } else {
         // Symlink or file
-        OpenOptions::new().create_new(true).write(true).open(dst).map_err(|e| (dst.to_owned(), e))?;
+        OpenOptions::new().create_new(true).write(true).open(dst)
+            .and_then(|file| file.metadata()).map_err(|e| (dst.to_owned(), e))
     }
-    Ok(())
 }
 
 /// Helper function to recursively copy a directory
