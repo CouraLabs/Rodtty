@@ -530,7 +530,7 @@ fn workspace_menu(a: &Appearance) -> El {
         menu = menu.child(
             button(a, key, title, move |s, tx| s.dispatch(action, tx))
                 .w_full()
-                .items_start()
+                .justify_start()
                 .px(12.0),
         );
     }

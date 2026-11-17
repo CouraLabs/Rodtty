@@ -1009,7 +1009,7 @@ impl State {
             1 => DiffMode::Unified,
             2 => DiffMode::Split,
             _ => {
-                if self.workspace.editor_width < 620.0 {
+                if self.workspace.body_width < 880.0 || self.workspace.editor_width < 620.0 {
                     DiffMode::Unified
                 } else {
                     DiffMode::Split
@@ -2742,6 +2742,16 @@ mod tests {
             s.workspace_poll(tx);
         });
         runtime.frame(0.0);
+        for _ in 0..3 {
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            runtime.frame(0.0);
+        }
+        assert!(
+            runtime.state.workspace.editor_width >= 620.0,
+            "compact single-pane editor fills the window"
+        );
         assert_eq!(runtime.state.workspace.diff.mode(), DiffMode::Unified);
         assert!(runtime.find("diff-next").is_some());
         assert!(runtime.find("return-terminal").is_some());

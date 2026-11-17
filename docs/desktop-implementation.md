@@ -21,11 +21,12 @@ Filesystem work and Git subprocesses run outside the UI thread. Version checks p
 | Check | Result |
 | --- | --- |
 | Formatting, strict Clippy, native debug build of all binaries | Passed |
-| Unit tests | 7 passed, including editor keyboard behavior, external changes, explorer following, and diff rendering state |
+| Unit/runtime tests | 37 passed, including responsive pane/menu controls, preserved drafts and widths, live typography/appearance, explorer hierarchy, and real read-only Git comparisons |
 | File/Git integration tests | 12 passed, including conflict protection, BOM/mixed line endings, permissions/symlinks, separate buffer/disk/index/HEAD comparisons, linked worktrees, and index immutability |
-| Terminal integration tests, including real Vim and prompt-history error regression | 15 passed |
+| Terminal integration tests, including real Vim and prompt-history error regression | 16 passed |
 | Wayland native editor save, unsaved window-close prompt, output while closed, and same-session relaunch | [Passed](evidence/desktop-wayland.json) |
 | X11 native editor save, unsaved window-close prompt, output while closed, and same-session relaunch | [Passed](evidence/desktop-x11.json) |
+| Compact workspace native lifecycle on Wayland and X11 | [Wayland passed](evidence/compact-workspace-wayland.json), [X11/Xlib passed](evidence/compact-workspace-x11.json); same session, background output, appearance changes, editor save, and dirty-close prompt |
 | Windows x86-64 MSVC backend and test compilation, without desktop feature | Passed |
 | Apple Silicon macOS backend and test compilation, without desktop feature | Passed |
 | Windows/macOS native GUI builds, runtime, clipboard, and window lifecycle | Pending |
@@ -47,11 +48,13 @@ RODTTY_HOME=/tmp/rodtty-desktop-check target/debug/rodtty --workspace-check /tmp
 
 ## Interface previews
 
+The compact workspace was visually inspected at 1440×900 and 640×360 in light and dark appearances across terminal, editor, Settings, and real Git comparisons. Menu, split, inline, staged, and unstaged render variants were also checked; the fixture file and Git index were byte-for-byte unchanged after all inspection renders.
+
 The workspace, terminal, Settings, and diff scenes can be rendered at wide and minimum sizes with `--scene`, `--snap`, `--size`, and `--theme`. The `real-diff` developer scene reads the first changed text file from an actual Git repository supplied with `--cwd`; it uses the normal read-only inspection boundary. Sample-content scenes remain labelled. Native lifecycle evidence is linked separately above.
 
 ![Terminal, explorer, and syntax-highlighted editor](assets/workspace-preview.png)
 
-![Inline Git diff](assets/git-diff-inline.png)
+![Inline Git diff at minimum window size](assets/git-diff-inline.png)
 
 ![Side-by-side Git diff](assets/git-diff-split.png)
 
