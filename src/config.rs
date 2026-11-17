@@ -125,6 +125,7 @@ pub struct ExplorerPreferences {
     pub follow_terminal: bool,
     pub show_hidden: bool,
     pub respect_ignore: bool,
+    pub confirm_deletion: bool,
 }
 impl Default for ExplorerPreferences {
     fn default() -> Self {
@@ -132,6 +133,7 @@ impl Default for ExplorerPreferences {
             follow_terminal: false,
             show_hidden: false,
             respect_ignore: true,
+            confirm_deletion: true,
         }
     }
 }

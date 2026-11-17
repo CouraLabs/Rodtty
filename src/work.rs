@@ -88,13 +88,24 @@ impl Layout {
 }
 
 pub enum Job {
+    PrepareRemoval {
+        id: u64,
+        path: PathBuf,
+    },
+    Remove {
+        id: u64,
+        plan: files::removal::RemovalPlan,
+        permanent: bool,
+    },
     FileOperation {
         id: u64,
         request: files::operations::OperationRequest,
-        decision: Option<(
-            files::operations::Collision,
-            files::operations::CollisionChoice,
-        )>,
+        decision: Option<
+            Box<(
+                files::operations::Collision,
+                files::operations::CollisionChoice,
+            )>,
+        >,
     },
     Reload {
         id: u64,
@@ -130,6 +141,14 @@ pub enum Job {
     },
 }
 pub enum Event {
+    PrepareRemoval {
+        id: u64,
+        result: Result<files::removal::RemovalPlan, String>,
+    },
+    Remove {
+        id: u64,
+        result: Result<files::removal::RemovalOutcome, String>,
+    },
     FileOperation {
         id: u64,
         result: Result<files::operations::OperationOutcome, String>,
@@ -171,13 +190,33 @@ impl Worker {
         std::thread::spawn(move || {
             for job in jobs {
                 let event = match job {
+                    Job::PrepareRemoval { id, path } => Event::PrepareRemoval {
+                        id,
+                        result: files::removal::RemovalPlan::prepare(path)
+                            .map_err(|e| format!("{e:#}")),
+                    },
+                    Job::Remove {
+                        id,
+                        plan,
+                        permanent,
+                    } => Event::Remove {
+                        id,
+                        result: (if permanent {
+                            plan.permanently_delete()
+                        } else {
+                            plan.trash()
+                        })
+                        .map_err(|e| format!("{e:#}")),
+                    },
                     Job::FileOperation {
                         id,
                         request,
                         decision,
                     } => Event::FileOperation {
                         id,
-                        result: request.execute(decision).map_err(|e| format!("{e:#}")),
+                        result: request
+                            .execute(decision.map(|d| *d))
+                            .map_err(|e| format!("{e:#}")),
                     },
                     Job::Reload { id, revision, path } => Event::Reload {
                         id,

@@ -1,0 +1,62 @@
+--- a/src/windows.rs
++++ b/src/windows.rs
+@@ -181,7 +181,13 @@
+         self.record(item, result);
+         Ok(())
+     }
+-    fn PreDeleteItem(&self, _flags: u32, _item: Ref<'_, IShellItem>) -> windows::core::Result<()> {
++    fn PreDeleteItem(&self, flags: u32, item: Ref<'_, IShellItem>) -> windows::core::Result<()> {
++        // Rodtty permits only recycling here. If the Shell changes this into a
++        // permanent delete, veto it before it starts, even with all native UI off.
++        if flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
++            self.record(item, COPYENGINE_E_RECYCLE_FORCE_NUKE);
++            return Err(windows::core::Error::from(COPYENGINE_E_RECYCLE_FORCE_NUKE));
++        }
+         Ok(())
+     }
+     fn PostDeleteItem(
+@@ -189,8 +195,14 @@
+         _flags: u32,
+         item: Ref<'_, IShellItem>,
+         result: HRESULT,
+-        _new_item: Ref<'_, IShellItem>,
++        new_item: Ref<'_, IShellItem>,
+     ) -> windows::core::Result<()> {
++        if result.is_ok() && new_item.is_null() {
++            // Per Microsoft, a null destination denotes permanent removal.
++            // Never report that as a successful move into the Recycle Bin.
++            self.record(item, COPYENGINE_E_RECYCLE_FORCE_NUKE);
++            return Err(windows::core::Error::from(COPYENGINE_E_RECYCLE_FORCE_NUKE));
++        }
+         self.record(item, result);
+         Ok(())
+     }
+@@ -328,7 +340,10 @@
+         unsafe {
+             let pfo: IFileOperation = CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL)?;
+ 
+-            pfo.SetOperationFlags(FOF_NO_UI | FOF_ALLOWUNDO | FOF_WANTNUKEWARNING)?;
++            pfo.SetOperationFlags(
++                FOF_NO_UI | FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE
++                    | FOFX_ADDUNDORECORD | FOF_WANTNUKEWARNING,
++            )?;
+ 
+             for full_path in full_paths.iter() {
+                 let parsing_name = to_shell_parsing_name(full_path);
+--- a/src/freedesktop.rs
++++ b/src/freedesktop.rs
+@@ -600,6 +600,14 @@
+ 
+     let needs_cross_device_copy = e.kind() == ErrorKind::CrossesDevices;
+     if !needs_cross_device_copy {
++        // This invocation exclusively created an empty destination placeholder.
++        // A failed rename must not leave an untracked empty item in Trash.
++        // remove_dir refuses nonempty directories and never removes source data.
++        if fs::symlink_metadata(dst).is_ok_and(|metadata| metadata.is_dir()) {
++            let _ = fs::remove_dir(dst);
++        } else {
++            let _ = fs::remove_file(dst);
++        }
+         return Err((src.to_owned(), e));
+     }
+ 

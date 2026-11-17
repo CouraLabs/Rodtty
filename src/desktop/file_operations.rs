@@ -100,6 +100,11 @@ impl State {
         if self.workspace.operation_busy {
             return;
         }
+        if self.workspace.removal.is_some()
+            && !matches!(request.operation, FileOperation::SaveAs { .. })
+        {
+            return;
+        }
         let moving = matches!(request.operation, FileOperation::Move { .. });
         if moving
             && (self.workspace.tabs.iter().any(|tab| tab.saving)
@@ -126,12 +131,16 @@ impl State {
         if self.io(Job::FileOperation {
             id: self.workspace.operation_id,
             request,
-            decision,
+            decision: decision.map(Box::new),
         }) {
             self.workspace.operation_busy = true;
             self.workspace.operation_moving = moving;
             self.workspace.operation_result = None;
-            self.pending = None;
+            self.pending = if self.workspace.removal.is_some() {
+                Some(Pending::Removal(super::removal::RemovalPrompt::Busy))
+            } else {
+                None
+            };
             self.workspace.operation_error = None;
             tx.blur();
             self.workspace.terminal_focus = true;
@@ -144,6 +153,10 @@ impl State {
             return;
         };
         if choice == CollisionChoice::Cancel {
+            if self.workspace.removal.is_some() {
+                self.cancel_removal(tx);
+                return;
+            }
             self.pending = None;
             self.message = "File operation cancelled.".into();
             tx.blur();
@@ -165,6 +178,7 @@ impl State {
         self.workspace.operation_busy = false;
         self.workspace.operation_moving = false;
         match result {
+            Ok(OperationOutcome::SavedAs(document)) => self.finish_removal_save_as(document, tx),
             Ok(OperationOutcome::Collision(collision)) => {
                 self.message = "Destination exists. Choose Replace, Keep Both, or Cancel.".into();
                 self.pending = Some(Pending::Operation(OperationPrompt::Collision(collision)));
@@ -187,11 +201,20 @@ impl State {
                 }
             }
             Ok(OperationOutcome::Cancelled) => self.message = "File operation cancelled.".into(),
-            Err(error) => self.message = format!("File operation failed: {error}"),
+            Err(error) => {
+                if self.workspace.removal.is_some() {
+                    self.removal_save_as_failed(error, tx);
+                } else {
+                    self.message = format!("File operation failed: {error}");
+                }
+            }
         }
     }
 
     pub(super) fn file_context_menu(&mut self, press: rune::PointerPress, tx: &mut Tx) {
+        if self.workspace.removal.is_some() {
+            return;
+        }
         tx.element_at_in(
             "file-list",
             press.x,
@@ -220,6 +243,10 @@ impl State {
 }
 
 fn cancel(s: &mut State, tx: &mut Tx) {
+    if s.workspace.removal.is_some() {
+        s.cancel_removal(tx);
+        return;
+    }
     s.pending = None;
     s.workspace.operation_context = None;
     tx.blur();
@@ -251,6 +278,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 AppAction::CreateFolder,
             ),
             ("context-copy-file", "Copy To…", AppAction::CopyFile),
+            ("context-trash-file", "Move to Trash…", AppAction::TrashFile),
             ("context-rename-file", "Rename…", AppAction::RenameFile),
             ("context-move-file", "Move To…", AppAction::MoveFile),
         ] {
@@ -260,6 +288,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     s.workspace.operation_context = None;
                     s.dispatch(action, tx);
                 })
+                .help(s.action_help(action, title))
                 .w_full()
                 .justify_start()
                 .opacity(if enabled { 1.0 } else { 0.45 }),
@@ -272,7 +301,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     y.clamp(
                         8.0,
                         (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 6.0
+                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 7.0
                             - 28.0)
                             .max(8.0),
                     ),
@@ -310,6 +339,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::CreateFile => ("New file", "Create file"),
                 FileOperation::CreateFolder => ("New folder", "Create folder"),
                 FileOperation::Copy { .. } => ("Copy item", "Copy"),
+                FileOperation::SaveAs { .. } => ("Save work as", "Save As"),
                 FileOperation::Move { .. } => ("Rename or move item", "Move"),
             };
             content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
