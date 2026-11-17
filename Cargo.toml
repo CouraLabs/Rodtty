@@ -9,7 +9,7 @@ default-run = "rodtty"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:rune", "dep:rune-kit"]
+desktop = ["dep:rune", "dep:rune-kit", "dep:fontique", "dep:read-fonts"]
 
 [dependencies]
 anyhow = "1"
@@ -29,6 +29,9 @@ wait-timeout = "0.2"
 vt100 = "0.16"
 rune = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90", default-features = false, features = ["embedded-fonts", "dbus", "tooling"], optional = true }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "eb5ae6c9f77b1a0051d8e1e5ee936ebea086bb90", optional = true }
+
+fontique = { version = "0.12", features = ["std", "system", "fontconfig-dlopen"], optional = true }
+read-fonts = { version = "0.41", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }

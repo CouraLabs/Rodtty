@@ -15,6 +15,7 @@ mod fonts;
 mod frame;
 mod palette;
 use appearance::Appearance;
+mod file_operations;
 mod settings;
 use fonts::{label as ui_label, ui as ui_style};
 mod workspace;
@@ -40,6 +41,7 @@ enum Pending {
     Tab(usize),
     Quit,
     File(workspace::FilePrompt),
+    Operation(file_operations::OperationPrompt),
 }
 
 struct State {
@@ -75,6 +77,9 @@ struct State {
     preview: Option<vt100::Screen>,
     terminal_rect: Option<[f32; 4]>,
     terminal_metrics: fonts::Metrics,
+    font_catalog: fonts::Catalog,
+    font_ui: rune_kit::ComboboxState,
+    font_terminal: rune_kit::ComboboxState,
 }
 
 impl State {
@@ -133,7 +138,17 @@ impl State {
             preview: None,
             terminal_rect: None,
             terminal_metrics: Default::default(),
+            font_catalog: fonts::Catalog::default(),
+            font_ui: Default::default(),
+            font_terminal: Default::default(),
         }
+    }
+
+    pub(super) fn application_overlay_open(&self) -> bool {
+        self.pending.is_some()
+            || self.palette.is_some()
+            || self.workspace_menu
+            || self.workspace.operation_context.is_some()
     }
 
     fn active(&self) -> Option<&Session> {
@@ -569,6 +584,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     let folder = state.workspace.directory.as_ref().unwrap_or(&cwd);
     let mut root = col()
         .key("root")
+        .on_layout(|s: &mut State, r| s.workspace.operation_viewport = (r[2], r[3]))
         .w_full()
         .h_full()
         .fill(a.bg())
@@ -748,15 +764,15 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     if state.workspace_menu {
         root = root.child(workspace_menu(a));
     }
+    if let Some(dialog) = file_operations::view(state, a) {
+        root = root.child(dialog);
+    }
     if let Some(palette) = palette::view(state, a) {
         root = root.child(palette);
     }
+    root = root.children(fonts::overlays(state, a, width));
     root.on_paste(|s: &mut State, content, _| {
-        if s.pending.is_none()
-            && s.palette.is_none()
-            && !s.workspace_menu
-            && s.workspace.terminal_focus
-        {
+        if !s.application_overlay_open() && s.workspace.terminal_focus {
             s.paste(content);
         }
     })
@@ -820,7 +836,14 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if event.key == Key::Escape {
             state.cancel_file_action();
         }
-        return true;
+        return !matches!(state.pending, Some(Pending::Operation(_)));
+    }
+    if state.workspace.operation_context.is_some() {
+        if event.key == Key::Escape {
+            state.workspace.operation_context = None;
+            return true;
+        }
+        return false;
     }
     if state.palette.is_some() {
         return state.palette_key(event, tx);
@@ -905,6 +928,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 
 fn setup(state: &mut State, wake: rune::Waker) {
     state.wake = wake;
+    state.font_catalog.start(state.wake.clone());
     if rune::tooling::headless_run().is_none() {
         state.new_tab();
         state.workspace_setup();
@@ -931,11 +955,17 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         .collect();
     let changed = generations != state.generations;
     state.generations = generations;
+    let fonts_changed = state.font_catalog.poll();
     let settings_changed = state.poll_settings();
-    let (sans, mono) = state.config.fonts.families();
+    let (sans, mono) = state.font_families();
     tx.set_font_families(sans, mono);
     let metrics_changed = state.refresh_terminal_metrics();
-    state.workspace_poll(tx) || changed || settings_changed || metrics_changed || frame_changed
+    state.workspace_poll(tx)
+        || changed
+        || settings_changed
+        || metrics_changed
+        || frame_changed
+        || fonts_changed
 }
 
 fn preview(state: &mut State) {
@@ -968,6 +998,10 @@ fn real_diff_preview(state: &mut State) {
     if let Err(error) = workspace::real_diff_demo(state) {
         state.message = format!("Could not render real Git fixture: {error:#}");
     }
+}
+fn file_collision_preview(state: &mut State) {
+    workspace_preview(state);
+    file_operations::collision_demo(state);
 }
 fn diff_preview(state: &mut State) {
     preview(state);
@@ -1028,6 +1062,7 @@ pub fn run() -> Result<()> {
             ("diff", diff_preview),
             ("real-diff", real_diff_preview),
             ("palette", palette_preview),
+            ("file-collision", file_collision_preview),
             ("tree", tree_preview),
             ("settings", settings_preview),
         ],
@@ -1046,11 +1081,7 @@ pub fn run() -> Result<()> {
             s.sessions.clear();
         })
         .on_ime(|s, event, _| {
-            if s.pending.is_some()
-                || s.palette.is_some()
-                || s.workspace_menu
-                || !s.workspace.terminal_focus
-            {
+            if s.application_overlay_open() || !s.workspace.terminal_focus {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {
@@ -1358,7 +1389,31 @@ fn native_check(
             } else {
                 None
             };
+            let mut font_inventory = None;
             if with_fonts {
+                wait_app(&handle, |s| s.font_catalog.ready)?;
+                let (tx, rx) = std::sync::mpsc::channel();
+                handle.update(move |s, _| {
+                    let mono = s
+                        .font_catalog
+                        .families
+                        .iter()
+                        .find(|f| !f.bundled && f.monospace)
+                        .map(|f| f.name.clone());
+                    let sans = s
+                        .font_catalog
+                        .families
+                        .iter()
+                        .find(|f| !f.bundled && !f.monospace)
+                        .map(|f| f.name.clone());
+                    let _ = tx.send((s.font_catalog.families.len(), mono, sans));
+                });
+                let (count, mono, sans) = rx.recv_timeout(Duration::from_secs(10))?;
+                let mono = mono.context("installed monospace family")?;
+                let sans = sans.context("installed UI family")?;
+                font_inventory = Some(
+                    serde_json::json!({"families":count,"terminal_family":mono,"ui_family":sans}),
+                );
                 let probe = std::env::current_exe()?
                     .with_file_name(format!("rodtty-probe{}", std::env::consts::EXE_SUFFIX));
                 let command = format!("{} --resize-fixture\r", profile::quote(&probe)?);
@@ -1370,11 +1425,13 @@ fn native_check(
                     .parser
                     .screen()
                     .size();
-                handle.update(|s, _| {
+                handle.update(move |s, _| {
                     let tab = &mut s.workspace.tabs[0];
                     tab.edit.insert("// font change preserves this buffer\n");
                     tab.revision += 1;
                     s.save_config(|c| {
+                        c.fonts.ui_family = sans.clone();
+                        c.fonts.terminal_family = mono.clone();
                         c.fonts.ui_size = 15.0;
                         c.fonts.terminal_size = 20.0;
                         c.fonts.editor_size = 18.0;
@@ -1438,6 +1495,8 @@ fn native_check(
                 report["custom_frame"] = frame;
             }
             if with_fonts {
+                report["font_inventory"] = font_inventory.unwrap();
+                report["live_font_families"] = true.into();
                 report["live_font_sizes"] = true.into();
                 report["fullscreen_pty_resize"] = true.into();
                 report["unsaved_editor_preserved"] = true.into();
