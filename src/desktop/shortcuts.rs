@@ -503,6 +503,13 @@ mod tests {
             .shortcuts
             .insert("toggle-explorer".into(), "F6".into());
         let mut rt = runtime_for(state);
+        settings(&mut rt, "toggle explorer");
+        click(&mut rt, "record-toggle-explorer");
+        press(&mut rt, Key::Text("z".into()), Default::default());
+        rt.paste("unwanted terminal input");
+        rt.frame(0.0);
+        press(&mut rt, Key::Escape, Default::default());
+        click(&mut rt, "tab-0");
         press(&mut rt, Key::Function(6), Default::default());
         assert!(rt.state.workspace.layout.explorer);
         press(&mut rt, Key::Text("a".into()), Default::default());
@@ -558,6 +565,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         workspace::demo(&mut state, false);
+        state.directory = root.path().into();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.new_tab();
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", std::time::Duration::from_secs(15))
+            .unwrap();
         state.workspace.terminal_focus = true;
         state
             .config
@@ -577,5 +596,23 @@ mod tests {
         );
         assert!(rt.find("file-dialog").is_some());
         assert!(rt.find("confirmation").is_none());
+    }
+    #[test]
+    fn assigned_mouse_binding_takes_precedence_over_a_tab_middle_click() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rt = runtime_for(State::with_root(root.path().into()));
+        settings(&mut rt, "toggle explorer");
+        click(&mut rt, "record-toggle-explorer");
+        let (x, y) = rt.find("shortcut-mouse-recorder").unwrap();
+        rt.button_down(x, y, rune::PointerButton::Middle);
+        rt.button_up(x, y, rune::PointerButton::Middle);
+        rt.frame(0.0);
+        click(&mut rt, "shortcut-apply");
+        let (x, y) = rt.find("settings-tab").unwrap();
+        rt.button_down(x, y, rune::PointerButton::Middle);
+        rt.button_up(x, y, rune::PointerButton::Middle);
+        rt.frame(0.0);
+        assert!(rt.state.workspace.layout.explorer);
+        assert!(rt.find("settings-search").is_some());
     }
 }
