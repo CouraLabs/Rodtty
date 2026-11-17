@@ -65,6 +65,30 @@ pub enum Appearance {
     #[default]
     System,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutosavePolicy {
+    #[default]
+    Explicit,
+    AfterDelay,
+    EditorFocusLoss,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AutosavePreferences {
+    pub policy: AutosavePolicy,
+    pub delay_ms: u64,
+}
+impl Default for AutosavePreferences {
+    fn default() -> Self {
+        Self {
+            policy: AutosavePolicy::Explicit,
+            delay_ms: 1000,
+        }
+    }
+}
 impl Appearance {
     pub fn dark(self, system_dark: bool) -> bool {
         match self {
@@ -78,6 +102,7 @@ impl Appearance {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
+    pub autosave: AutosavePreferences,
     pub theme_family: ThemeFamily,
     pub appearance: Appearance,
     pub disabled: Vec<String>,
@@ -114,6 +139,7 @@ impl Default for ExplorerPreferences {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            autosave: AutosavePreferences::default(),
             theme_family: ThemeFamily::default(),
             appearance: Appearance::default(),
             disabled: Vec::new(),
@@ -131,6 +157,9 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        if !(100..=60_000).contains(&self.autosave.delay_ms) {
+            bail!("autosave delay must be between 100 and 60000 milliseconds");
+        }
         if !(100..=100_000).contains(&self.scrollback) {
             bail!("scrollback must be between 100 and 100000 lines");
         }

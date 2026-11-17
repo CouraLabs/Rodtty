@@ -166,6 +166,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 || matches(s, section, "font size")
         } else if section == "Editor" {
             matches(s, section, "font size")
+                || matches(
+                    s,
+                    section,
+                    "autosave explicit save after delay editor focus loss milliseconds",
+                )
         } else if section == "Files" {
             matches(
                 s,
@@ -238,6 +243,68 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             group = group.child(sizes.child(buttons));
         }
         match section {
+            "Editor"
+                if matches(
+                    s,
+                    section,
+                    "autosave explicit save after delay editor focus loss milliseconds",
+                ) =>
+            {
+                use config::AutosavePolicy;
+                let mut choices = row().gap(6.0).scroll_x();
+                for (id, title, policy) in [
+                    ("explicit", "Explicit Save", AutosavePolicy::Explicit),
+                    ("after-delay", "After Delay", AutosavePolicy::AfterDelay),
+                    (
+                        "editor-focus-loss",
+                        "Editor Focus Loss",
+                        AutosavePolicy::EditorFocusLoss,
+                    ),
+                ] {
+                    choices = choices.child(button(
+                        a,
+                        format!("autosave-{id}"),
+                        format!(
+                            "{}{}",
+                            if s.config.autosave.policy == policy {
+                                "✓ "
+                            } else {
+                                ""
+                            },
+                            title
+                        ),
+                        move |s, _| {
+                            s.save_config(|c| c.autosave.policy = policy);
+                        },
+                    ));
+                }
+                group = group
+                    .child(text("Autosave").font(ui_label()).color(a.ink()))
+                    .child(choices)
+                    .child(
+                        text(format!("Autosave delay: {} ms", s.config.autosave.delay_ms))
+                            .font(ui_label())
+                            .color(a.ink()),
+                    )
+                    .child(
+                        row()
+                            .gap(6.0)
+                            .child(button(a, "less-autosave-delay", "− 100 ms", |s, _| {
+                                s.save_config(|c| {
+                                    c.autosave.delay_ms =
+                                        c.autosave.delay_ms.saturating_sub(100).max(100)
+                                });
+                            }))
+                            .child(button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
+                                s.save_config(|c| {
+                                    c.autosave.delay_ms = (c.autosave.delay_ms + 100).min(60_000)
+                                });
+                            }))
+                            .child(button(a, "reset-autosave", "Reset Autosave", |s, _| {
+                                s.save_config(|c| c.autosave = Default::default());
+                            })),
+                    );
+            }
             "Keyboard Shortcuts" => {
                 group = group.child(shortcuts::list(s, a));
             }
@@ -1416,6 +1483,33 @@ mod tests {
         );
         assert_eq!(runtime.state.selection, Some(((1, 0), (1, 5))));
     }
+    #[test]
+    fn owner_selects_persists_and_resets_autosave_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = runtime(root.path());
+        click(&mut runtime, "settings");
+        runtime.update(|s, _| s.settings_query.replace_text("autosave"));
+        runtime.frame(0.0);
+        click(&mut runtime, "autosave-after-delay");
+        click(&mut runtime, "less-autosave-delay");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["autosave"]["policy"], "after_delay");
+        assert_eq!(saved["autosave"]["delay_ms"], 900);
+        click(&mut runtime, "autosave-editor-focus-loss");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["autosave"]["policy"], "editor_focus_loss");
+        click(&mut runtime, "reset-autosave");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["autosave"]["policy"], "explicit");
+        assert_eq!(saved["autosave"]["delay_ms"], 1000);
+    }
+
     #[test]
     fn owner_changes_appearance_live_and_reopens_with_saved_choice() {
         let root = tempfile::tempdir().unwrap();

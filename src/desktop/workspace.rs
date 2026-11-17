@@ -37,9 +37,11 @@ pub(super) struct Tab {
     pub disk_error: Option<String>,
     pub dismissed: bool,
     pub saving: bool,
+    pub save_token: u64,
     pub revision: u64,
     pub baseline: u64,
     pub after_save: Option<Action>,
+    pub autosave: autosave::Schedule,
 }
 impl Tab {
     pub fn dirty(&self) -> bool {
@@ -54,6 +56,8 @@ pub(super) struct TreeEntry {
 }
 
 pub(super) struct Workspace {
+    pub autosave_preferences: config::AutosavePreferences,
+    pub autosave_context: Option<u64>,
     pub terminal_focus: bool,
     pub explorer_revealed: bool,
     pub show_empty_editor: bool,
@@ -123,6 +127,8 @@ impl Workspace {
 impl Default for Workspace {
     fn default() -> Self {
         Self {
+            autosave_preferences: Default::default(),
+            autosave_context: None,
             terminal_focus: true,
             explorer_revealed: false,
             show_empty_editor: false,
@@ -364,7 +370,9 @@ impl State {
             if tab.document.path.starts_with(source) {
                 remap(&mut tab.document.path, source, target);
                 tab.baseline += 1;
+                let previous = tab.revision;
                 tab.revision += 1;
+                tab.autosave.remap_revision(previous, tab.revision);
                 tab.disk_error = None;
             } else if tab.document.path.starts_with(target) {
                 // Ignore scans from before replacement. The next new-path scan
@@ -776,9 +784,12 @@ impl State {
         // later inspection from replacing the tab while its save is queued.
         tab.preview = false;
         tab.saving = true;
+        tab.save_token += 1;
+        tab.autosave.suspend(tab.revision);
         tab.after_save = after;
         let job = Job::Save {
             id,
+            token: tab.save_token,
             document: tab.document.clone(),
             text: tab.edit.text.clone(),
             overwrite,
@@ -824,6 +835,7 @@ impl State {
         self.pending = None;
         for tab in &mut self.workspace.tabs {
             tab.after_save = None;
+            tab.autosave.suspend(tab.revision);
         }
     }
     pub(super) fn invalidate_diff(&mut self, clear: bool) {
@@ -1029,9 +1041,11 @@ impl State {
                                     disk_error: None,
                                     dismissed: false,
                                     saving: false,
+                                    save_token: 0,
                                     revision: 0,
                                     baseline: 0,
                                     after_save: None,
+                                    autosave: Default::default(),
                                 },
                             );
                             if self.workspace.restore_active.is_none()
@@ -1065,8 +1079,11 @@ impl State {
                         }
                     }
                 }
-                Event::Save { id, result } => {
-                    if let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id) {
+                Event::Save { id, token, result } => {
+                    if let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id)
+                        && tab.saving
+                        && tab.save_token == token
+                    {
                         tab.saving = false;
                         let after = tab.after_save.take();
                         match result {
@@ -1309,6 +1326,7 @@ impl State {
             self.workspace.diff.set_mode(mode);
             changed = true;
         }
+        changed |= self.poll_autosave(tx);
         tx.wake_after(Duration::from_millis(200));
         changed
     }
@@ -2159,9 +2177,11 @@ pub(super) fn demo(s: &mut State, diff: bool) {
         disk_error: None,
         dismissed: false,
         saving: false,
+        save_token: 0,
         revision: 0,
         baseline: 0,
         after_save: None,
+        autosave: Default::default(),
     });
     s.workspace.next_id = 2;
     s.workspace.terminal_focus = false;
@@ -2226,9 +2246,11 @@ pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
         disk_error: None,
         dismissed: false,
         saving: false,
+        save_token: 0,
         revision: 0,
         baseline: 0,
         after_save: None,
+        autosave: Default::default(),
     }];
     s.workspace.next_id = 2;
     s.workspace.terminal_focus = false;
@@ -2311,9 +2333,11 @@ pub(super) fn icons_demo(s: &mut State) {
             disk_error: None,
             dismissed: false,
             saving: false,
+            save_token: 0,
             revision: u64::from(index == 0),
             baseline: 0,
             after_save: None,
+            autosave: Default::default(),
         });
     }
     s.workspace.active = 0;
@@ -4218,6 +4242,243 @@ mod tests {
     }
 
     #[test]
+    fn autosave_waits_for_rename_and_saves_the_new_path_without_recreating_the_source() {
+        use super::super::tests::runtime_for;
+        for policy in ["after_delay", "editor_focus_loss"] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("draft.txt");
+            let target = root.path().join("renamed.txt");
+            std::fs::write(&source, "original").unwrap();
+            std::fs::write(
+                root.path().join("settings.json"),
+                format!(r#"{{"autosave":{{"policy":"{policy}","delay_ms":100}}}}"#),
+            )
+            .unwrap();
+            let mut state = state(root.path());
+            open(&mut state, &source);
+            state.toggle_files();
+            wait(&mut state, |s| !s.workspace.scan_busy);
+            let mut runtime = runtime_for(state);
+            fill(&mut runtime, "file-editor-1", "draft at renamed path");
+            runtime.update(|s, tx| {
+                s.workspace.tree.select(source.to_str().unwrap());
+                s.dispatch(AppAction::RenameFile, tx);
+            });
+            runtime.frame(0.0);
+            fill(&mut runtime, "operation-name", "renamed.txt");
+            // The deadline expires while the owner's operation decision is pending.
+            pump_autosave(&mut runtime, Duration::from_millis(150));
+            assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+            click(&mut runtime, "operation-submit");
+            wait_runtime(&mut runtime, |s| {
+                !s.workspace.operation_busy && !s.workspace.tabs[0].dirty()
+            });
+            assert!(!source.exists());
+            assert_eq!(
+                std::fs::read_to_string(&target).unwrap(),
+                "draft at renamed path"
+            );
+            assert_eq!(runtime.state.workspace.tabs[0].document.path, target);
+            assert!(runtime.find("file-dialog").is_none());
+        }
+    }
+
+    #[test]
+    fn autosave_external_conflict_keeps_edits_and_cancel_does_not_repeat_the_prompt() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"after_delay","delay_ms":100}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "my draft");
+        pump_autosave(&mut runtime, Duration::from_millis(20));
+        std::fs::write(&path, "external edit").unwrap();
+        wait_runtime(&mut runtime, |s| {
+            matches!(s.pending, Some(Pending::File(FilePrompt::Conflict { .. })))
+        });
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit");
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "my draft");
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        click(&mut runtime, "file-cancel");
+        pump_autosave(&mut runtime, Duration::from_millis(250));
+        assert!(runtime.find("file-dialog").is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit");
+        click(&mut runtime, "file-save");
+        wait_runtime(&mut runtime, |s| {
+            matches!(s.pending, Some(Pending::File(FilePrompt::Conflict { .. })))
+        });
+        click(&mut runtime, "file-overwrite");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert!(!runtime.state.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "my draft");
+        fill(&mut runtime, "file-editor-1", "subsequent draft");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "subsequent draft");
+        assert!(runtime.find("file-dialog").is_none());
+    }
+
+    #[test]
+    fn autosave_preserves_later_edits_during_an_explicit_save_and_restarts_the_delay() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"after_delay","delay_ms":300}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "first snapshot");
+        runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
+        // The worker may finish but no result has been drained into the UI yet.
+        fill(&mut runtime, "file-editor-1", "later unsaved edit");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first snapshot");
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        pump_autosave(&mut runtime, Duration::from_millis(180));
+        fill(&mut runtime, "file-editor-1", "final delayed edit");
+        pump_autosave(&mut runtime, Duration::from_millis(180));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first snapshot");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "final delayed edit"
+        );
+    }
+
+    #[test]
+    fn autosave_respects_cancelled_dirty_close_until_the_next_edit() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"after_delay","delay_ms":100}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "cancelled draft");
+        runtime.update(|s, tx| s.dispatch(AppAction::CloseEditor(Some(1)), tx));
+        runtime.frame(0.0);
+        pump_autosave(&mut runtime, Duration::from_millis(150));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+        click(&mut runtime, "file-cancel");
+        pump_autosave(&mut runtime, Duration::from_millis(200));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+        assert!(runtime.state.workspace.tabs[0].dirty());
+        fill(&mut runtime, "file-editor-1", "later edit");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "later edit");
+    }
+
+    #[test]
+    fn autosave_focus_loss_saves_when_leaving_a_file_but_not_while_inspecting_its_diff() {
+        use super::super::tests::runtime_for;
+        for action in [
+            AppAction::Settings,
+            AppAction::ShowTerminal,
+            AppAction::ToggleEditor,
+            AppAction::ActivateEditor(1),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("file.txt");
+            let other = root.path().join("other.txt");
+            std::fs::write(&path, "original").unwrap();
+            std::fs::write(&other, "other").unwrap();
+            std::fs::write(
+                root.path().join("settings.json"),
+                r#"{"autosave":{"policy":"editor_focus_loss"}}"#,
+            )
+            .unwrap();
+            let mut state = state(root.path());
+            open(&mut state, &path);
+            state.open_file(other);
+            wait(&mut state, |s| s.workspace.tabs.len() == 2);
+            let mut runtime = runtime_for(state);
+            runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+            runtime.frame(0.0);
+            fill(&mut runtime, "file-editor-1", "updated");
+            pump_autosave(&mut runtime, Duration::from_millis(30));
+            for comparison in [
+                Comparison::Current,
+                Comparison::Unstaged,
+                Comparison::Staged,
+            ] {
+                runtime.update(|s, tx| s.dispatch(AppAction::Compare(comparison), tx));
+                pump_autosave(&mut runtime, Duration::from_millis(30));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+            }
+            runtime.update(|s, tx| s.dispatch(action, tx));
+            wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "updated");
+            assert!(runtime.find("file-dialog").is_none());
+        }
+    }
+
+    #[test]
+    fn autosave_is_explicit_by_default_and_delay_applies_live_without_changing_file_format() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, b"\xef\xbb\xbforiginal\r\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"delay_ms":100}}"#,
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &path);
+        let mut runtime = runtime_for(state);
+        fill(&mut runtime, "file-editor-1", "updated\n");
+        pump_autosave(&mut runtime, Duration::from_millis(160));
+        assert_eq!(std::fs::read(&path).unwrap(), b"\xef\xbb\xbforiginal\r\n");
+        click(&mut runtime, "settings");
+        fill(&mut runtime, "settings-search", "autosave");
+        click(&mut runtime, "autosave-after-delay");
+        runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
+        assert_eq!(std::fs::read(&path).unwrap(), b"\xef\xbb\xbfupdated\r\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+        assert!(runtime.find("file-dialog").is_none());
+    }
+
+    fn pump_autosave(runtime: &mut rune::Runtime<State>, duration: Duration) {
+        let start = Instant::now();
+        while start.elapsed() < duration {
+            runtime.update(|s, tx| {
+                s.workspace_poll(tx);
+            });
+            runtime.frame(0.01);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
     fn save_control_shortcut_and_palette_save_the_same_editor_buffer() {
         use super::super::tests::{open_palette, press, runtime_for};
         let root = tempfile::tempdir().unwrap();
@@ -4786,6 +5047,11 @@ mod tests {
         std::fs::write(&path, "disk\n").unwrap();
         let index_path = root.path().join(".git/index");
         let index_before = std::fs::read(&index_path).unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"autosave":{"policy":"editor_focus_loss"}}"#,
+        )
+        .unwrap();
         let mut state = state(root.path());
         open(&mut state, &path);
         state.workspace.tabs[0].edit.replace_text("buffer\n");

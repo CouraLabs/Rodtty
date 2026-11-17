@@ -104,6 +104,7 @@ pub enum Job {
     Open(PathBuf),
     Save {
         id: u64,
+        token: u64,
         document: Document,
         text: String,
         overwrite: bool,
@@ -144,6 +145,7 @@ pub enum Event {
     },
     Save {
         id: u64,
+        token: u64,
         result: Result<Document, SaveFailure>,
     },
     Scan {
@@ -199,12 +201,13 @@ impl Worker {
                     }
                     Job::Save {
                         id,
+                        token,
                         mut document,
                         text,
                         overwrite,
                     } => {
                         let result = document.save(&text, overwrite).map(|()| document);
-                        Event::Save { id, result }
+                        Event::Save { id, token, result }
                     }
                     Job::Scan {
                         token,
