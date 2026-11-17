@@ -18,7 +18,7 @@
         ],
         "minimized": false,
         "noBorder": false,
-        "pid": 320306
+        "pid": 339153
       },
       "header_double_click": true,
       "header_drag": {
@@ -51,6 +51,7 @@
       },
       "input_driver": "KWin Wayland fake-input",
       "maximize_restore": true,
+      "maximized_edges_inactive": true,
       "minimize_compositor_ack": true,
       "minimize_restored_via": "compositor activation",
       "minimized_native_state": {

@@ -28,8 +28,12 @@ geometry, drives real pointer input, restores prior focus/pointer where exposed,
 then verifies dirty-close cancellation, saving, background terminal output and
 same-session relaunch. It does not inspect unrelated window titles.
 
+Keep temporary session roots on the binary's filesystem (set TMPDIR under
+`target/`) so utility profiles use hard links instead of copying each executable.
+
 ```sh
-python3 scripts/native/check-linux-frame.py \
+mkdir -p "$PWD/target/native-tmp"
+TMPDIR="$PWD/target/native-tmp" python3 scripts/native/check-linux-frame.py \
   --binary "$PWD/target/debug/rodtty" --backend wayland \
   --fake-input-xml /path/to/plasma-wayland-protocols/src/protocols/fake-input.xml \
   --report /tmp/rodtty-frame-wayland.json --screenshot /tmp/rodtty-frame-wayland.png
@@ -62,5 +66,7 @@ show [Wayland](assets/linux-custom-frame-wayland.png) and
 
 The runtime suite separately checks header-child exclusion, control ordering and
 full bounds at the 640×360 minimum, Settings access, and preserving an unsaved
-editor after custom close/Cancel. Native Linux evidence was collected under KWin
+editor after custom close/Cancel. The integrated serial suite passed 89 tests; strict clippy, backend-only compilation,
+formatting and desktop builds passed. Wide/minimum light/dark workspace and
+Settings renders were visually inspected. Native Linux evidence was collected under KWin
 with Wayland at 150% scale and actual Xlib; other compositors have not been run.

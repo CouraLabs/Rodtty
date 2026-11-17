@@ -1587,6 +1587,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn custom_frame_places_controls_right_and_header_controls_keep_their_clicks() {
         let mut runtime = runtime();
         let minimize = runtime
@@ -1644,6 +1645,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn custom_close_keeps_unsaved_editor_until_owner_decides() {
         let root = tempfile::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());

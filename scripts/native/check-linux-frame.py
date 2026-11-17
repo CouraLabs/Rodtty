@@ -159,15 +159,16 @@ def main():
         if args.backend == 'x11':
             env.pop('WAYLAND_DISPLAY', None)
             env.pop('WAYLAND_SOCKET', None)
+        compositor = KWin(0)
+        previous = compositor.query()  # Capture focus/pointer before launching the probe.
         log = open(str(report) + '.log', 'w')
         app = subprocess.Popen([args.binary, '--frame-check', str(report), '--control-stdin', '--cwd', str(temp)], stdin=subprocess.PIPE, stdout=log, stderr=log, env=env, text=True)
-        driver, compositor, previous = None, None, None
+        driver = None
+        compositor.pid = app.pid
         evidence = {'passed': False, 'requested_backend': args.backend, 'input_driver': 'KWin Wayland fake-input' if args.fake_input_xml else 'XTest'}
         try:
             wait_for(lambda: report.with_suffix('.ready.json').exists() or app.poll() is not None, 'native frame did not become ready')
             assert app.poll() is None, f'Rodtty exited early; see {report}.log'
-            compositor = KWin(app.pid)
-            previous = compositor.query()
             initial = wait_for(lambda: compositor.query()['target'], 'isolated process has no compositor window')
             evidence['compositor_initial'] = initial
             ready = json.loads(report.with_suffix('.ready.json').read_text())
@@ -206,6 +207,13 @@ def main():
             original = target()['frame']
             control('maximize')
             wait_for(lambda: state()['maximized'], 'custom maximize button had no effect')
+            time.sleep(.5)
+            maximized_frame = target()['frame']
+            driver.move(maximized_frame[0] + 3, maximized_frame[1] + 3)
+            driver.down()
+            driver.move(maximized_frame[0] + 28, maximized_frame[1] + 28)
+            driver.up()
+            assert state()['maximized'], 'resize band must stay inactive while maximized'
             control('maximize')
             wait_for(lambda: not state()['maximized'], 'custom restore button had no effect')
             restored = wait_for(lambda: (v if same_frame((v := target()['frame']), original) else None), 'restore did not recover original compositor geometry')
@@ -264,7 +272,7 @@ def main():
             wait_for(lambda: not state()['unsaved_prompt'], 'Escape did not cancel native dirty close')
             assert state()['dirty'], 'canceling native custom close discarded the editor draft'
             evidence.update(passed=True, native_custom_close_prompt=True, native_cancel_kept_draft=True, undecorated=True, compositor_initial=initial,
-                            maximize_restore=True, restore_geometry=restored, header_double_click=True,
+                            maximize_restore=True, maximized_edges_inactive=True, restore_geometry=restored, header_double_click=True,
                             header_drag={'before': drag_before, 'after': moved}, resize=sizes,
                             minimize_compositor_ack=True, minimized_native_state=minimized, minimize_restored_via='compositor activation')
         except Exception as error:
