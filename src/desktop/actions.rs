@@ -9,6 +9,8 @@ pub(super) enum AppAction {
     CreateFile,
     CreateFolder,
     CopyFile,
+    RenameFile,
+    MoveFile,
     RevealFileOperation,
     CommandPalette,
     NewTerminal,
@@ -105,6 +107,18 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             "Explorer: Copy Selected Item To…",
             "",
             AppAction::CopyFile,
+        ),
+        (
+            "rename-file",
+            "Explorer: Rename Selected Item…",
+            "",
+            AppAction::RenameFile,
+        ),
+        (
+            "move-file",
+            "Explorer: Move Selected Item To…",
+            "",
+            AppAction::MoveFile,
         ),
         (
             "new-terminal",
@@ -343,12 +357,18 @@ impl State {
             AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
                 Some("No completed file operation")
             }
-            AppAction::CreateFile | AppAction::CreateFolder | AppAction::CopyFile
+            AppAction::CreateFile
+            | AppAction::CreateFolder
+            | AppAction::CopyFile
+            | AppAction::RenameFile
+            | AppAction::MoveFile
                 if self.workspace.operation_busy =>
             {
                 Some("A file operation is in progress")
             }
-            AppAction::CopyFile if self.selected_entry().is_none() => {
+            AppAction::CopyFile | AppAction::RenameFile | AppAction::MoveFile
+                if self.selected_entry().is_none() =>
+            {
                 Some("Select a file or folder first")
             }
             AppAction::SaveEditor(None)
@@ -436,6 +456,22 @@ impl State {
                     self.begin_file_operation(
                         crate::files::operations::FileOperation::Copy { source: entry.path },
                         tx,
+                    );
+                }
+            }
+            AppAction::RenameFile | AppAction::MoveFile => {
+                if let Some(entry) = self.selected_entry() {
+                    self.begin_file_operation(
+                        crate::files::operations::FileOperation::Move { source: entry.path },
+                        tx,
+                    );
+                    tx.focus_when_shown(
+                        if matches!(action, AppAction::RenameFile) {
+                            "operation-name"
+                        } else {
+                            "operation-destination"
+                        },
+                        true,
                     );
                 }
             }
