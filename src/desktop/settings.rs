@@ -163,6 +163,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
+                || matches(
+                    s,
+                    section,
+                    "clipboard right click context menu paste copy on selection",
+                )
                 || matches(s, section, "font size")
         } else if section == "Editor" {
             matches(s, section, "font size")
@@ -597,6 +602,86 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             }
             "Appearance" | "Editor" => {}
             "Terminal" => {
+                if matches(
+                    s,
+                    section,
+                    "clipboard right click context menu paste copy on selection",
+                ) {
+                    use crate::config::TerminalRightClick;
+                    group =
+                        group.child(text("Terminal clipboard").font(ui_label()).color(a.muted()));
+                    for (key, label, value) in [
+                        (
+                            "terminal-right-click-menu",
+                            "Right-click: context menu",
+                            TerminalRightClick::ContextMenu,
+                        ),
+                        (
+                            "terminal-right-click-paste",
+                            "Right-click: paste",
+                            TerminalRightClick::Paste,
+                        ),
+                    ] {
+                        group = group.child(
+                            button(
+                                a,
+                                key,
+                                format!(
+                                    "{} {label}",
+                                    if s.config.terminal_clipboard.right_click == value {
+                                        "●"
+                                    } else {
+                                        "○"
+                                    }
+                                ),
+                                move |s, _| {
+                                    s.save_config(|c| c.terminal_clipboard.right_click = value);
+                                },
+                            )
+                            .w_full(),
+                        );
+                    }
+                    group = group.child(button(
+                        a,
+                        "reset-terminal-right-click",
+                        "Reset right-click",
+                        |s, _| {
+                            s.save_config(|c| {
+                                c.terminal_clipboard.right_click = Default::default()
+                            });
+                        },
+                    ));
+                    group = group
+                        .child(
+                            button(
+                                a,
+                                "copy-on-selection",
+                                format!(
+                                    "Copy on selection: {}",
+                                    if s.config.terminal_clipboard.copy_on_selection {
+                                        "on"
+                                    } else {
+                                        "off"
+                                    }
+                                ),
+                                |s, _| {
+                                    s.save_config(|c| {
+                                        c.terminal_clipboard.copy_on_selection =
+                                            !c.terminal_clipboard.copy_on_selection
+                                    });
+                                },
+                            )
+                            .w_full(),
+                        )
+                        .child(button(
+                            a,
+                            "reset-copy-on-selection",
+                            "Reset copy on selection",
+                            |s, _| {
+                                s.save_config(|c| c.terminal_clipboard.copy_on_selection = false);
+                            },
+                        ));
+                }
                 if matches(s, section, "history save shell commands") {
                     group = group.child(
                         row()

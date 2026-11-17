@@ -417,7 +417,9 @@ impl State {
             {
                 Some("No active terminal session")
             }
-            AppAction::CopyTerminal if self.selection.is_none() => Some("No terminal selection"),
+            AppAction::CopyTerminal if self.selection.is_none_or(|(a, b)| a == b) => {
+                Some("No terminal selection")
+            }
             AppAction::SaveEditor(id)
                 if self
                     .editor_id(id)
@@ -637,8 +639,9 @@ impl State {
             AppAction::CopyTerminal => self.copy(tx),
             AppAction::PasteTerminal => {
                 self.workspace.terminal_focus = true;
+                self.workspace.layout.terminal = true;
                 tx.blur();
-                tx.request_paste();
+                self.request_terminal_paste(tx);
             }
             AppAction::SaveEditor(id) => {
                 if let Some(id) = self.editor_id(id) {
