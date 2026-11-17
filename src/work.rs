@@ -207,9 +207,16 @@ impl Worker {
                         if let (Some(Ok(listing)), Ok(Some(repo))) = (&mut listing, &git) {
                             for (path, status) in &repo.files {
                                 if status.code.contains('D')
+                                    && (hidden
+                                        || !path.file_name().is_some_and(|name| {
+                                            name.to_string_lossy().starts_with('.')
+                                        }))
                                     && path.parent().is_some_and(|parent| {
                                         parent == listing.root
-                                            || expanded.iter().any(|p| p == parent)
+                                            || (expanded.iter().any(|p| p == parent)
+                                                && listing.entries.iter().any(|entry| {
+                                                    entry.directory && entry.path == parent
+                                                }))
                                     })
                                     && !path.exists()
                                 {

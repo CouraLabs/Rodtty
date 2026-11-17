@@ -1673,6 +1673,9 @@ pub(super) fn host_tree_demo(s: &mut State) {
             s.workspace.tree_errors = listing.errors;
             s.workspace.repo = crate::git::inspect(&listing.root).ok().flatten();
             s.rebuild_tree();
+            s.workspace
+                .tree
+                .select(&root.join("src/desktop/workspace.rs").to_string_lossy());
         }
         Err(error) => s.workspace.explorer_error = Some(format!("{error:#}")),
     }
@@ -2033,10 +2036,40 @@ mod tests {
         std::fs::write(root.path().join("output.log"), "output").unwrap();
         std::fs::write(root.path().join("visible.txt"), "hello").unwrap();
         std::fs::write(root.path().join(".secret"), "hidden").unwrap();
+        std::fs::write(root.path().join(".deleted"), "tracked hidden").unwrap();
+        for args in [
+            vec!["add", ".deleted"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "hidden fixture",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(root.path())
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        std::fs::remove_file(root.path().join(".deleted")).unwrap();
         let mut state = state(root.path());
         state.toggle_files();
         wait(&mut state, |s| !s.workspace.scan_busy);
         let mut runtime = runtime_for(state);
+        assert!(
+            runtime
+                .find(root.path().join(".deleted").to_str().unwrap())
+                .is_none()
+        );
         assert!(
             runtime
                 .find(root.path().join("ignored").to_str().unwrap())
@@ -2058,7 +2091,7 @@ mod tests {
         });
         runtime.update(|_, _| {});
         runtime.frame(0.0);
-        for name in ["ignored", "output.log", ".secret"] {
+        for name in ["ignored", "output.log", ".secret", ".deleted"] {
             assert!(
                 runtime
                     .find(root.path().join(name).to_str().unwrap())
