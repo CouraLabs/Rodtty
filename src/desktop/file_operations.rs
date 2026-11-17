@@ -108,9 +108,10 @@ impl State {
             self.message = "Wait for open files and saves to finish before moving items.".into();
             return;
         }
-        if decision
-            .as_ref()
-            .is_some_and(|(_, choice)| *choice == CollisionChoice::Replace)
+        if moving
+            && decision
+                .as_ref()
+                .is_some_and(|(_, choice)| *choice == CollisionChoice::Replace)
             && self
                 .workspace
                 .tabs
@@ -181,6 +182,9 @@ impl State {
                 self.message = format!("{verb} {}", path.display());
                 self.workspace.operation_result = Some(path.clone());
                 self.reveal_file_result(path, tx);
+                if matches!(request.operation, FileOperation::Move { .. }) {
+                    self.persist_workspace();
+                }
             }
             Ok(OperationOutcome::Cancelled) => self.message = "File operation cancelled.".into(),
             Err(error) => self.message = format!("File operation failed: {error}"),
@@ -335,7 +339,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
         OperationPrompt::Collision(collision) => {
             content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
                 .child(text(collision.request.target.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
-                .child(text("Replace removes the existing item after the new item is ready. Keep Both creates a separate copy with an available name.").font(ui_label()).color(a.muted()).wrap());
+                .child(text("Replace removes the existing item after the new item is ready. Keep Both uses a separate, available name.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {
                 content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
             }

@@ -347,10 +347,11 @@ impl State {
             &mut w.revealed_directory,
             &mut w.restore_active,
             &mut w.latest_activation,
-        ] {
-            if let Some(path) = path {
-                remap(path, source, target);
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            remap(path, source, target);
         }
         for path in &mut w.layout.files {
             remap(path, source, target);
@@ -366,7 +367,6 @@ impl State {
         w.scan_token += 1;
         w.last_scan = Instant::now() - Duration::from_secs(3);
         self.invalidate_diff(true);
-        self.persist_workspace();
     }
 
     pub(super) fn reveal_file_result(&mut self, path: PathBuf, tx: &mut Tx) {

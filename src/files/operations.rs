@@ -255,7 +255,7 @@ fn rename_exclusive(source: &Path, target: &Path) -> Result<bool> {
         ) {
             return Ok(false);
         }
-        return Err(error).context("Move source without replacing destination");
+        Err(error).context("Move source without replacing destination")
     }
     #[cfg(not(target_os = "linux"))]
     {
