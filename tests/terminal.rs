@@ -470,10 +470,10 @@ fn semicolon_rich_application_titles_remain_exact_through_the_pty() {
     let terminal = session(root.path(), Config::default());
     let first = "Agent; 日本語 — long application title;".repeat(20);
     let second = format!("{};;", "続き; application title;".repeat(20));
-    let title = format!("{first}{second}");
-
     for command in [0, 2] {
         for (ending, terminator) in [("BEL", "\\007"), ("ST", "\\033\\\\")] {
+            let first = format!("{command} {ending};{first}");
+            let title = format!("{first}{second}");
             run(
                 &terminal,
                 &format!(
