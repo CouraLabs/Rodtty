@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify actual Wayland/Xlib app clipboard effects with a native Wayland reader.
 
-Requires KWin, Qt6Widgets development files and a C++ compiler. Every offered
+Requires KWin, Qt6Core development files, wayland-scanner and a C++ compiler. Every offered
 owner MIME payload remains in RAM/private pipes. The original snapshot remains
 alive until independent readback after app/provider cleanup. A failed restore
 retains that RAM snapshot and stops further test writes for recovery.
@@ -26,13 +26,11 @@ class Owner:
         env['QT_QPA_PLATFORM'] = 'wayland'
         self.process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
         assert self.process.stdout.readline().strip() == 'ready', 'native clipboard reader failed'
-        self.activate()
+
 
     def activate(self):
-        self.compositor.pid = self.process.pid
-        time.sleep(.25)
-        self.compositor.query('if(target) workspace.activeWindow=target;')
-        time.sleep(.4)
+        # data-control reads the native clipboard without focus or input serials.
+        pass
 
     def command(self, command):
         self.process.stdin.write(json.dumps(command) + '\n')
@@ -50,6 +48,7 @@ def main():
     parser.add_argument('--binary', required=True)
     parser.add_argument('--backend', choices=['wayland', 'x11'], required=True)
     parser.add_argument('--report', required=True)
+    parser.add_argument('--data-control-xml', required=True)
     args = parser.parse_args()
     spec = importlib.util.spec_from_file_location('frame_check', Path(__file__).with_name('check-linux-frame.py'))
     frame = importlib.util.module_from_spec(spec)
@@ -66,13 +65,19 @@ def main():
     with tempfile.TemporaryDirectory(prefix='rodtty-native-clipboard-') as directory:
         directory = Path(directory)
         helper = directory / 'clipboard-owner'
-        flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'Qt6Widgets'], text=True).split()
-        subprocess.run(['c++', '-std=c++17', '-fPIC', '-pie', str(Path(__file__).with_name('linux-clipboard-owner.cpp')), '-o', str(helper), *flags], check=True)
+        xml = Path(args.data_control_xml)
+        assert xml.is_file(), 'native data-control protocol XML unavailable'
+        header, code, obj = directory / 'clipboard-data-control-client.h', directory / 'clipboard-data-control.c', directory / 'clipboard-data-control.o'
+        subprocess.run(['wayland-scanner', 'client-header', str(xml), str(header)], check=True)
+        subprocess.run(['wayland-scanner', 'private-code', str(xml), str(code)], check=True)
+        subprocess.run(['cc', '-c', str(code), '-o', str(obj)], check=True)
+        flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'Qt6Core', 'wayland-client'], text=True).split()
+        subprocess.run(['c++', '-std=c++17', '-fPIC', '-pie', '-pthread', '-I', str(directory), str(Path(__file__).with_name('linux-clipboard-owner.cpp')), str(obj), '-o', str(helper), *flags], check=True)
         try:
             owner = Owner(helper, compositor)
             initial = owner.command({'snapshot': True})
             saved = initial.pop('content')  # Never include owner payloads in a report/log.
-            assert initial['active'] and saved, 'refusing test writes: active all-MIME snapshot unavailable'
+            assert initial['clipboard_access'] and saved, 'refusing test writes: native all-MIME snapshot unavailable'
             result['owner_mime_forms_snapshotted'] = len(saved)
             for suffix in ['', '.ready.json', '.input.json']:
                 (report if not suffix else report.with_suffix(suffix)).unlink(missing_ok=True)
@@ -89,7 +94,7 @@ def main():
                     time.sleep(.025)
                 owner.activate()
                 observed = owner.command({})
-                assert observed['active'] and observed['is_fixture'], 'native copy differs from exact Unicode fixture'
+                assert observed['clipboard_access'] and observed['is_fixture'], 'native copy differs from exact Unicode fixture'
                 assert owner.command({'set_fixture': True}).get('fixture_set'), 'clipboard fixture ownership changed'
                 report.with_suffix('.input.json').write_text('{"copy_verified":true}')
                 assert process.wait(30) == 0, 'native app clipboard check failed'
@@ -105,6 +110,9 @@ def main():
                 process.wait(10)
             if owner and saved:
                 restored = owner.command({'restore': True, 'verify': saved}).get('original_forms_match', False)
+                # Let the manager request/retain every restored form while this
+                # native provider's event loop is still serving its source.
+                time.sleep(1.5)
                 owner.close()
                 owner = None
                 reader = Owner(helper, compositor)
