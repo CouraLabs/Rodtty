@@ -466,3 +466,46 @@ fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_u
         b"copied content"
     );
 }
+
+#[test]
+fn save_as_preserves_unsaved_text_outside_removal_and_requires_fresh_collision_consent() {
+    use rodtty::files::Document;
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("remove-me");
+    fs::create_dir(&folder).unwrap();
+    let source = folder.join("notes.txt");
+    fs::write(&source, "saved source").unwrap();
+    let target = root.path().join("preserved.txt");
+    fs::write(&target, "existing destination").unwrap();
+    let request = OperationRequest {
+        operation: FileOperation::SaveAs {
+            document: Document::open(&source).unwrap(),
+            text: "unsaved work".into(),
+            removing: folder.clone(),
+            protected: Vec::new(),
+        },
+        target: target.clone(),
+    };
+    let ticket = collision(request.clone());
+    fs::write(&target, "external edit").unwrap();
+    let ticket = match request
+        .clone()
+        .execute(Some((ticket, CollisionChoice::Replace)))
+        .unwrap()
+    {
+        OperationOutcome::Collision(ticket) => ticket,
+        other => panic!("expected fresh collision decision: {other:?}"),
+    };
+    assert_eq!(fs::read_to_string(&target).unwrap(), "external edit");
+    let saved = match request
+        .execute(Some((ticket, CollisionChoice::KeepBoth)))
+        .unwrap()
+    {
+        OperationOutcome::SavedAs(document) => document,
+        other => panic!("expected saved work: {other:?}"),
+    };
+    assert_eq!(saved.path, root.path().join("preserved copy.txt"));
+    assert_eq!(fs::read_to_string(saved.path).unwrap(), "unsaved work");
+    assert_eq!(fs::read_to_string(source).unwrap(), "saved source");
+    assert_eq!(fs::read_to_string(target).unwrap(), "external edit");
+}

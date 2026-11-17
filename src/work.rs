@@ -75,6 +75,15 @@ impl Layout {
 }
 
 pub enum Job {
+    PrepareRemoval {
+        id: u64,
+        path: PathBuf,
+    },
+    Remove {
+        id: u64,
+        plan: files::removal::RemovalPlan,
+        permanent: bool,
+    },
     FileOperation {
         id: u64,
         request: files::operations::OperationRequest,
@@ -116,6 +125,14 @@ pub enum Job {
     },
 }
 pub enum Event {
+    PrepareRemoval {
+        id: u64,
+        result: Result<files::removal::RemovalPlan, String>,
+    },
+    Remove {
+        id: u64,
+        result: Result<files::removal::RemovalOutcome, String>,
+    },
     FileOperation {
         id: u64,
         result: Result<files::operations::OperationOutcome, String>,
@@ -156,6 +173,24 @@ impl Worker {
         std::thread::spawn(move || {
             for job in jobs {
                 let event = match job {
+                    Job::PrepareRemoval { id, path } => Event::PrepareRemoval {
+                        id,
+                        result: files::removal::RemovalPlan::prepare(path)
+                            .map_err(|e| format!("{e:#}")),
+                    },
+                    Job::Remove {
+                        id,
+                        plan,
+                        permanent,
+                    } => Event::Remove {
+                        id,
+                        result: (if permanent {
+                            plan.permanently_delete()
+                        } else {
+                            plan.trash()
+                        })
+                        .map_err(|e| format!("{e:#}")),
+                    },
                     Job::FileOperation {
                         id,
                         request,

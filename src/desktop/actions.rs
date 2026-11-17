@@ -9,6 +9,8 @@ pub(super) enum AppAction {
     CreateFile,
     CreateFolder,
     CopyFile,
+    TrashFile,
+    ToggleDeletionConfirmation,
     RevealFileOperation,
     CommandPalette,
     NewTerminal,
@@ -68,6 +70,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         }
     };
     for (id, title, shortcut, action) in [
+        (
+            "trash-file",
+            "Explorer: Move Selected Item to Trash",
+            "",
+            AppAction::TrashFile,
+        ),
         (
             "reveal-file-operation",
             "Explorer: Reveal Last File Operation",
@@ -311,12 +319,15 @@ impl State {
             AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
                 Some("No completed file operation")
             }
-            AppAction::CreateFile | AppAction::CreateFolder | AppAction::CopyFile
-                if self.workspace.operation_busy =>
+            AppAction::CreateFile
+            | AppAction::CreateFolder
+            | AppAction::CopyFile
+            | AppAction::TrashFile
+                if self.workspace.operation_busy || self.workspace.removal.is_some() =>
             {
                 Some("A file operation is in progress")
             }
-            AppAction::CopyFile if self.selected_entry().is_none() => {
+            AppAction::CopyFile | AppAction::TrashFile if self.selected_entry().is_none() => {
                 Some("Select a file or folder first")
             }
             AppAction::SaveEditor(None)
@@ -393,6 +404,10 @@ impl State {
             self.supersede_pending_preview();
         }
         match action {
+            AppAction::TrashFile => self.begin_removal(tx),
+            AppAction::ToggleDeletionConfirmation => {
+                self.save_config(|c| c.explorer.confirm_deletion = !c.explorer.confirm_deletion);
+            }
             AppAction::CreateFile => {
                 self.begin_file_operation(crate::files::operations::FileOperation::CreateFile, tx)
             }

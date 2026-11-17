@@ -65,6 +65,7 @@ pub(super) struct Workspace {
     pub entries: Vec<Entry>,
     pub(super) tree: TreeModel<TreeEntry>,
     pub(super) operation_busy: bool,
+    pub(super) removal: Option<super::removal::RemovalState>,
     pub(super) operation_result: Option<PathBuf>,
     pub(super) operation_id: u64,
     pub(super) operation_name: TextEdit,
@@ -123,6 +124,7 @@ impl Default for Workspace {
             entries: Vec::new(),
             tree: TreeModel::new().key("file-list"),
             operation_busy: false,
+            removal: None,
             operation_result: None,
             operation_id: 0,
             operation_name: TextEdit::new(""),
@@ -171,6 +173,69 @@ impl Default for Workspace {
 }
 
 impl State {
+    pub(super) fn file_io_pending(&self) -> bool {
+        !self.workspace.opening.is_empty() || self.workspace.tabs.iter().any(|t| t.saving)
+    }
+    pub(super) fn remove_file_references(&mut self, path: &std::path::Path) {
+        let active = self.workspace.tabs.get(self.workspace.active).map(|t| t.id);
+        self.workspace
+            .tabs
+            .retain(|t| !t.document.path.starts_with(path));
+        self.workspace.active = active
+            .and_then(|id| self.workspace.tabs.iter().position(|t| t.id == id))
+            .unwrap_or_else(|| {
+                self.workspace
+                    .active
+                    .min(self.workspace.tabs.len().saturating_sub(1))
+            });
+        self.workspace.entries.retain(|e| !e.path.starts_with(path));
+        self.workspace
+            .layout
+            .expanded_folders
+            .retain(|p| !p.starts_with(path));
+        self.workspace
+            .tree_errors
+            .retain(|(p, _)| !p.starts_with(path));
+        self.workspace.tree_dirty = true;
+        self.workspace.scan_token += 1;
+        self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+        self.workspace.operation_result = None;
+        self.workspace.revealed_directory = None;
+        self.workspace.pending_reveal = None;
+        if self
+            .workspace
+            .directory
+            .as_ref()
+            .is_some_and(|p| p.starts_with(path))
+        {
+            self.workspace.directory = path.parent().map(PathBuf::from);
+        }
+        if self.workspace.tabs.is_empty() {
+            self.workspace.terminal_focus = true;
+        }
+        self.invalidate_diff(true);
+        self.persist_file_references();
+    }
+    pub(super) fn persist_file_references(&mut self) {
+        self.workspace.layout.explorer_directory = self.workspace.directory.clone();
+        self.workspace.layout.files = self
+            .workspace
+            .tabs
+            .iter()
+            .filter(|t| !t.preview)
+            .map(|t| t.document.path.clone())
+            .collect();
+        self.workspace.layout.active_file = self
+            .workspace
+            .tabs
+            .get(self.workspace.active)
+            .filter(|t| !t.preview)
+            .map(|t| t.document.path.clone());
+        self.io(Job::Layout {
+            root: self.root.clone(),
+            layout: self.workspace.layout.clone(),
+        });
+    }
     pub(super) fn workspace_setup(&mut self) {
         self.workspace.worker = Some(Worker::new(self.wake.clone()));
         self.workspace.explorer_preferences = self.config.explorer.clone();
@@ -469,6 +534,10 @@ impl State {
     /// Common activation boundary: restoration and explicit Open keep a file;
     /// explorer inspection may reuse only a clean, idle temporary tab.
     pub(super) fn open_file_with_preview(&mut self, path: PathBuf, preview: bool) {
+        if self.workspace.removal.is_some() {
+            self.message = "Finish or cancel the deletion first.".into();
+            return;
+        }
         self.workspace.latest_activation = Some(path.clone());
         if let Some(i) = self
             .workspace
@@ -536,6 +605,10 @@ impl State {
         }
     }
     pub(super) fn request_action(&mut self, action: Action, tx: &mut Tx) {
+        if self.workspace.removal.is_some() {
+            self.message = "Finish or cancel the deletion first.".into();
+            return;
+        }
         if self.workspace.tabs.iter().any(|tab| {
             tab.saving
                 && match action {
@@ -630,6 +703,10 @@ impl State {
         }
     }
     pub(super) fn save_file(&mut self, id: u64, overwrite: bool, after: Option<Action>) {
+        if self.workspace.removal.is_some() {
+            self.message = "Finish or cancel the deletion first.".into();
+            return;
+        }
         let Some(tab) = self.workspace.tabs.iter_mut().find(|t| t.id == id) else {
             return;
         };
@@ -667,6 +744,9 @@ impl State {
         self.request_action(action, tx);
     }
     fn reload_external(&mut self, id: u64) {
+        if self.workspace.removal.is_some() {
+            return;
+        }
         if let Some(tab) = self.workspace.tabs.iter().find(|t| t.id == id)
             && !tab.saving
         {
@@ -819,6 +899,8 @@ impl State {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                Event::PrepareRemoval { id, result } => self.finish_prepare_removal(id, result, tx),
+                Event::Remove { id, result } => self.finish_removal(id, result, tx),
                 Event::FileOperation { id, result } => self.finish_file_operation(id, result, tx),
                 Event::Reload {
                     id,
@@ -1110,7 +1192,9 @@ impl State {
                 changed = true;
             }
         }
-        if !self.workspace.scan_busy && self.workspace.last_scan.elapsed() > Duration::from_secs(1)
+        if self.workspace.removal.is_none()
+            && !self.workspace.scan_busy
+            && self.workspace.last_scan.elapsed() > Duration::from_secs(1)
         {
             let directory = self
                 .workspace
@@ -1137,7 +1221,8 @@ impl State {
                 self.workspace.last_scan = Instant::now();
             }
         }
-        if self.workspace.diff_pending.is_none()
+        if self.workspace.removal.is_none()
+            && self.workspace.diff_pending.is_none()
             && self.workspace.layout.editor
             && self.workspace.last_diff.elapsed() > Duration::from_secs(2)
             && let Some(tab) = self.workspace.tabs.get(self.workspace.active)
@@ -3060,6 +3145,276 @@ mod tests {
         }
         assert_eq!(std::fs::read(root.path().join("notes.txt")).unwrap(), b"");
         assert!(root.path().join("work").is_dir());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash() {
+        use super::super::tests::runtime_for;
+        let fixture = tempfile::tempdir().unwrap();
+        if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "desktop::workspace::tests::explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash", "--nocapture"])
+                .env("RODTTY_TRASH_UI_CHILD", fixture.path())
+                .env("XDG_DATA_HOME", fixture.path().join("data"))
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let fixture = PathBuf::from(std::env::var_os("RODTTY_TRASH_UI_CHILD").unwrap());
+        let folder = fixture.join("files");
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("notes.txt");
+        std::fs::write(&path, "recoverable work").unwrap();
+        let mut state = state(&fixture);
+        state.navigate(folder.clone());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        open(&mut state, &path);
+        state.workspace.tree.select(path.to_str().unwrap());
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-cancel");
+        assert!(path.exists());
+        assert_eq!(
+            runtime.state.workspace.tabs[0].edit.text,
+            "recoverable work"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-confirm");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Moved to Trash")
+        });
+        assert!(!path.exists());
+        assert!(runtime.state.workspace.tabs.is_empty());
+        assert!(!runtime.state.workspace.layout.files.contains(&path));
+        assert_eq!(
+            std::fs::read_dir(fixture.join("data/Trash/files"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel() {
+        use super::super::tests::runtime_for;
+        let fixture = tempfile::tempdir().unwrap();
+        if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "desktop::workspace::tests::trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel", "--nocapture"])
+                .env("RODTTY_TRASH_UI_CHILD", fixture.path())
+                .env("XDG_DATA_HOME", fixture.path().join("data"))
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let fixture = PathBuf::from(std::env::var_os("RODTTY_TRASH_UI_CHILD").unwrap());
+        let folder = fixture.join("work");
+        std::fs::create_dir(&folder).unwrap();
+        let paths = [
+            folder.join("a.txt"),
+            folder.join("b.txt"),
+            fixture.join("other.txt"),
+        ];
+        let mut state = state(&fixture);
+        for (i, path) in paths.iter().enumerate() {
+            std::fs::write(path, "saved source").unwrap();
+            state.open_file(path.clone());
+            wait(&mut state, |s| s.workspace.tabs.len() == i + 1);
+            state.workspace.tabs[i]
+                .edit
+                .replace_text(format!("unsaved work {i}"));
+            state.workspace.tabs[i].revision += 1;
+        }
+        state.navigate(fixture.clone());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.path == folder)
+        });
+        state.workspace.tree.select(folder.to_str().unwrap());
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-confirm");
+        click(&mut runtime, "removal-discard");
+        click(&mut runtime, "removal-cancel");
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved work 0");
+        assert_eq!(runtime.state.workspace.tabs[1].edit.text, "unsaved work 1");
+        assert!(folder.exists());
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-confirm");
+        click(&mut runtime, "removal-save-as");
+        runtime.update(|s, _| {
+            s.workspace
+                .operation_destination
+                .replace_text(folder.join("unsafe.txt").to_string_lossy())
+        });
+        click(&mut runtime, "removal-save-as-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(
+            runtime.state.message.contains("outside"),
+            "{}",
+            runtime.state.message
+        );
+        assert!(folder.exists());
+        let destination = fixture.join("preserved.txt");
+        std::fs::write(&destination, "existing destination").unwrap();
+        runtime.update(|s, _| {
+            s.workspace
+                .operation_destination
+                .replace_text(destination.to_string_lossy())
+        });
+        click(&mut runtime, "removal-save-as-submit");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "operation-keep-both");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-discard");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Moved to Trash")
+        });
+        assert!(!folder.exists());
+        let saved = fixture.join("preserved copy.txt");
+        assert_eq!(std::fs::read_to_string(&saved).unwrap(), "unsaved work 0");
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "existing destination"
+        );
+        assert_eq!(runtime.state.workspace.tabs.len(), 2);
+        let preserved = runtime
+            .state
+            .workspace
+            .tabs
+            .iter()
+            .find(|t| t.document.path == saved)
+            .unwrap();
+        assert_eq!(preserved.edit.text, "unsaved work 0");
+        assert!(!preserved.dirty());
+        let unrelated = runtime
+            .state
+            .workspace
+            .tabs
+            .iter()
+            .find(|t| t.document.path == paths[2])
+            .unwrap();
+        assert_eq!(unrelated.edit.text, "unsaved work 2");
+        assert!(unrelated.dirty());
+        assert_eq!(std::fs::read_to_string(&paths[2]).unwrap(), "saved source");
+        assert!(runtime.state.workspace.layout.files.contains(&saved));
+        assert!(!runtime.state.workspace.layout.files.contains(&paths[1]));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trash_failure_requires_permanent_confirmation_even_when_preferences_disable_confirmation() {
+        use super::super::tests::runtime_for;
+        let fixture = tempfile::tempdir().unwrap();
+        if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "desktop::workspace::tests::trash_failure_requires_permanent_confirmation_even_when_preferences_disable_confirmation", "--nocapture"])
+                .env("RODTTY_TRASH_UI_CHILD", fixture.path())
+                .env("XDG_DATA_HOME", fixture.path().join("blocked-data-home"))
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let fixture = PathBuf::from(std::env::var_os("RODTTY_TRASH_UI_CHILD").unwrap());
+        std::fs::write(fixture.join("blocked-data-home"), "not a folder").unwrap();
+        let folder = fixture.join("files");
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("notes.txt");
+        std::fs::write(&path, "retained until confirmed").unwrap();
+        let mut state = state(&fixture);
+        state.save_config(|c| c.explorer.confirm_deletion = false);
+        state.navigate(folder);
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        open(&mut state, &path);
+        state.workspace.tree.select(path.to_str().unwrap());
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(runtime.find("removal-permanent").is_some());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "retained until confirmed"
+        );
+        assert_eq!(runtime.state.workspace.tabs.len(), 1);
+        click(&mut runtime, "removal-cancel");
+        assert!(path.exists());
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        // A stale permanent-deletion decision cannot remove another process's new version.
+        std::fs::write(&path, "external edit").unwrap();
+        click(&mut runtime, "removal-permanent");
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        assert!(runtime.state.message.contains("changed"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit");
+        assert_eq!(runtime.state.workspace.tabs.len(), 1);
+        runtime.update(|s, tx| s.dispatch(AppAction::TrashFile, tx));
+        wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
+        click(&mut runtime, "removal-permanent");
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.operation_busy && s.message.starts_with("Permanently deleted")
+        });
+        assert!(!path.exists());
+        assert!(runtime.state.workspace.tabs.is_empty());
+    }
+
+    #[test]
+    fn deletion_confirmation_preference_is_live_persisted_searchable_and_resettable() {
+        use super::super::tests::runtime_for;
+        let fixture = tempfile::tempdir().unwrap();
+        let mut state = state(fixture.path());
+        state.open_settings(&mut Tx::default());
+        state.settings_query.replace_text("Trash");
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, "settings-confirm-deletion");
+        assert!(
+            !Config::load(fixture.path())
+                .unwrap()
+                .explorer
+                .confirm_deletion
+        );
+        click(&mut runtime, "reset-explorer-preferences");
+        assert!(
+            Config::load(fixture.path())
+                .unwrap()
+                .explorer
+                .confirm_deletion
+        );
+        let mut external = Config::load(fixture.path()).unwrap();
+        external.explorer.confirm_deletion = false;
+        external.save(fixture.path()).unwrap();
+        runtime.update(|s, _| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            s.poll_settings();
+        });
+        assert!(!runtime.state.config.explorer.confirm_deletion);
+        assert!(runtime.find("settings-confirm-deletion").is_some());
     }
 
     fn wait_runtime(runtime: &mut rune::Runtime<State>, condition: impl Fn(&State) -> bool) {

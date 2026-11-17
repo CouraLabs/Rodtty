@@ -19,6 +19,7 @@ mod palette;
 mod tabs;
 use appearance::Appearance;
 mod file_operations;
+mod removal;
 mod settings;
 use fonts::{label as ui_label, ui as ui_style};
 mod workspace;
@@ -46,6 +47,7 @@ enum Pending {
     Window,
     File(workspace::FilePrompt),
     Operation(file_operations::OperationPrompt),
+    Removal(removal::RemovalPrompt),
 }
 
 struct State {
@@ -916,6 +918,9 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
     if state.workspace_menu {
         root = root.child(workspace_menu(a));
     }
+    if let Some(dialog) = removal::view(state, a) {
+        root = root.child(dialog);
+    }
     if let Some(dialog) = file_operations::view(state, a) {
         root = root.child(dialog);
     }
@@ -990,9 +995,17 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if state.pending.is_some() {
         if event.key == Key::Escape {
-            state.cancel_file_action();
+            if state.workspace.removal.is_some() {
+                state.cancel_removal(tx);
+            } else {
+                state.cancel_file_action();
+            }
+            return true;
         }
-        return !matches!(state.pending, Some(Pending::Operation(_)));
+        return !matches!(
+            state.pending,
+            Some(Pending::Operation(_) | Pending::Removal(removal::RemovalPrompt::SaveAs(_)))
+        );
     }
     if state.workspace.operation_context.is_some() {
         if event.key == Key::Escape {
@@ -1396,6 +1409,7 @@ pub fn run() -> Result<()> {
                 && arg != "--font-check"
                 && arg != "--frame-check"
                 && arg != "--session-policy-check"
+                && arg != "--trash-check"
         })
         .nth(1)
         .map(PathBuf::from);
@@ -1487,6 +1501,7 @@ fn native_check(
     report: PathBuf,
     backend: Arc<std::sync::Mutex<String>>,
 ) {
+    let with_trash = std::env::args().any(|a| a == "--trash-check");
     let with_frame = std::env::args().any(|a| a == "--frame-check");
     let with_fonts = std::env::args().any(|a| a == "--font-check");
     let with_sessions = std::env::args().any(|a| a == "--session-policy-check");
@@ -1535,6 +1550,11 @@ fn native_check(
                 anyhow::bail!("terminal did not produce {needle}");
             };
             wait_text("rodtty:")?;
+            let trash_evidence = if with_trash {
+                Some(removal::native_check(&handle)?)
+            } else {
+                None
+            };
             let frame_evidence = if with_frame {
                 // Real editor work makes the native custom-close check exercise the
                 // same dirty-file decision as the menu and OS close lifecycle.
@@ -1799,6 +1819,9 @@ fn native_check(
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
                 "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"theme_families_preserved_session":9,"family_mode_changes":27,"output_after_appearance_change":true});
+            if let Some(trash) = trash_evidence {
+                report["trash"] = trash;
+            }
             if let Some(policies) = session_policies {
                 report["session_policies"] = policies;
                 wait_app(&handle, |s| {

@@ -97,6 +97,11 @@ impl State {
         if self.workspace.operation_busy {
             return;
         }
+        if self.workspace.removal.is_some()
+            && !matches!(request.operation, FileOperation::SaveAs { .. })
+        {
+            return;
+        }
         self.workspace.operation_id += 1;
         if self.io(Job::FileOperation {
             id: self.workspace.operation_id,
@@ -105,7 +110,11 @@ impl State {
         }) {
             self.workspace.operation_busy = true;
             self.workspace.operation_result = None;
-            self.pending = None;
+            self.pending = if self.workspace.removal.is_some() {
+                Some(Pending::Removal(super::removal::RemovalPrompt::Busy))
+            } else {
+                None
+            };
             self.workspace.operation_error = None;
             tx.blur();
             self.workspace.terminal_focus = true;
@@ -118,6 +127,10 @@ impl State {
             return;
         };
         if choice == CollisionChoice::Cancel {
+            if self.workspace.removal.is_some() {
+                self.cancel_removal(tx);
+                return;
+            }
             self.pending = None;
             self.message = "File operation cancelled.".into();
             tx.blur();
@@ -138,6 +151,7 @@ impl State {
         }
         self.workspace.operation_busy = false;
         match result {
+            Ok(OperationOutcome::SavedAs(document)) => self.finish_removal_save_as(document, tx),
             Ok(OperationOutcome::Collision(collision)) => {
                 self.message = "Destination exists. Choose Replace, Keep Both, or Cancel.".into();
                 self.pending = Some(Pending::Operation(OperationPrompt::Collision(collision)));
@@ -154,7 +168,13 @@ impl State {
                 self.reveal_file_result(path, tx);
             }
             Ok(OperationOutcome::Cancelled) => self.message = "File operation cancelled.".into(),
-            Err(error) => self.message = format!("File operation failed: {error}"),
+            Err(error) => {
+                if self.workspace.removal.is_some() {
+                    self.removal_save_as_failed(error, tx);
+                } else {
+                    self.message = format!("File operation failed: {error}");
+                }
+            }
         }
     }
 
@@ -187,6 +207,10 @@ impl State {
 }
 
 fn cancel(s: &mut State, tx: &mut Tx) {
+    if s.workspace.removal.is_some() {
+        s.cancel_removal(tx);
+        return;
+    }
     s.pending = None;
     s.workspace.operation_context = None;
     tx.blur();
@@ -218,6 +242,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 AppAction::CreateFolder,
             ),
             ("context-copy-file", "Copy To…", AppAction::CopyFile),
+            ("context-trash-file", "Move to Trash…", AppAction::TrashFile),
         ] {
             let enabled = s.action_disabled(action).is_none();
             menu = menu.child(
@@ -237,7 +262,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                     y.clamp(
                         8.0,
                         (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 4.0
+                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 5.0
                             - 28.0)
                             .max(8.0),
                     ),
@@ -275,6 +300,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::CreateFile => ("New file", "Create file"),
                 FileOperation::CreateFolder => ("New folder", "Create folder"),
                 FileOperation::Copy { .. } => ("Copy item", "Copy"),
+                FileOperation::SaveAs { .. } => ("Save work as", "Save As"),
             };
             content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
             if let FileOperation::Copy { source } = operation {

@@ -1,0 +1,726 @@
+use crate::{Error, TrashContext, TrashItem, TrashItemMetadata, TrashItemSize};
+use std::{
+    borrow::Borrow,
+    cell::RefCell,
+    ffi::{c_void, OsStr, OsString},
+    os::windows::{ffi::OsStrExt, prelude::*},
+    path::{Component, Path, PathBuf, Prefix},
+};
+
+use windows::Win32::{
+    Foundation::*, Storage::EnhancedStorage::*, System::Com::*, System::SystemServices::*, UI::Shell::*,
+};
+use windows::{
+    core::{implement, ComObject, Interface, Ref, HRESULT, PCWSTR, PWSTR},
+    Win32::System::Com::StructuredStorage::PropVariantToBSTR,
+};
+
+const SCID_ORIGINAL_LOCATION: PROPERTYKEY = PROPERTYKEY { fmtid: PSGUID_DISPLACED, pid: PID_DISPLACED_FROM };
+const SCID_DATE_DELETED: PROPERTYKEY = PROPERTYKEY { fmtid: PSGUID_DISPLACED, pid: PID_DISPLACED_DATE };
+
+impl From<windows::core::Error> for Error {
+    fn from(err: windows::core::Error) -> Error {
+        let code = err.code();
+        let description = match copy_engine_reason(code) {
+            Some(reason) => format!("windows error: {reason} ({:#010x})", code.0 as u32),
+            None => format!("windows error: {err}"),
+        };
+        Error::Os { code: code.0, description }
+    }
+}
+
+/// `FACILITY_SHELL`: the codes of the shell's copy engine (`sherrors.h`).
+const FACILITY_SHELL: u32 = 0x27;
+
+/// What a copy engine failure (`COPYENGINE_E_*`, `0x8027xxxx`) means, in the
+/// words of `sherrors.h`.
+///
+/// These are the reasons `IFileOperation` reports per item. The system has no
+/// message text for them: `FormatMessage` either finds none or one from
+/// another facility (`0x80270002` comes out as a Network Access Protection
+/// message), so they are spelled out here. `None` for anything that is not a
+/// copy engine failure, which the system can describe itself.
+fn copy_engine_reason(code: HRESULT) -> Option<&'static str> {
+    if code.is_ok() || (code.0 as u32 >> 16) & 0x1FFF != FACILITY_SHELL {
+        return None;
+    }
+    Some(match code {
+        COPYENGINE_E_USER_CANCELLED | COPYENGINE_E_CANCELLED => "the operation was cancelled",
+        COPYENGINE_E_REQUIRES_ELEVATION => "the operation requires elevation",
+        COPYENGINE_E_INVALID_FILES_SRC => "invalid source path",
+        COPYENGINE_E_INVALID_FILES_DEST => "invalid destination path",
+        COPYENGINE_E_PATH_TOO_DEEP_SRC => "the source path is too long",
+        COPYENGINE_E_PATH_TOO_DEEP_DEST => "the destination path would be too long",
+        COPYENGINE_E_ROOT_DIR_SRC => "the source is a root directory",
+        COPYENGINE_E_ACCESS_DENIED_SRC => "access denied to the source",
+        COPYENGINE_E_ACCESS_DENIED_DEST => "access denied to the destination",
+        COPYENGINE_E_PATH_NOT_FOUND_SRC => "the source does not exist or is unavailable",
+        COPYENGINE_E_PATH_NOT_FOUND_DEST => "the destination does not exist or is unavailable",
+        COPYENGINE_E_NET_DISCONNECT_SRC => "the source is on a disconnected network location",
+        COPYENGINE_E_NET_DISCONNECT_DEST => "the destination is on a disconnected network location",
+        COPYENGINE_E_SHARING_VIOLATION_SRC => "the source is in use by another process",
+        COPYENGINE_E_SHARING_VIOLATION_DEST => "the destination is in use by another process",
+        COPYENGINE_E_ALREADY_EXISTS_NORMAL
+        | COPYENGINE_E_ALREADY_EXISTS_READONLY
+        | COPYENGINE_E_ALREADY_EXISTS_SYSTEM
+        | COPYENGINE_E_ALREADY_EXISTS_FOLDER => "the destination already exists",
+        COPYENGINE_E_DISK_FULL | COPYENGINE_E_DISK_FULL_CLEAN => "the destination is full",
+        COPYENGINE_E_CANT_REACH_SOURCE => "the source cannot be reached",
+        COPYENGINE_E_RECYCLE_FORCE_NUKE => "the Recycle Bin is not available on this drive",
+        COPYENGINE_E_RECYCLE_SIZE_TOO_BIG => "the item is too large for the Recycle Bin",
+        COPYENGINE_E_RECYCLE_PATH_TOO_LONG => "the item is too deep for the Recycle Bin",
+        COPYENGINE_E_RECYCLE_BIN_NOT_FOUND => "the Recycle Bin could not be found or is unavailable",
+        COPYENGINE_E_DIR_NOT_EMPTY => "the directory is not empty",
+        COPYENGINE_E_ACCESSDENIED_READONLY => "the item is read-only",
+        COPYENGINE_E_CANNOT_MOVE_FROM_RECYCLE_BIN => "the item cannot be moved out of the Recycle Bin",
+        COPYENGINE_E_INTERNET_ITEM_STORAGE_PROVIDER_ERROR | COPYENGINE_E_INTERNET_ITEM_STORAGE_PROVIDER_PAUSED => {
+            "the storage provider of the item is unavailable"
+        }
+        COPYENGINE_E_BLOCKED_BY_EDP_POLICY => "blocked by policy",
+        _ => "the shell's file operation failed",
+    })
+}
+
+/// `windows error: <reason> (0x…)` for an item the shell did not process.
+fn describe_item_failure(path: &Path, code: HRESULT) -> String {
+    let reason = match copy_engine_reason(code) {
+        Some(reason) => reason.to_string(),
+        None => windows::core::Error::from(code).message(),
+    };
+    format!("windows error: {}: {reason} ({:#010x})", path.display(), code.0 as u32)
+}
+
+/// Collects, per item, why `IFileOperation` did not process it.
+///
+/// `PerformOperations` and `FinishOperations` report success when individual
+/// items were skipped (with `FOF_NO_UI` a refused item is skipped, not
+/// asked about); only `GetAnyOperationsAborted` says that something was, and
+/// only the per-item callbacks say why.
+#[implement(IFileOperationProgressSink)]
+struct FailureSink {
+    failures: RefCell<Vec<(PathBuf, HRESULT)>>,
+}
+
+impl FailureSink {
+    fn record(&self, item: Ref<'_, IShellItem>, result: HRESULT) {
+        if result.is_ok() {
+            // Success codes include copy engine ones such as
+            // `COPYENGINE_S_DONT_PROCESS_CHILDREN` for a recycled item.
+            return;
+        }
+        let path = item
+            .as_ref()
+            .and_then(|item| unsafe { get_display_name(item, SIGDN_FILESYSPATH) }.ok())
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        self.failures.borrow_mut().push((path, result));
+    }
+}
+
+#[allow(non_snake_case)] // the method names are COM's
+impl IFileOperationProgressSink_Impl for FailureSink_Impl {
+    fn StartOperations(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn FinishOperations(&self, _result: HRESULT) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PreRenameItem(&self, _flags: u32, _item: Ref<'_, IShellItem>, _new_name: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostRenameItem(
+        &self,
+        _flags: u32,
+        item: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+        result: HRESULT,
+        _new_item: Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        self.record(item, result);
+        Ok(())
+    }
+    fn PreMoveItem(
+        &self,
+        _flags: u32,
+        _item: Ref<'_, IShellItem>,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostMoveItem(
+        &self,
+        _flags: u32,
+        item: Ref<'_, IShellItem>,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+        result: HRESULT,
+        _new_item: Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        self.record(item, result);
+        Ok(())
+    }
+    fn PreCopyItem(
+        &self,
+        _flags: u32,
+        _item: Ref<'_, IShellItem>,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostCopyItem(
+        &self,
+        _flags: u32,
+        item: Ref<'_, IShellItem>,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+        result: HRESULT,
+        _new_item: Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        self.record(item, result);
+        Ok(())
+    }
+    fn PreDeleteItem(&self, flags: u32, item: Ref<'_, IShellItem>) -> windows::core::Result<()> {
+        // Rodtty permits only recycling here. If the Shell changes this into a
+        // permanent delete, veto it before it starts, even with all native UI off.
+        if flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
+            self.record(item, COPYENGINE_E_RECYCLE_FORCE_NUKE);
+            return Err(windows::core::Error::from(COPYENGINE_E_RECYCLE_FORCE_NUKE));
+        }
+        Ok(())
+    }
+    fn PostDeleteItem(
+        &self,
+        _flags: u32,
+        item: Ref<'_, IShellItem>,
+        result: HRESULT,
+        new_item: Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        if result.is_ok() && new_item.is_null() {
+            // Per Microsoft, a null destination denotes permanent removal.
+            // Never report that as a successful move into the Recycle Bin.
+            self.record(item, COPYENGINE_E_RECYCLE_FORCE_NUKE);
+            return Err(windows::core::Error::from(COPYENGINE_E_RECYCLE_FORCE_NUKE));
+        }
+        self.record(item, result);
+        Ok(())
+    }
+    fn PreNewItem(
+        &self,
+        _flags: u32,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostNewItem(
+        &self,
+        _flags: u32,
+        _destination: Ref<'_, IShellItem>,
+        _new_name: &PCWSTR,
+        _template_name: &PCWSTR,
+        _attributes: u32,
+        _result: HRESULT,
+        _new_item: Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn UpdateProgress(&self, _total: u32, _so_far: u32) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn ResetTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PauseTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn ResumeTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
+/// Runs `operation`'s queued work with a [`FailureSink`] attached and turns
+/// an aborted item into an error naming it and the reason.
+fn perform_reporting_failures(operation: &IFileOperation) -> Result<(), Error> {
+    let sink = ComObject::new(FailureSink { failures: RefCell::new(Vec::new()) });
+    let sink_interface: IFileOperationProgressSink = sink.to_interface();
+    let cookie = unsafe { operation.Advise(&sink_interface) }?;
+    let performed = unsafe { operation.PerformOperations() };
+    let aborted = unsafe { operation.GetAnyOperationsAborted() }.map(|aborted| aborted.as_bool());
+    // Detach before any `?`: the operation holds a reference to the sink.
+    let unadvised = unsafe { operation.Unadvise(cookie) };
+    let failures = sink.failures.take();
+
+    if let Some((path, code)) = failures.first() {
+        let mut description = describe_item_failure(path, *code);
+        if failures.len() > 1 {
+            description.push_str(&format!(" (and {} more item(s))", failures.len() - 1));
+        }
+        return Err(Error::Os { code: code.0, description });
+    }
+    performed?;
+    if aborted? {
+        // Aborted without a reason for any item, e.g. cancelled as a whole.
+        return Err(Error::Unknown { description: "Some operations were aborted".into() });
+    }
+    unadvised?;
+    Ok(())
+}
+
+fn to_wide_path(path: impl AsRef<OsStr>) -> Vec<u16> {
+    path.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+}
+
+/// Converts a path to the form accepted by `SHCreateItemFromParsingName`.
+///
+/// Paths reaching this module have been canonicalized with `Path::canonicalize`.
+/// On Windows, this produces verbatim paths, which the shell does not accept.
+/// This function converts them back to ordinary Windows paths:
+///
+/// - Local drive: `\\?\C:\dir\file` becomes `C:\dir\file`.
+/// - Network share: `\\?\UNC\host\share\dir\file` becomes `\\host\share\dir\file`.
+///
+/// Mapped drives resolve to network-share paths during canonicalization.
+/// Other path prefixes are left unchanged.
+/// The result is encoded as a null-terminated UTF-16 string.
+fn to_shell_parsing_name(path: &Path) -> Vec<u16> {
+    let mut components = path.components();
+    let mut out = OsString::new();
+    // A separator goes between two name parts, never right after the prefix
+    // (`C:dir` stays drive-relative) or after the root (its backslash is
+    // written by the `RootDir` arm).
+    let mut needs_separator = false;
+    match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(letter) => out.push(format!("{}:", letter as char)),
+            Prefix::VerbatimUNC(host, share_name) => {
+                out.push(r"\\");
+                out.push(host);
+                out.push(r"\");
+                out.push(share_name);
+            }
+            _ => out.push(prefix.as_os_str()),
+        },
+        Some(component) => {
+            out.push(component.as_os_str());
+            needs_separator = true;
+        }
+        None => {}
+    }
+    for component in components {
+        match component {
+            Component::RootDir => {
+                out.push(r"\");
+                needs_separator = false;
+            }
+            component => {
+                if needs_separator {
+                    out.push(r"\");
+                }
+                out.push(component.as_os_str());
+                needs_separator = true;
+            }
+        }
+    }
+    to_wide_path(out)
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct PlatformTrashContext;
+impl PlatformTrashContext {
+    pub const fn new() -> Self {
+        PlatformTrashContext
+    }
+}
+impl TrashContext {
+    /// See https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-_shfileopstructa
+    pub(crate) fn delete_specified_canonicalized(&self, full_paths: Vec<PathBuf>) -> Result<(), Error> {
+        ensure_com_initialized();
+        unsafe {
+            let pfo: IFileOperation = CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL)?;
+
+            pfo.SetOperationFlags(
+                FOF_NO_UI | FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE
+                    | FOFX_ADDUNDORECORD | FOF_WANTNUKEWARNING,
+            )?;
+
+            for full_path in full_paths.iter() {
+                let parsing_name = to_shell_parsing_name(full_path);
+
+                let shi: IShellItem = SHCreateItemFromParsingName(PCWSTR(parsing_name.as_ptr()), None)?;
+
+                pfo.DeleteItem(&shi, None)?;
+            }
+            // https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-performoperations
+            // PerformOperations can return a success code while items were skipped; the sink reports which and why.
+            perform_reporting_failures(&pfo)
+        }
+    }
+
+    /// Removes all files and folder paths recursively.
+    pub(crate) fn delete_all_canonicalized(&self, full_paths: Vec<PathBuf>) -> Result<(), Error> {
+        self.delete_specified_canonicalized(full_paths)?;
+        Ok(())
+    }
+}
+
+pub fn list() -> Result<Vec<TrashItem>, Error> {
+    ensure_com_initialized();
+    unsafe {
+        let mut item_vec = Vec::new();
+
+        let recycle_bin: IShellItem = SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None)?;
+
+        let pesi: IEnumShellItems = recycle_bin.BindToHandler(None, &BHID_EnumItems)?;
+
+        loop {
+            let mut fetched_count: u32 = 0;
+            let mut arr = [None];
+            pesi.Next(&mut arr, Some(&mut fetched_count as *mut u32))?;
+
+            if fetched_count == 0 {
+                break;
+            }
+
+            match &arr[0] {
+                Some(item) => {
+                    let id = get_display_name(item, SIGDN_DESKTOPABSOLUTEPARSING)?;
+                    let item2: IShellItem2 = item.cast()?;
+                    let name = get_file_name(&item2)?;
+                    let original_location_variant = item2.GetProperty(&SCID_ORIGINAL_LOCATION)?;
+                    let original_location_bstr = PropVariantToBSTR(&original_location_variant)?;
+                    let original_location = OsString::from_wide(&original_location_bstr);
+                    let date_deleted = get_date_deleted_unix(&item2)?;
+
+                    // NTFS paths are valid Unicode according to this chart:
+                    // https://en.wikipedia.org/wiki/Filename#Comparison_of_filename_limitations
+                    // Converting a String back to OsString doesn't do extra work
+                    item_vec.push(TrashItem {
+                        id,
+                        name: name.into_string().map_err(|original| Error::ConvertOsString { original })?.into(),
+                        original_parent: PathBuf::from(original_location),
+                        time_deleted: date_deleted,
+                    });
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+
+        Ok(item_vec)
+    }
+}
+
+pub fn is_empty() -> Result<bool, Error> {
+    ensure_com_initialized();
+    unsafe {
+        let recycle_bin: IShellItem = SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None)?;
+        let pesi: IEnumShellItems = recycle_bin.BindToHandler(None, &BHID_EnumItems)?;
+
+        let mut count = 0u32;
+        let mut items = [None];
+        pesi.Next(&mut items, Some(&mut count as *mut u32))?;
+
+        Ok(count == 0)
+    }
+}
+
+pub fn metadata(item: &TrashItem) -> Result<TrashItemMetadata, Error> {
+    ensure_com_initialized();
+    let id_as_wide = to_wide_path(&item.id);
+    let parsing_name = PCWSTR(id_as_wide.as_ptr());
+    let item: IShellItem = unsafe { SHCreateItemFromParsingName(parsing_name, None)? };
+    let is_dir = unsafe { item.GetAttributes(SFGAO_FOLDER)? } == SFGAO_FOLDER;
+    let size = if is_dir {
+        let pesi: IEnumShellItems = unsafe { item.BindToHandler(None, &BHID_EnumItems)? };
+        let mut size = 0;
+        loop {
+            let mut fetched_count: u32 = 0;
+            let mut arr = [None];
+            unsafe { pesi.Next(&mut arr, Some(&mut fetched_count as *mut u32))? };
+
+            if fetched_count == 0 {
+                break;
+            }
+
+            match &arr[0] {
+                Some(_item) => {
+                    size += 1;
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+        TrashItemSize::Entries(size)
+    } else {
+        let item2: IShellItem2 = item.cast()?;
+        TrashItemSize::Bytes(unsafe { item2.GetUInt64(&PKEY_Size)? })
+    };
+    Ok(TrashItemMetadata { size })
+}
+
+pub fn purge_all<I>(items: I) -> Result<(), Error>
+where
+    I: IntoIterator,
+    <I as IntoIterator>::Item: Borrow<TrashItem>,
+{
+    ensure_com_initialized();
+    unsafe {
+        let pfo: IFileOperation = CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL)?;
+        pfo.SetOperationFlags(FOF_NO_UI)?;
+        let mut at_least_one = false;
+        for item in items {
+            at_least_one = true;
+            let id_as_wide = to_wide_path(&item.borrow().id);
+            let parsing_name = PCWSTR(id_as_wide.as_ptr());
+            let trash_item: IShellItem = SHCreateItemFromParsingName(parsing_name, None)?;
+            pfo.DeleteItem(&trash_item, None)?;
+        }
+        if at_least_one {
+            pfo.PerformOperations()?;
+        }
+        Ok(())
+    }
+}
+
+pub fn restore_all<I>(items: I) -> Result<(), Error>
+where
+    I: IntoIterator<Item = TrashItem>,
+{
+    let items: Vec<_> = items.into_iter().collect();
+
+    // Do a quick and dirty check if the target items already exist at the location
+    // and if they do, return all of them, if they don't just go ahead with the processing
+    // without giving a damn.
+    // Note that this is not 'thread safe' meaning that if a paralell thread (or process)
+    // does this operation the exact same time or creates files or folders right after this check,
+    // then the files that would collide will not be detected and returned as part of an error.
+    // Instead Windows will display a prompt to the user whether they want to replace or skip.
+    for item in items.iter() {
+        let path = item.original_path();
+        if path.exists() {
+            return Err(Error::RestoreCollision { path, remaining_items: items });
+        }
+    }
+    ensure_com_initialized();
+    unsafe {
+        let pfo: IFileOperation = CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL)?;
+        pfo.SetOperationFlags(FOF_NO_UI | FOFX_EARLYFAILURE)?;
+        for item in items.iter() {
+            let id_as_wide = to_wide_path(&item.id);
+            let parsing_name = PCWSTR(id_as_wide.as_ptr());
+            let trash_item: IShellItem = SHCreateItemFromParsingName(parsing_name, None)?;
+            let parent_path_wide = to_wide_path(&item.original_parent);
+            let orig_folder_shi: IShellItem = SHCreateItemFromParsingName(PCWSTR(parent_path_wide.as_ptr()), None)?;
+            let name_wstr = to_wide_path(&item.name);
+
+            pfo.MoveItem(&trash_item, &orig_folder_shi, PCWSTR(name_wstr.as_ptr()), None)?;
+        }
+        if !items.is_empty() {
+            pfo.PerformOperations()?;
+        }
+        Ok(())
+    }
+}
+
+/// The file name of a Recycle Bin item as it was before deletion, extension
+/// included.
+///
+/// Not a display name: inside the Recycle Bin folder every `SIGDN_*` name
+/// (and `PKEY_ItemNameDisplay`) follows Explorer's "Hide extensions for known
+/// file types" setting, which is on by default, so `report.txt` would be
+/// listed — and restored — as `report`, and `a.txt` and `a.png` as twins.
+/// `PKEY_FileName` is the name itself.
+unsafe fn get_file_name(psi: &IShellItem2) -> Result<OsString, Error> {
+    let name = psi.GetString(&PKEY_FileName)?;
+    let result = wstr_to_os_string(name);
+    CoTaskMemFree(Some(name.0 as *const c_void));
+    Ok(result)
+}
+
+unsafe fn get_display_name(psi: &IShellItem, sigdnname: SIGDN) -> Result<OsString, Error> {
+    let name = psi.GetDisplayName(sigdnname)?;
+    let result = wstr_to_os_string(name);
+    CoTaskMemFree(Some(name.0 as *const c_void));
+    Ok(result)
+}
+
+unsafe fn wstr_to_os_string(wstr: PWSTR) -> OsString {
+    let mut len = 0;
+    while *(wstr.0.offset(len)) != 0 {
+        len += 1;
+    }
+    let wstr_slice = std::slice::from_raw_parts(wstr.0, len as usize);
+    OsString::from_wide(wstr_slice)
+}
+
+unsafe fn get_date_deleted_unix(item: &IShellItem2) -> Result<i64, Error> {
+    /// January 1, 1970 as Windows file time
+    const EPOCH_AS_FILETIME: u64 = 116444736000000000;
+    const HUNDREDS_OF_NANOSECONDS: u64 = 10000000;
+
+    let time = item.GetFileTime(&SCID_DATE_DELETED)?;
+    let time_u64 = ((time.dwHighDateTime as u64) << 32) | (time.dwLowDateTime as u64);
+    let rel_to_linux_epoch = time_u64 - EPOCH_AS_FILETIME;
+    let seconds_since_unix_epoch = rel_to_linux_epoch / HUNDREDS_OF_NANOSECONDS;
+
+    Ok(seconds_since_unix_epoch as i64)
+}
+
+struct CoInitializer {}
+impl CoInitializer {
+    fn new() -> CoInitializer {
+        //let first = INITIALIZER_THREAD_COUNT.fetch_add(1, Ordering::SeqCst) == 0;
+        #[cfg(all(not(feature = "coinit_multithreaded"), not(feature = "coinit_apartmentthreaded")))]
+        {
+            0 = "THIS IS AN ERROR ON PURPOSE. Either the `coinit_multithreaded` or the `coinit_apartmentthreaded` feature must be specified";
+        }
+        let mut init_mode;
+        #[cfg(feature = "coinit_multithreaded")]
+        {
+            init_mode = COINIT_MULTITHREADED;
+        }
+        #[cfg(feature = "coinit_apartmentthreaded")]
+        {
+            init_mode = COINIT_APARTMENTTHREADED;
+        }
+
+        // These flags can be combined with either of coinit_multithreaded or coinit_apartmentthreaded.
+        if cfg!(feature = "coinit_disable_ole1dde") {
+            init_mode |= COINIT_DISABLE_OLE1DDE;
+        }
+        if cfg!(feature = "coinit_speed_over_memory") {
+            init_mode |= COINIT_SPEED_OVER_MEMORY;
+        }
+        let hr = unsafe { CoInitializeEx(None, init_mode) };
+        if hr.is_err() {
+            panic!("Call to CoInitializeEx failed. HRESULT: {:?}. Consider using `trash` with the feature `coinit_multithreaded`", hr);
+        }
+        CoInitializer {}
+    }
+}
+impl Drop for CoInitializer {
+    fn drop(&mut self) {
+        // TODO: This does not get called because it's a global static.
+        // Is there an atexit in Win32?
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+thread_local! {
+    static CO_INITIALIZER: CoInitializer = CoInitializer::new();
+}
+fn ensure_com_initialized() {
+    CO_INITIALIZER.with(|_| {});
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_engine_reason, to_shell_parsing_name};
+    use std::path::Path;
+    use windows::{
+        core::HRESULT,
+        Win32::{
+            Foundation::E_ACCESSDENIED,
+            UI::Shell::{
+                COPYENGINE_E_ACCESS_DENIED_SRC, COPYENGINE_E_REQUIRES_ELEVATION, COPYENGINE_S_DONT_PROCESS_CHILDREN,
+            },
+        },
+    };
+
+    #[test]
+    fn copy_engine_failures_get_their_own_words() {
+        assert_eq!(copy_engine_reason(COPYENGINE_E_REQUIRES_ELEVATION), Some("the operation requires elevation"));
+        assert_eq!(copy_engine_reason(COPYENGINE_E_ACCESS_DENIED_SRC), Some("access denied to the source"));
+        // Unlisted copy engine failures still are not handed to FormatMessage.
+        assert_eq!(copy_engine_reason(HRESULT(0x8027_00FF_u32 as i32)), Some("the shell's file operation failed"));
+        // A success code of the copy engine is no failure.
+        assert_eq!(copy_engine_reason(COPYENGINE_S_DONT_PROCESS_CHILDREN), None);
+        // Other facilities: the system's own message is right.
+        assert_eq!(copy_engine_reason(E_ACCESSDENIED), None);
+    }
+
+    fn convert(path: &str) -> String {
+        let wide = to_shell_parsing_name(Path::new(path));
+        String::from_utf16(&wide[..wide.len() - 1]).unwrap()
+    }
+
+    #[test]
+    fn verbatim_disk_becomes_plain_disk() {
+        assert_eq!(convert(r"\\?\C:\dir\file.txt"), r"C:\dir\file.txt");
+    }
+
+    #[test]
+    fn verbatim_unc_becomes_plain_unc() {
+        // What `canonicalize` returns for a mapped drive or a UNC path.
+        // Before the fix this came out as `UNC\host\share\dir\file.txt`,
+        // which the shell reads as a relative path (issue #55).
+        assert_eq!(convert(r"\\?\UNC\host\share\dir\file.txt"), r"\\host\share\dir\file.txt");
+    }
+
+    #[test]
+    fn non_verbatim_paths_are_unchanged() {
+        assert_eq!(convert(r"C:\dir\file.txt"), r"C:\dir\file.txt");
+        assert_eq!(convert(r"\\host\share\dir\file.txt"), r"\\host\share\dir\file.txt");
+        assert_eq!(convert(r"dir\file.txt"), r"dir\file.txt");
+    }
+
+    #[test]
+    fn empty_path_stays_empty() {
+        assert_eq!(convert(""), "");
+    }
+
+    #[test]
+    fn drive_root_keeps_its_backslash() {
+        // `C:` alone would mean the current directory on C:, not the root.
+        assert_eq!(convert(r"\\?\C:\"), r"C:\");
+        assert_eq!(convert(r"C:\"), r"C:\");
+    }
+
+    #[test]
+    fn share_root_with_and_without_trailing_backslash() {
+        assert_eq!(convert(r"\\?\UNC\host\share"), r"\\host\share");
+        assert_eq!(convert(r"\\?\UNC\host\share\"), r"\\host\share\");
+    }
+
+    #[test]
+    fn drive_relative_path_gets_no_separator_after_the_colon() {
+        assert_eq!(convert(r"C:dir\file.txt"), r"C:dir\file.txt");
+    }
+
+    #[test]
+    fn other_verbatim_and_device_prefixes_are_unchanged() {
+        assert_eq!(convert(r"\\?\pictures\file.txt"), r"\\?\pictures\file.txt");
+        assert_eq!(convert(r"\\.\pipe\name"), r"\\.\pipe\name");
+    }
+
+    #[test]
+    fn spaces_dots_and_non_ascii_names_survive() {
+        assert_eq!(
+            convert(r"\\?\UNC\nas-01\My Photos\2026.09 trip\日本語 ファイル.jpg"),
+            r"\\nas-01\My Photos\2026.09 trip\日本語 ファイル.jpg"
+        );
+        assert_eq!(convert(r"\\?\C:\a.b\c..d\file.tar.gz"), r"C:\a.b\c..d\file.tar.gz");
+    }
+
+    #[test]
+    fn trailing_and_doubled_separators_are_dropped() {
+        // `components()` normalizes these; the shell accepts either form.
+        assert_eq!(convert(r"\\?\C:\dir\"), r"C:\dir");
+        assert_eq!(convert(r"\\?\C:\dir\\file.txt"), r"C:\dir\file.txt");
+        assert_eq!(convert(r"\\?\UNC\host\share\dir\\file.txt"), r"\\host\share\dir\file.txt");
+    }
+
+    #[test]
+    fn long_paths_are_not_truncated() {
+        let deep = (0..40).map(|i| format!("folder{i:02}")).collect::<Vec<_>>().join(r"\");
+        let input = format!(r"\\?\UNC\host\share\{deep}\file.txt");
+        let expected = format!(r"\\host\share\{deep}\file.txt");
+        assert!(input.len() > 260);
+        assert_eq!(convert(&input), expected);
+    }
+}
