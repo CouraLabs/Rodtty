@@ -200,6 +200,8 @@ fn make_disposable_removable(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     if metadata.permissions().readonly() {
         let mut permissions = metadata.permissions();
+        // Windows has a read-only attribute; this block never changes Unix modes.
+        #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)?;
     }

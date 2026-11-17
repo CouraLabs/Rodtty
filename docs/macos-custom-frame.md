@@ -4,7 +4,8 @@ macOS opts into the same themed six-point frame and header as Linux. The left
 controls are Close, Minimize, and Maximize/Restore, with the same button focus,
 hover, help, and canonical Close Window action as the rest of Rodtty. The native
 window is undecorated: no standard title bar, traffic lights, or visible OS border.
-Windows continues to use its existing adapter until its separate ticket lands.
+[Windows](windows-custom-frame.md) uses the shared winit resize adapter and right
+controls; native Windows execution also remains pending.
 
 The [owned Rune bridge](../vendor/rune/UPSTREAM.md) starts an AppKit resize gesture
 in the actual pressed event. It captures the NSWindow frame, global NSEvent pointer,
