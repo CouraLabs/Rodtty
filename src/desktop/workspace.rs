@@ -93,6 +93,11 @@ pub(super) struct Workspace {
     latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
     restore_editor: Option<bool>,
+    restore_focus: Option<bool>,
+    restore_explorer: Option<bool>,
+    pub(super) restoration_warnings: Vec<String>,
+    pub(super) last_persist: Instant,
+    last_saved: Option<Vec<u8>>,
     pub diff: DiffState,
     pub diff_label: String,
     pub diff_error: Option<String>,
@@ -157,6 +162,11 @@ impl Default for Workspace {
             latest_activation: None,
             restore_active: None,
             restore_editor: None,
+            restore_focus: None,
+            restore_explorer: None,
+            restoration_warnings: Vec::new(),
+            last_persist: Instant::now(),
+            last_saved: None,
             diff: DiffState::default(),
             diff_label: String::new(),
             diff_error: None,
@@ -178,6 +188,9 @@ impl Default for Workspace {
 }
 
 impl State {
+    pub(super) fn workspace_restoration_ready(&self) -> bool {
+        self.workspace.opening.is_empty()
+    }
     pub(super) fn workspace_setup(&mut self) {
         self.workspace.worker = Some(Worker::new(self.wake.clone()));
         self.workspace.explorer_preferences = self.config.explorer.clone();
@@ -185,6 +198,8 @@ impl State {
             Ok(layout) => {
                 if !layout.files.is_empty() {
                     self.workspace.restore_editor = Some(layout.editor);
+                    self.workspace.restore_focus = Some(layout.terminal_focus);
+                    self.workspace.restore_explorer = Some(layout.explorer_revealed);
                 }
                 self.workspace.restore_active = layout.active_file.clone();
                 self.workspace.directory = layout.explorer_directory.clone();
@@ -209,9 +224,27 @@ impl State {
                     });
                 }
                 let paths = layout.files.clone();
+                self.workspace.show_empty_editor = layout.empty_editor;
+                self.workspace.explorer_revealed = layout.explorer_revealed;
                 self.workspace.layout = layout;
                 self.workspace.layout.follow = self.config.explorer.follow_terminal;
                 self.workspace.layout.hidden = self.config.explorer.show_hidden;
+                if self
+                    .workspace
+                    .directory
+                    .as_ref()
+                    .is_some_and(|p| !p.is_dir())
+                {
+                    self.workspace.restoration_warnings.push(format!(
+                        "Saved explorer folder is unavailable: {}. Showing the startup folder instead.",
+                        self.workspace.directory.as_ref().unwrap().display()
+                    ));
+                    self.workspace.directory = Some(self.directory.clone());
+                    self.workspace
+                        .address
+                        .replace_text(self.directory.to_string_lossy());
+                    self.workspace.layout.expanded_folders.clear();
+                }
                 for path in paths {
                     self.open_file(path);
                 }
@@ -254,6 +287,7 @@ impl State {
         self.workspace.tree.clear();
         self.workspace.tree_dirty = true;
         self.workspace.layout.expanded_folders.clear();
+        self.workspace.layout.selected_path = None;
         self.workspace.explorer_error = None;
         self.workspace.outside_root = None;
         self.workspace.pending_reveal = None;
@@ -323,6 +357,9 @@ impl State {
             }
         }
         let w = &mut self.workspace;
+        if let Some(path) = w.tree.cursor() {
+            w.layout.selected_path = Some(PathBuf::from(path));
+        }
         for tab in &mut w.tabs {
             if tab.document.path.starts_with(source) {
                 remap(&mut tab.document.path, source, target);
@@ -342,6 +379,7 @@ impl State {
             &mut w.directory,
             &mut w.layout.explorer_directory,
             &mut w.layout.active_file,
+            &mut w.layout.selected_path,
             &mut w.outside_root,
             &mut w.pending_reveal,
             &mut w.revealed_directory,
@@ -430,7 +468,13 @@ impl State {
     fn rebuild_tree(&mut self) {
         let workspace = &mut self.workspace;
         workspace.tree_dirty = false;
-        let selected = workspace.tree.cursor().map(str::to_owned);
+        let selected = workspace.tree.cursor().map(str::to_owned).or_else(|| {
+            workspace
+                .layout
+                .selected_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+        });
         workspace.tree.clear();
         let Some(root) = workspace.directory.as_ref() else {
             return;
@@ -588,8 +632,14 @@ impl State {
         self.invalidate_diff(true);
     }
     pub(super) fn persist_workspace(&mut self) {
+        // Never publish a partial list while saved files are still loading.
+        if self.shutdown_saved || !self.workspace_restoration_ready() {
+            return;
+        }
         let workspace = &mut self.workspace;
         workspace.layout.explorer_directory = workspace.directory.clone();
+        workspace.layout.empty_editor = workspace.show_empty_editor;
+        workspace.layout.explorer_revealed = workspace.explorer_revealed;
         workspace.layout.files = workspace
             .tabs
             .iter()
@@ -601,8 +651,19 @@ impl State {
             .get(workspace.active)
             .filter(|t| !t.preview)
             .map(|t| t.document.path.clone());
-        if let Err(e) = workspace.layout.save(&self.root) {
-            self.message = format!("Could not save workspace: {e:#}");
+        workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
+        workspace.layout.active_terminal = self.active;
+        workspace.layout.terminal_focus = workspace.terminal_focus || self.settings;
+        if let Some(path) = workspace.tree.cursor() {
+            workspace.layout.selected_path = Some(PathBuf::from(path));
+        }
+        workspace.last_persist = Instant::now();
+        let next = serde_json::to_vec(&workspace.layout).ok();
+        if next != workspace.last_saved {
+            match workspace.layout.save(&self.root) {
+                Ok(()) => workspace.last_saved = next,
+                Err(e) => self.message = format!("Could not save workspace: {e:#}"),
+            }
         }
     }
     pub(super) fn request_action(&mut self, action: Action, tx: &mut Tx) {
@@ -979,17 +1040,28 @@ impl State {
                             {
                                 self.show_editor(index, !preview);
                             }
-                            self.message.clear();
+                            if self.workspace.restore_editor.is_none() {
+                                self.message.clear();
+                            }
                         }
-                        Err(error) => self.message = error,
+                        Err(error) => {
+                            if self.workspace.restore_editor.is_some() {
+                                self.workspace.restoration_warnings.push(error.clone());
+                            }
+                            self.message = error;
+                        }
                     }
                     if self.workspace.opening.is_empty() {
                         self.workspace.restore_active = None;
                         if let Some(visible) = self.workspace.restore_editor.take() {
                             self.workspace.layout.editor = visible;
-                            if !visible {
-                                self.workspace.terminal_focus = true;
-                            }
+                            self.workspace.terminal_focus =
+                                self.workspace.restore_focus.take().unwrap_or(true)
+                                    || !visible
+                                    || self.workspace.tabs.is_empty();
+                            self.workspace.explorer_revealed =
+                                self.workspace.restore_explorer.take().unwrap_or(false);
+                            self.message = self.workspace.restoration_warnings.join("\n");
                         }
                     }
                 }
@@ -3459,6 +3531,14 @@ mod tests {
             s.navigate(source.clone());
             s.workspace.layout.expanded_folders = vec![source.join("nested")];
         });
+        wait_runtime(&mut runtime, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "dirty.txt")
+        });
+        runtime.update(|s, _| {
+            s.workspace
+                .tree
+                .select(source.join("nested/dirty.txt").to_str().unwrap());
+        });
         click(&mut runtime, "operation-submit");
         wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
         assert!(!source.exists());
@@ -3501,6 +3581,7 @@ mod tests {
         assert_eq!(layout.explorer_directory, Some(target.clone()));
         assert!(layout.expanded_folders.contains(&target.join("nested")));
         assert_eq!(layout.active_file, Some(target.join("nested/dirty.txt")));
+        assert_eq!(layout.selected_path, Some(target.join("nested/dirty.txt")));
         assert_eq!(
             layout.files,
             vec![
@@ -4552,6 +4633,7 @@ mod tests {
         });
         let runtime = runtime_for(restored);
         assert!(runtime.find(path.to_str().unwrap()).is_some());
+        assert_eq!(runtime.state.workspace.tree.cursor(), path.to_str());
         assert_eq!(
             runtime.state.workspace.directory.as_deref(),
             Some(root.path())

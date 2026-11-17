@@ -23,6 +23,7 @@ mod file_operations;
 mod settings;
 mod shortcuts;
 use fonts::{label as ui_label, ui as ui_style};
+mod restoration;
 mod workspace;
 use actions::AppAction;
 
@@ -61,6 +62,7 @@ struct State {
     window: Option<rune::WindowHandle>,
     window_maximized: bool,
     window_close_approved: bool,
+    shutdown_saved: bool,
     root: PathBuf,
     shell: Option<PathBuf>,
     config: Config,
@@ -128,6 +130,7 @@ impl State {
             window: None,
             window_maximized: false,
             window_close_approved: false,
+            shutdown_saved: false,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
             root,
             shell: config::shell_executable().ok(),
@@ -322,6 +325,7 @@ impl State {
         match self.pending.take() {
             Some(Pending::Quit) => {
                 self.persist_workspace();
+                self.shutdown_saved = true;
                 self.sessions.clear();
                 tx.quit();
             }
@@ -1096,8 +1100,7 @@ fn setup(state: &mut State, wake: rune::Waker) {
     state.wake = wake;
     state.font_catalog.start(state.wake.clone());
     if rune::tooling::headless_run().is_none() {
-        state.start_tab(state.directory.clone());
-        state.workspace_setup();
+        state.restore_startup();
     }
 }
 fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
@@ -1126,7 +1129,11 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     let (sans, mono) = state.font_families();
     tx.set_font_families(sans, mono);
     let metrics_changed = state.refresh_terminal_metrics();
-    state.workspace_poll(tx)
+    let workspace_changed = state.workspace_poll(tx);
+    if state.workspace.last_persist.elapsed() >= std::time::Duration::from_secs(1) {
+        state.persist_workspace();
+    }
+    workspace_changed
         || changed
         || settings_changed
         || metrics_changed
@@ -1362,6 +1369,7 @@ pub fn run() -> Result<()> {
         .on_close(State::on_window_close)
         .on_quit(|s, _| {
             s.persist_workspace();
+            s.shutdown_saved = true;
             s.sessions.clear();
         })
         .on_ime(|s, event, _| {
@@ -1407,6 +1415,7 @@ pub fn run() -> Result<()> {
                 && arg != "--frame-check"
                 && arg != "--session-policy-check"
                 && arg != "--clipboard-check"
+                && arg != "--restoration-check"
         })
         .nth(1)
         .map(PathBuf::from);
@@ -1498,6 +1507,10 @@ fn native_check(
     report: PathBuf,
     backend: Arc<std::sync::Mutex<String>>,
 ) {
+    if std::env::args().any(|a| a == "--restoration-check") {
+        restoration::native_check(handle, report, backend);
+        return;
+    }
     let with_frame = std::env::args().any(|a| a == "--frame-check");
     let with_fonts = std::env::args().any(|a| a == "--font-check");
     let with_sessions = std::env::args().any(|a| a == "--session-policy-check");

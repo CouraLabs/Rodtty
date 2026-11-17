@@ -155,6 +155,10 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 s,
                 section,
                 "new terminal directory active explorer specified folder",
+            ) || matches(
+                s,
+                section,
+                "startup restore workspace one single fresh terminal",
             )
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
@@ -243,6 +247,48 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 group = group.child(shortcuts::list(s, a));
             }
             "Behavior" => {
+                if matches(
+                    s,
+                    section,
+                    "startup restore workspace one single fresh terminal",
+                ) {
+                    use crate::config::TerminalStartup;
+                    group = group.child(text("Terminal startup").font(ui_label()).color(a.muted()));
+                    for (key, title, choice) in [
+                        (
+                            "startup-restore",
+                            "Restore terminal arrangement",
+                            TerminalStartup::RestoreWorkspace,
+                        ),
+                        (
+                            "startup-single-fresh",
+                            "One fresh terminal",
+                            TerminalStartup::SingleFresh,
+                        ),
+                    ] {
+                        group = group.child(
+                            button(
+                                a,
+                                key,
+                                format!(
+                                    "{} {title}",
+                                    if s.config.behavior.terminal_startup == choice {
+                                        "●"
+                                    } else {
+                                        "○"
+                                    }
+                                ),
+                                move |s, _| {
+                                    s.save_config(|c| c.behavior.terminal_startup = choice);
+                                },
+                            )
+                            .w_full(),
+                        );
+                    }
+                    group = group.child(button(a, "reset-terminal-startup", "Reset terminal startup", |s, _| {
+                        s.save_config(|c| c.behavior.terminal_startup = TerminalStartup::default());
+                    })).child(text("Applies after Quit or restart. Reopening a running host keeps its sessions. One fresh terminal uses the new-terminal directory choice; first launch keeps the startup directory.").font(ui_label()).color(a.muted()).wrap());
+                }
                 if matches(
                     s,
                     section,
