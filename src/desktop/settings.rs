@@ -127,6 +127,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     section,
                     "font size ui font family terminal font family installed monospace preview",
                 )
+        } else if section == "Behavior" {
+            matches(
+                s,
+                section,
+                "single click keeps open file preview editor tabs",
+            )
         } else if section == "Terminal" {
             matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
@@ -205,6 +211,31 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             group = group.child(sizes.child(buttons));
         }
         match section {
+            "Behavior" => {
+                group = group
+                    .child(button(
+                        a,
+                        "single-click-keeps-open",
+                        format!(
+                            "Single click keeps files open: {}",
+                            if s.config.single_click_keeps_open { "on" } else { "off" }
+                        ),
+                        |s, _| {
+                            s.save_config(|c| c.single_click_keeps_open = !c.single_click_keeps_open);
+                        },
+                    ))
+                    .child(button(a, "reset-single-click-keeps-open", "Reset", |s, _| {
+                        s.save_config(|c| {
+                            c.single_click_keeps_open = Config::default().single_click_keeps_open;
+                        });
+                    }))
+                    .child(
+                        text("By default, single click previews a file; double click or editing keeps it open.")
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap(),
+                    );
+            }
             "Appearance" if matches(s, section, THEME_SEARCH) => {
                 use crate::config::Appearance as Mode;
                 group = group

@@ -83,6 +83,7 @@ pub struct Config {
     pub disabled: Vec<String>,
     pub scrollback: usize,
     pub history: bool,
+    pub single_click_keeps_open: bool,
     pub fonts: FontPreferences,
     pub explorer: ExplorerPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
@@ -115,6 +116,7 @@ impl Default for Config {
             disabled: Vec::new(),
             scrollback: 10_000,
             history: true,
+            single_click_keeps_open: false,
             fonts: FontPreferences::default(),
             explorer: ExplorerPreferences::default(),
             extra: Default::default(),

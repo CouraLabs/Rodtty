@@ -1088,7 +1088,7 @@ fn tabs_preview(state: &mut State) {
         let path = explorer_root.join(folder).join("config.rs");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "// Tab preview\nfn main() {}\n").unwrap();
-        state.open_file(path);
+        state.open_file_with_preview(path, index == 4);
         let started = std::time::Instant::now();
         while state.workspace.tabs.len() <= index {
             state.workspace_poll(&mut Tx::default());
@@ -1130,6 +1130,16 @@ fn tabs_light_editor_preview(state: &mut State) {
 fn tabs_dark_editor_preview(state: &mut State) {
     tabs_dark_preview(state);
     state.workspace.terminal_focus = false;
+}
+fn preview_tabs_scene(state: &mut State) {
+    tabs_preview(state);
+    state
+        .workspace
+        .tabs
+        .retain(|tab| tab.id == 1 || tab.preview);
+    state.workspace.active = 1;
+    state.workspace.terminal_focus = false;
+    state.message = "Regular dirty file and temporary preview · real file buffers".into();
 }
 fn tree_preview(state: &mut State) {
     preview(state);
@@ -1218,6 +1228,7 @@ pub fn run() -> Result<()> {
             ("real-diff", real_diff_preview),
             ("palette", palette_preview),
             ("file-collision", file_collision_preview),
+            ("preview-tabs", preview_tabs_scene),
             ("tree", tree_preview),
             ("icons", icons_preview),
             ("tabs-light", tabs_light_preview),
