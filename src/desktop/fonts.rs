@@ -230,6 +230,25 @@ mod tests {
         );
         click(&mut rt, "font-ui-trigger");
         rt.set_viewport((640.0, 900.0), 1.0);
+        frame(&mut rt);
+        assert!(rt.find("font-ui-option-Geist").is_some());
+        click(&mut rt, "workspace-menu");
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "pressing outside the font dropdown must dismiss it"
+        );
+        click(&mut rt, "workspace-menu");
+        assert!(rt.find("workspace-menu-popover").is_some());
+        assert!(
+            rt.find("font-ui-option-Geist").is_none(),
+            "the workspace menu must suppress an already open font dropdown"
+        );
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Default::default(),
+        });
+        frame(&mut rt);
+        click(&mut rt, "font-ui-trigger");
         rt.update(|s, tx| s.dispatch(AppAction::ShowTerminal, tx));
         frame(&mut rt);
         assert!(
