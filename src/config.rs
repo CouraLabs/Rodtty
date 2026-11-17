@@ -85,6 +85,7 @@ pub struct Config {
     pub history: bool,
     pub fonts: FontPreferences,
     pub explorer: ExplorerPreferences,
+    pub behavior: BehaviorPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -117,6 +118,7 @@ impl Default for Config {
             history: true,
             fonts: FontPreferences::default(),
             explorer: ExplorerPreferences::default(),
+            behavior: BehaviorPreferences::default(),
             extra: Default::default(),
         }
     }
@@ -323,4 +325,44 @@ impl FontPreferences {
             list(&self.terminal_family, "Geist Mono"),
         )
     }
+}
+
+/// Session lifecycle choices apply immediately; session command configuration
+/// remains an immutable snapshot taken when the session starts.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct BehaviorPreferences {
+    pub window_close: WindowClosePolicy,
+    pub terminal_tab_close: TerminalClosePolicy,
+    pub new_terminal_directory: NewTerminalDirectory,
+    pub specified_directory: PathBuf,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowClosePolicy {
+    #[default]
+    KeepSessionsRunning,
+    AskEachTime,
+    QuitRodtty,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalClosePolicy {
+    #[default]
+    ConfirmRunning,
+    AlwaysConfirm,
+    CloseImmediately,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewTerminalDirectory {
+    #[default]
+    Active,
+    Explorer,
+    Specified,
 }
