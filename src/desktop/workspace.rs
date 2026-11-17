@@ -73,6 +73,7 @@ pub(super) struct Workspace {
     last_diff: Instant,
     pub diff_layout: u8,
     pub editor_width: f32,
+    diff_viewport: (f32, f32),
     pub body_width: f32,
     pub find: bool,
     pub find_query: TextEdit,
@@ -111,6 +112,7 @@ impl Default for Workspace {
             last_diff: Instant::now() - Duration::from_secs(3),
             diff_layout: 0,
             editor_width: 400.0,
+            diff_viewport: (600.0, 600.0),
             body_width: 1080.0,
             find: false,
             find_query: TextEdit::new(""),
@@ -1224,16 +1226,31 @@ fn editor(s: &State, a: &Appearance) -> El {
         if workspace.diff_patch.is_empty() {
             pane = pane.child(el().grow(1.0));
         } else {
+            // Pinned Rune Kit fixes diff rows at 13px / 20px internally. Scale its
+            // coordinate space and inverse-size its viewport together: virtualization,
+            // scrolling, selection and hit testing retain their native coordinates.
+            let zoom = s.config.fonts.editor_size / 13.0;
+            let (width, height) = workspace.diff_viewport;
+            let diff = DiffView::new(
+                |s: &State| &s.workspace.diff,
+                |s: &mut State| &mut s.workspace.diff,
+            )
+            .key("git-diff")
+            .build(s, a.kit())
+            .focusable(true)
+            .absolute(0.0, 0.0)
+            .size(width / zoom, height / zoom)
+            .origin(0.0, 0.0)
+            .scale(zoom);
             pane = pane.child(
-                DiffView::new(
-                    |s: &State| &s.workspace.diff,
-                    |s: &mut State| &mut s.workspace.diff,
-                )
-                .key("git-diff")
-                .build(s, a.kit())
-                .focusable(true)
-                .grow(1.0)
-                .min_h(0.0),
+                el().key("git-diff-viewport")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .clip_soft(0.0)
+                    .instant_changes()
+                    .on_layout(|s: &mut State, rect| s.workspace.diff_viewport = (rect[2], rect[3]))
+                    .child(diff),
             );
         }
     }

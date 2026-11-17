@@ -77,6 +77,8 @@ pub(super) struct Metrics {
     pub width: f32,
     pub height: f32,
     pub style: TextStyle,
+    scale: f32,
+    epoch: u64,
 }
 impl Metrics {
     pub fn measure() -> Self {
@@ -91,6 +93,8 @@ impl Metrics {
             width,
             height,
             style: style.lh(height),
+            scale: t.scale,
+            epoch: rune::text::font_epoch(),
         }
     }
     pub fn dimensions(self, rect: [f32; 4]) -> (u16, u16) {
@@ -102,6 +106,17 @@ impl Metrics {
 }
 
 impl State {
+    pub(super) fn refresh_terminal_metrics(&mut self) -> bool {
+        let previous = self.terminal_metrics;
+        if previous.style.size == self.config.fonts.terminal_size
+            && previous.epoch == rune::text::font_epoch()
+        {
+            return false;
+        }
+        let _scope = scope(&self.config.fonts, previous.scale);
+        self.resize_terminal(Metrics::measure());
+        true
+    }
     pub(super) fn resize_terminal(&mut self, metrics: Metrics) {
         self.terminal_metrics = metrics;
         if let Some(rect) = self.terminal_rect {
@@ -121,6 +136,8 @@ impl Default for Metrics {
             width: 1.0,
             height: 1.0,
             style: TextStyle::new(14.0, 400.0).family(Family::Mono),
+            scale: 1.0,
+            epoch: 0,
         }
     }
 }
@@ -266,5 +283,58 @@ mod tests {
                 .as_ref()
                 .is_some_and(|t| t.contains("font size must be between"))
         }));
+    }
+    #[test]
+    fn git_diff_code_follows_the_live_editor_size() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        diff_preview(&mut state);
+        let mut rt = Runtime::with_text(
+            state,
+            view,
+            (1440.0, 860.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+            rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+        );
+        frame(&mut rt);
+        let code_height = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|e| e.path.contains("git-diff/") && e.text.as_deref() == Some("fn main() {"))
+                .expect("rendered diff code")
+                .rect[3]
+        };
+        let before = code_height(&rt);
+        std::fs::write(
+            root.path().join("settings.json"),
+            r#"{"fonts":{"editor_size":22}}"#,
+        )
+        .unwrap();
+        rt.update(|s, tx| {
+            s.settings_poll = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            poll(s, 0.0, tx);
+        });
+        frame(&mut rt);
+        assert!(
+            code_height(&rt) > before * 1.4,
+            "Git diff code must reflect editor sizing"
+        );
+        let code = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.path.contains("git-diff/") && e.text.as_deref() == Some("fn main() {"))
+            .unwrap()
+            .rect;
+        rt.pointer_move(code[0] + 0.1, code[1] + code[3] / 2.0);
+        rt.pointer_down(code[0] + 0.1, code[1] + code[3] / 2.0);
+        frame(&mut rt);
+        rt.pointer_move(code[0] + 26.5, code[1] + code[3] / 2.0);
+        frame(&mut rt);
+        rt.pointer_up(code[0] + 26.5, code[1] + code[3] / 2.0);
+        frame(&mut rt);
+        assert_eq!(rt.selected_text().as_deref(), Some("fn"));
     }
 }

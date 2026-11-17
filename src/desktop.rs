@@ -789,7 +789,8 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     let settings_changed = state.poll_settings();
     let (sans, mono) = state.config.fonts.families();
     tx.set_font_families(sans, mono);
-    state.workspace_poll(tx) || changed || settings_changed
+    let metrics_changed = state.refresh_terminal_metrics();
+    state.workspace_poll(tx) || changed || settings_changed || metrics_changed
 }
 
 fn preview(state: &mut State) {
@@ -1144,7 +1145,10 @@ fn native_check(
                             && screen.contents().contains(&format!("SIZE:{cols}x{rows}"))
                     })
                 })
-                .context("live font metrics resize the existing full-screen PTY")?;
+                .with_context(|| {
+                    let terminal = session.lock().unwrap_or_else(|e| e.into_inner());
+                    format!("live font metrics resize the existing full-screen PTY; before {before:?}; after {:?}; output {:?}", terminal.parser.screen().size(), terminal.parser.screen().contents())
+                })?;
                 wait_app(&handle, |s| {
                     s.workspace.tabs[0].dirty()
                         && s.workspace.tabs[0]
@@ -1200,7 +1204,7 @@ fn native_check(
         let result = match check {
             Ok(result) => result,
             Err(error) => {
-                serde_json::json!({"passed":false,"error":format!("{error:#}"),"window_error":handle.window_error()})
+                serde_json::json!({"passed":false,"error":format!("{error:#}"),"window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),"window_error":handle.window_error()})
             }
         };
         if let Some(parent) = report.parent() {
