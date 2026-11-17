@@ -9,6 +9,8 @@ pub(super) enum AppAction {
     CommandPalette,
     NewTerminal,
     EndTerminal,
+    CloseTerminal(usize),
+    MoveTab(tabs::Target, usize),
     ActivateTerminal(usize),
     ToggleExplorer,
     ToggleTerminal,
@@ -347,8 +349,17 @@ impl State {
             }
             AppAction::EndTerminal => {
                 tx.blur();
-                self.pending = Some(Pending::Tab(self.active));
+                if let Some(session) = self.active() {
+                    self.dispatch(AppAction::CloseTerminal(tabs::session_id(session)), tx);
+                }
             }
+            AppAction::CloseTerminal(id) => {
+                if self.sessions.iter().any(|s| tabs::session_id(s) == id) {
+                    tx.blur();
+                    self.pending = Some(Pending::Tab(id));
+                }
+            }
+            AppAction::MoveTab(target, to) => self.move_tab(target, to),
             AppAction::ActivateTerminal(index) => {
                 if index < self.sessions.len() {
                     tx.blur();
