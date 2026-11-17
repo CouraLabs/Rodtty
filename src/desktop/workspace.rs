@@ -2603,6 +2603,61 @@ mod tests {
     }
 
     #[test]
+    fn context_palette_and_double_click_during_load_all_keep_the_selected_file() {
+        use super::super::tests::{open_palette, press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 3);
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime
+            .find(root.path().join("a.txt").to_str().unwrap())
+            .unwrap();
+        runtime.secondary_down(x, y);
+        runtime.secondary_up(x, y);
+        runtime.frame(0.0);
+        click(&mut runtime, "context-open-file");
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        let (x, y) = runtime
+            .find(root.path().join("b.txt").to_str().unwrap())
+            .unwrap();
+        runtime.frame(1.0);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.1);
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        // Do not poll the worker between the single and double clicks: the
+        // retention request must survive even when loading is still queued.
+        click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+        assert!(runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt")
+        }));
+        open_palette(&mut runtime);
+        press(
+            &mut runtime,
+            Key::Text("open selected item".into()),
+            Default::default(),
+        );
+        press(&mut runtime, Key::Enter, Default::default());
+        assert!(runtime.find("command-palette").is_none());
+        runtime.update(|s, _| s.persist_workspace());
+        assert_eq!(
+            Layout::load(root.path()).unwrap().files,
+            ["a.txt", "b.txt", "c.txt"].map(|name| root.path().join(name))
+        );
+    }
+
+    #[test]
     fn editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions() {
         use super::super::tests::{press, runtime_for};
         let root = tempfile::tempdir().unwrap();

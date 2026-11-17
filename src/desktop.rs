@@ -1133,11 +1133,17 @@ fn tabs_dark_editor_preview(state: &mut State) {
 }
 fn preview_tabs_scene(state: &mut State) {
     tabs_preview(state);
+    let first = state.workspace.tabs.first().map(|tab| tab.id);
     state
         .workspace
         .tabs
-        .retain(|tab| tab.id == 1 || tab.preview);
-    state.workspace.active = 1;
+        .retain(|tab| Some(tab.id) == first || tab.preview);
+    state.workspace.active = state
+        .workspace
+        .tabs
+        .iter()
+        .position(|tab| tab.preview)
+        .unwrap_or(0);
     state.workspace.terminal_focus = false;
     state.message = "Regular dirty file and temporary preview · real file buffers".into();
 }
