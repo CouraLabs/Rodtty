@@ -219,6 +219,22 @@ mod tests {
         rt.frame(0.0);
         select(&mut rt);
         assert_eq!(board.text().unwrap().as_str(), "Olá 世界");
+        let [x, y, _, _] = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("terminal"))
+            .unwrap()
+            .rect;
+        let m = fonts::Metrics::measure();
+        rt.pointer_down(x + 12.0 * m.width, y + 0.5 * m.height);
+        rt.pointer_move(x + 18.0 * m.width, y + 0.5 * m.height);
+        rt.pointer_up(x + 18.0 * m.width, y + 0.5 * m.height);
+        rt.frame(0.0);
+        assert_eq!(
+            board.text().unwrap().as_str(),
+            "Olá 世界",
+            "selecting empty cells leaves the clipboard unchanged"
+        );
         rt.update(|s, tx| {
             s.open_settings(tx);
             s.settings_query.replace_text("clipboard");

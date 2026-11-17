@@ -322,7 +322,10 @@ impl State {
         if let Some((a, b)) = self.selection {
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             if a != b {
-                tx.copy(self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1)));
+                let text = self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1));
+                if !text.is_empty() {
+                    tx.copy(text);
+                }
             }
         }
     }
