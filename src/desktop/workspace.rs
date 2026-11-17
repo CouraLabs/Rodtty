@@ -90,6 +90,7 @@ pub(super) struct Workspace {
     last_diff: Instant,
     pub diff_layout: u8,
     pub editor_width: f32,
+    diff_viewport: (f32, f32),
     pub body_width: f32,
     pub find: bool,
     pub find_query: TextEdit,
@@ -138,6 +139,7 @@ impl Default for Workspace {
             last_diff: Instant::now() - Duration::from_secs(3),
             diff_layout: 0,
             editor_width: 400.0,
+            diff_viewport: (600.0, 600.0),
             body_width: 1080.0,
             find: false,
             find_query: TextEdit::new(""),
@@ -202,15 +204,7 @@ impl State {
         }
     }
     pub(super) fn toggle_files(&mut self) {
-        let editor_available = self.workspace.layout.editor
-            && (!self.workspace.tabs.is_empty()
-                || self.settings_open
-                || self.workspace.show_empty_editor);
-        let minimum_width = if editor_available && self.workspace.layout.terminal {
-            1120.0
-        } else {
-            880.0
-        };
+        let minimum_width = explorer_minimum_width(self);
         if self.workspace.body_width < minimum_width {
             self.workspace.explorer_revealed = !self.workspace.explorer_revealed;
             self.workspace.layout.explorer = self.workspace.explorer_revealed;
@@ -1046,14 +1040,14 @@ fn explorer(s: &State, a: &Appearance) -> El {
             row()
                 .h(35.0)
                 .center_y()
-                .child(text("FILES").font(LABEL).color(a.accent()))
+                .child(text("FILES").font(ui_label()).color(a.accent()))
                 .child(el().grow(1.0))
                 .child(button(a, "explorer-hide", "×", |s, tx| {
                     s.dispatch(AppAction::ToggleExplorer, tx)
                 })),
         )
         .child(
-            text_input(&workspace.address, LABEL)
+            text_input(&workspace.address, ui_label())
                 .caret(a.accent(), a.selection())
                 .key("explorer-address")
                 .label("Explorer folder path")
@@ -1118,7 +1112,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
                     "Terminal is outside this host folder: {}",
                     cwd.display()
                 ))
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.muted())
                 .wrap_anywhere(),
             )
@@ -1130,20 +1124,18 @@ fn explorer(s: &State, a: &Appearance) -> El {
             ));
     }
     let danger = a.danger();
+    let mut tree_style = TreeStyle::from_kit(a.kit())
+        .label(ui_label(), a.ink(), a.ink())
+        .radius(6.0);
+    tree_style.row_height = 28.0_f32.max(ui_label().size * 1.5 + 6.0);
+    tree_style.selected = a.hover_bg();
     let list = Tree::new(
         |s: &State| &s.workspace.tree,
         |s: &mut State| &mut s.workspace.tree,
         |node| &node.label,
     )
     .name("Host files")
-    .style({
-        let mut style = TreeStyle::from_kit(a.kit())
-            .label(LABEL, a.ink(), a.ink())
-            .radius(6.0);
-        style.row_height = 28.0;
-        style.selected = a.hover_bg();
-        style
-    })
+    .style(tree_style)
     .row(move |node, _| {
         let item = TreeItem::new(&node.label).badge(&node.badge);
         if node.entry.as_ref().is_some_and(|entry| entry.missing) {
@@ -1157,24 +1149,31 @@ fn explorer(s: &State, a: &Appearance) -> El {
     })
     .on_open(|s, _, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx))
     .build(s, a.kit())
+    .instant_changes()
+    .pb(ui_label().size * 0.25)
     .grow(1.0)
     .min_h(0.0);
     pane = pane.child(list);
     if workspace.scan_busy {
-        pane = pane.child(text("Loading…").font(LABEL).color(a.muted()));
+        pane = pane.child(text("Loading…").font(ui_label()).color(a.muted()));
     } else if workspace.entries.is_empty() && workspace.explorer_error.is_none() {
-        pane = pane.child(text("No visible files").font(LABEL).color(a.muted()));
+        pane = pane.child(text("No visible files").font(ui_label()).color(a.muted()));
     }
     if let Some(error) = &workspace.explorer_error {
         pane = pane.child(
             text(format!("Could not load folder: {error}"))
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.muted())
                 .wrap_anywhere(),
         );
     }
     if let Some(error) = &workspace.git_error {
-        pane = pane.child(text(error).font(LABEL).color(a.muted()).wrap_anywhere());
+        pane = pane.child(
+            text(error)
+                .font(ui_label())
+                .color(a.muted())
+                .wrap_anywhere(),
+        );
     }
     pane
 }
@@ -1190,7 +1189,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         .on_layout(|s: &mut State, r| s.workspace.editor_width = r[2]);
     let mut tabs = row()
         .key("editor-tabs")
-        .h(38.0)
+        .h(38.0_f32.max(ui_label().size * 1.5 + 16.0))
         .px(6.0)
         .gap(3.0)
         .center_y()
@@ -1250,10 +1249,11 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         return pane.child(
-            col()
-                .grow(1.0)
-                .center()
-                .child(text("Open a file from Files").font(MONO).color(a.muted())),
+            col().grow(1.0).center().child(
+                text("Open a file from Files")
+                    .font(fonts::editor())
+                    .color(a.muted()),
+            ),
         );
     };
     let id = tab.id;
@@ -1287,7 +1287,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     }
     let controls = row()
         .w_full()
-        .h(36.0)
+        .h(36.0_f32.max(ui_label().size * 1.5 + 14.0))
         .px(8.0)
         .gap(6.0)
         .center_y()
@@ -1303,7 +1303,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         );
     pane = pane.child(controls).child(
         text(tab.document.path.to_string_lossy())
-            .font(TextStyle::new(10.0, 400.0))
+            .font(ui_style(10.0, 400.0))
             .color(a.muted())
             .truncate()
             .w_full()
@@ -1313,7 +1313,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     if let Some(error) = &tab.disk_error {
         pane = pane.child(
             text(format!("Disk: {error}"))
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.danger())
                 .wrap_anywhere(),
         );
@@ -1326,7 +1326,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .py(6.0)
                 .child(
                     text("Changed on disk. Your unsaved edits are preserved.")
-                        .font(LABEL)
+                        .font(ui_label())
                         .color(a.ink())
                         .wrap(),
                 )
@@ -1357,7 +1357,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     row()
                         .gap(4.0)
                         .child(
-                            text_input(&workspace.find_query, LABEL)
+                            text_input(&workspace.find_query, ui_label())
                                 .caret(a.accent(), a.selection())
                                 .key("editor-find")
                                 .single_line()
@@ -1381,7 +1381,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     row()
                         .gap(4.0)
                         .child(
-                            text_input(&workspace.replacement, LABEL)
+                            text_input(&workspace.replacement, ui_label())
                                 .caret(a.accent(), a.selection())
                                 .key("editor-replace")
                                 .single_line()
@@ -1404,7 +1404,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         let language = syntax::lang_for_path(&tab.document.path.to_string_lossy());
         let highlights = syntax::highlight(language, &tab.edit.text);
         let spans = SyntaxTheme::from_kit(a.kit()).spans(&highlights, 0);
-        let field = text_input(&tab.edit, MONO)
+        let field = text_input(&tab.edit, fonts::editor())
             .caret(a.accent(), a.selection())
             .key(format!("file-editor-{id}"))
             .label("File editor")
@@ -1461,7 +1461,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 if tab.document.saved.bom { " BOM" } else { "" },
                 tab.document.saved.preferred
             ))
-            .font(TextStyle::new(10.0, 400.0))
+            .font(ui_style(10.0, 400.0))
             .color(a.muted()),
         );
     } else {
@@ -1488,52 +1488,85 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         );
         pane = pane.child(
             text(&workspace.diff_label)
-                .font(TextStyle::new(10.0, 400.0))
+                .font(ui_style(10.0, 400.0))
                 .color(a.muted())
                 .wrap(),
         );
         if let Some(error) = &workspace.diff_error {
-            pane = pane.child(text(error).font(LABEL).color(a.muted()).wrap_anywhere());
+            pane = pane.child(
+                text(error)
+                    .font(ui_label())
+                    .color(a.muted())
+                    .wrap_anywhere(),
+            );
         }
         if workspace.diff_patch.is_empty() {
             pane = pane.child(el().grow(1.0));
         } else {
+            // Pinned Rune Kit fixes diff rows at 13px / 20px internally. Scale its
+            // coordinate space and inverse-size its viewport together: virtualization,
+            // scrolling, selection and hit testing retain their native coordinates.
+            let zoom = s.config.fonts.editor_size / 13.0;
+            let (width, height) = workspace.diff_viewport;
+            let diff = DiffView::new(
+                |s: &State| &s.workspace.diff,
+                |s: &mut State| &mut s.workspace.diff,
+            )
+            .key("git-diff")
+            .build(s, a.kit())
+            .focusable(true)
+            .absolute(0.0, 0.0)
+            .size(width / zoom, height / zoom)
+            .origin(0.0, 0.0)
+            .scale(zoom);
             pane = pane.child(
-                DiffView::new(
-                    |s: &State| &s.workspace.diff,
-                    |s: &mut State| &mut s.workspace.diff,
-                )
-                .key("git-diff")
-                .build(s, a.kit())
-                .focusable(true)
-                .grow(1.0)
-                .min_h(0.0),
+                el().key("git-diff-viewport")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .clip_soft(0.0)
+                    .instant_changes()
+                    .on_layout(|s: &mut State, rect| s.workspace.diff_viewport = (rect[2], rect[3]))
+                    .child(diff),
             );
         }
     }
     pane
 }
 
+fn editor_available(s: &State) -> bool {
+    s.workspace.layout.editor
+        && (!s.workspace.tabs.is_empty() || s.settings_open || s.workspace.show_empty_editor)
+}
+
+fn explorer_minimum_width(s: &State) -> f32 {
+    if editor_available(s) && s.workspace.layout.terminal {
+        1120.0
+    } else {
+        880.0
+    }
+}
+
+/// Actual visible panes, including a temporarily revealed compact explorer.
+pub(super) fn pane_visibility(s: &State, width: f32) -> (bool, bool, bool) {
+    let editor = editor_available(s) && (width >= 880.0 || !s.workspace.terminal_focus);
+    let terminal = if width < 880.0 {
+        !editor
+    } else {
+        s.workspace.layout.terminal || !editor
+    };
+    let explorer = s.workspace.layout.explorer
+        && (width >= explorer_minimum_width(s) || s.workspace.explorer_revealed);
+    (explorer, terminal, editor)
+}
+
 pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
     let workspace = &s.workspace;
-    let available_editor = workspace.layout.editor
-        && (!workspace.tabs.is_empty() || s.settings_open || workspace.show_empty_editor);
-    let narrow = width < 880.0;
-    let show_editor = available_editor && (!narrow || !workspace.terminal_focus);
-    let terminal = if narrow {
-        !show_editor
-    } else {
-        workspace.layout.terminal || !show_editor
-    };
-    let explorer_visible = workspace.layout.explorer
-        && width
-            >= if available_editor && workspace.layout.terminal {
-                1120.0
-            } else {
-                880.0
-            };
+    let (explorer_shown, terminal, show_editor) = pane_visibility(s, width);
+    let explorer_visible = explorer_shown && width >= explorer_minimum_width(s);
     let mut body = row()
         .key("workspace")
+        .instant_changes()
         .w_full()
         .grow(1.0)
         .min_h(0.0)
@@ -1572,7 +1605,7 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
                     .gap(6.0)
                     .fill(a.panel())
                     .child(
-                        text_input(&s.query, LABEL)
+                        text_input(&s.query, ui_label())
                             .key("search-query")
                             .single_line()
                             .grow(1.0)
@@ -1643,7 +1676,7 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
         }));
     }
     body = body.child(main);
-    if !explorer_visible && workspace.explorer_revealed {
+    if explorer_shown && !explorer_visible {
         body = body.child(explorer(s, a).absolute(0.0, 0.0).border(1.0, a.hover_bg()));
     }
     body
@@ -1685,9 +1718,9 @@ pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
     }
     Some(el().absolute(0.0,0.0).w_full().h_full().fill(a.scrim()).center()
         .child(col().key("file-dialog").modal(false,|s:&mut State|s.cancel_file_action()).w(470.0).px(24.0).py(24.0).gap(16.0).radius(10.0).fill(a.panel())
-            .child(text(title).font(TextStyle::new(17.0,600.0)).color(a.ink()))
-            .child(text(tab.document.path.to_string_lossy()).font(LABEL).color(a.muted()).wrap_anywhere())
-            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(LABEL).color(a.muted()).wrap())
+            .child(text(title).font(ui_style(17.0,600.0)).color(a.ink()))
+            .child(text(tab.document.path.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
+            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(ui_label()).color(a.muted()).wrap())
             .child(buttons)))
 }
 

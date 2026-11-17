@@ -367,11 +367,12 @@ impl State {
             }
             AppAction::ToggleTerminal => {
                 self.workspace.layout.terminal = !self.workspace.layout.terminal;
-                if !self.workspace.layout.terminal
-                    && (self.settings_open || !self.workspace.tabs.is_empty())
-                {
+                if !self.workspace.layout.terminal {
                     self.workspace.layout.editor = true;
                     self.workspace.terminal_focus = false;
+                    if !self.settings_open && self.workspace.tabs.is_empty() {
+                        self.workspace.show_empty_editor = true;
+                    }
                 }
             }
             AppAction::ToggleEditor => {
@@ -395,6 +396,9 @@ impl State {
                 }
             }
             AppAction::FindTerminal => {
+                self.workspace.layout.terminal = true;
+                self.workspace.terminal_focus = true;
+                self.workspace.explorer_revealed = false;
                 self.search = true;
                 tx.focus_when_shown("search-query", true);
             }

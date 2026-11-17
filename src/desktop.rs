@@ -11,16 +11,13 @@ use rune::{
 use std::{path::PathBuf, sync::Arc};
 mod actions;
 mod appearance;
+mod fonts;
 mod palette;
 use appearance::Appearance;
 mod settings;
+use fonts::{label as ui_label, ui as ui_style};
 mod workspace;
 use actions::AppAction;
-
-const CW: f32 = 8.4;
-const CH: f32 = 21.0;
-const MONO: TextStyle = TextStyle::new(14.0, 400.0).family(Family::Mono).lh(CH);
-const LABEL: TextStyle = TextStyle::new(12.0, 500.0);
 
 fn rgb(r: u8, g: u8, b: u8) -> Color {
     let decode = |c: u8| {
@@ -73,6 +70,8 @@ struct State {
     selection: Option<((u16, u16), (u16, u16))>,
     message: String,
     preview: Option<vt100::Screen>,
+    terminal_rect: Option<[f32; 4]>,
+    terminal_metrics: fonts::Metrics,
 }
 
 impl State {
@@ -127,6 +126,8 @@ impl State {
             selection: None,
             message,
             preview: None,
+            terminal_rect: None,
+            terminal_metrics: Default::default(),
         }
     }
 
@@ -281,7 +282,7 @@ fn button(
         .help(help)
         .focusable(true)
         .focus_ring(2.0, 1.0, a.accent())
-        .h(29.0)
+        .min_h(29.0_f32.max(ui_label().size * 1.5 + 8.0))
         .px(10.0)
         .center()
         .radius(5.0)
@@ -291,7 +292,7 @@ fn button(
             tx.blur();
             action(state, tx);
         })
-        .child(text(label).font(LABEL).color(a.ink()))
+        .child(text(label).font(ui_label()).color(a.ink()))
 }
 
 fn grid(state: &State, a: &Appearance) -> El {
@@ -299,12 +300,15 @@ fn grid(state: &State, a: &Appearance) -> El {
 }
 
 fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
+    let metrics = fonts::Metrics::measure();
+    let (cw, ch) = (metrics.width, metrics.height);
     let (rows, cols) = screen.size();
     let selection = state
         .selection
         .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
     let mut grid = el()
         .key("terminal")
+        .instant_changes()
         .role("terminal")
         .label("Terminal")
         .w_full()
@@ -328,35 +332,15 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             let start = c;
             let mut content = String::new();
             let mut end = c;
-            while end < cols {
-                let next = screen.cell(r, end).unwrap();
-                if next.is_wide_continuation() {
-                    end += 1;
-                    continue;
-                }
-                if end > start
-                    && (cell.is_wide()
-                        || next.is_wide()
-                        || next.fgcolor() != cell.fgcolor()
-                        || next.bgcolor() != cell.bgcolor()
-                        || next.bold() != cell.bold()
-                        || next.inverse() != cell.inverse()
-                        || next.italic() != cell.italic()
-                        || next.underline() != cell.underline()
-                        || selected(end) != selected(start))
-                {
-                    break;
-                }
-                content.push_str(if next.contents().is_empty() {
-                    " "
-                } else {
-                    next.contents()
-                });
-                end += if next.is_wide() { 2 } else { 1 };
-                if next.is_wide() {
-                    break;
-                }
-            }
+            // Each terminal cell has an explicit origin. Font fallback, ligatures,
+            // combining sequences and pixel rounding must never shift later cells.
+            let next = screen.cell(r, end).unwrap();
+            content.push_str(if next.contents().is_empty() {
+                " "
+            } else {
+                next.contents()
+            });
+            end += if next.is_wide() { 2 } else { 1 };
             let mut fg = a.terminal(cell.fgcolor(), true);
             let mut background = a.terminal(cell.bgcolor(), false);
             if cell.inverse() {
@@ -365,31 +349,32 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             if selected(start) {
                 background = a.bg().mix(a.accent(), 0.28);
             }
-            let width = (end - start) as f32 * CW;
+            let width = (end - start) as f32 * cw;
             if background != a.bg() {
                 grid = grid.child(
-                    el().absolute(start as f32 * CW, r as f32 * CH)
-                        .size(width, CH)
+                    el().absolute(start as f32 * cw, r as f32 * ch)
+                        .size(width, ch)
                         .fill(background),
                 );
             }
             if !content.trim().is_empty() {
-                let mut style = MONO;
+                let mut style = metrics.style;
                 if cell.bold() {
                     style.weight = 600.0;
                 }
                 style.italic = cell.italic();
                 grid = grid.child(
                     text(content)
+                        .key(format!("terminal-cell-{r}-{start}"))
                         .font(style)
                         .color(fg)
-                        .absolute(start as f32 * CW, r as f32 * CH)
-                        .size(width + 1.0, CH),
+                        .absolute(start as f32 * cw, r as f32 * ch)
+                        .size(width + 1.0, ch),
                 );
             }
             if cell.underline() {
                 grid = grid.child(
-                    el().absolute(start as f32 * CW, r as f32 * CH + CH - 3.0)
+                    el().absolute(start as f32 * cw, r as f32 * ch + ch - 3.0)
                         .size(width, 1.0)
                         .fill(fg),
                 );
@@ -401,33 +386,44 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         let (r, c) = screen.cursor_position();
         grid = grid.child(
             el().key("terminal-caret")
-                .absolute(c as f32 * CW, r as f32 * CH + CH - 3.0)
-                .size(CW, 2.0)
+                .absolute(c as f32 * cw, r as f32 * ch + ch - 3.0)
+                .size(cw, 2.0)
                 .fill(a.accent())
                 .ime_cursor(),
         );
     }
-    grid.on_layout(|s: &mut State, rect| {
-        let rows = (rect[3] / CH).floor().max(2.0) as u16;
-        let cols = (rect[2] / CW).floor().max(10.0) as u16;
-        if let Some(session) = s.sessions.get_mut(s.active)
-            && let Err(error) = session.resize(rows, cols)
-        {
-            s.message = error.to_string();
-        }
+    // A metric/session probe also reports when the viewport itself has not changed.
+    // Rune's on_layout fires only for changed rectangles; a font-only update still
+    // needs to notify the existing PTY before its next redraw.
+    let session_key = state
+        .active()
+        .map(|s| Arc::as_ptr(&s.state) as usize)
+        .unwrap_or(0);
+    grid = grid.child(
+        el().key(format!(
+            "terminal-metrics-{session_key}-{}-{cw}-{ch}",
+            rune::text::font_epoch()
+        ))
+        .absolute(0.0, 0.0)
+        .size(cw, ch)
+        .on_layout(move |s: &mut State, _| s.resize_terminal(metrics)),
+    );
+    grid.on_layout(move |s: &mut State, rect| {
+        s.terminal_rect = Some(rect);
+        s.resize_terminal(metrics);
     })
     .on_background_press_tx(|s: &mut State, tx| {
         s.workspace.terminal_focus = true;
         tx.blur();
     })
-    .on_drag(|s: &mut State, drag, tx| {
+    .on_drag(move |s: &mut State, drag, tx| {
         s.workspace.terminal_focus = true;
         tx.blur();
         let (rows, cols) = s.with_screen(vt100::Screen::size);
         let point = |x: f32, y: f32| {
             (
-                (y / CH).floor().clamp(0.0, (rows - 1) as f32) as u16,
-                (x / CW).floor().clamp(0.0, cols as f32) as u16,
+                (y / ch).floor().clamp(0.0, (rows - 1) as f32) as u16,
+                (x / cw).floor().clamp(0.0, cols as f32) as u16,
             )
         };
         if drag.cancelled() {
@@ -440,19 +436,23 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             s.selection = Some((start, point(drag.x, drag.y)));
         }
     })
-    .on_wheel(|s: &mut State, event, _| {
+    .on_wheel(move |s: &mut State, event, _| {
         if let Some(session) = s.active() {
-            session.scroll((-event.dy / CH).round() as isize);
+            session.scroll((-event.dy / ch).round() as isize);
         }
         true
     })
+}
+
+fn header_height() -> f32 {
+    44.0_f32.max(ui_label().size * 1.5 + 18.0)
 }
 
 fn terminal_tabs(state: &State, a: &Appearance) -> El {
     let mut tabs = row()
         .key("tabs")
         .w_full()
-        .h(38.0)
+        .h(38.0_f32.max(ui_label().size * 1.5 + 16.0))
         .px(8.0)
         .gap(4.0)
         .center_y()
@@ -515,6 +515,7 @@ fn workspace_menu(a: &Appearance) -> El {
     let mut menu = col()
         .key("workspace-menu-popover")
         .w(276.0)
+        .self_start()
         .px(6.0)
         .py(6.0)
         .gap(3.0)
@@ -526,15 +527,21 @@ fn workspace_menu(a: &Appearance) -> El {
             tx.focus("workspace-menu", true);
         });
     for (key, title, action) in workspace_menu_items() {
-        menu = menu.child(button(a, key, title, move |s, tx| s.dispatch(action, tx)).w_full());
+        menu = menu.child(
+            button(a, key, title, move |s, tx| s.dispatch(action, tx))
+                .w_full()
+                .items_start()
+                .px(12.0),
+        );
     }
-    el().absolute(0.0, 44.0)
+    el().absolute(0.0, header_height())
         .w_full()
         .h_full()
         .child(row().w_full().px(8.0).child(el().grow(1.0)).child(menu))
 }
 
 fn view(state: &State, cx: &mut Cx<State>) -> El {
+    let _fonts = fonts::scope(&state.config.fonts, cx.env().scale);
     let a = &Appearance::resolve(
         state.config.theme_family,
         state.config.appearance,
@@ -544,6 +551,11 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     cx.focus_ring(2.0, 1.0, a.accent());
     cx.help_look(a.tooltip());
     cx.caption_color(a.ink());
+    let width = cx
+        .layout_size("root")
+        .map(|r| r[0])
+        .unwrap_or(state.workspace.body_width);
+    let (show_explorer, show_terminal, show_editor) = workspace::pane_visibility(state, width);
     let cwd = state
         .active()
         .map(Session::cwd)
@@ -552,17 +564,14 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     let mut root = col().key("root").w_full().h_full().fill(a.bg()).child(
         row()
             .key("workspace-header")
+            .instant_changes()
             .w_full()
-            .h(44.0)
+            .h(header_height())
             .px(12.0)
             .gap(6.0)
             .center_y()
             .fill(a.panel())
-            .child(
-                text("Rodtty")
-                    .font(TextStyle::new(13.0, 600.0))
-                    .color(a.muted()),
-            )
+            .child(text("Rodtty").font(ui_style(13.0, 600.0)).color(a.muted()))
             .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
             .child(
                 text(
@@ -572,7 +581,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                         .to_string_lossy(),
                 )
                 .key("active-folder")
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.ink())
                 .truncate()
                 .min_w(0.0)
@@ -583,7 +592,12 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                 button(a, "files", "Files", |s, tx| {
                     s.dispatch(AppAction::ToggleExplorer, tx)
                 })
-                .fill(if state.workspace.layout.explorer {
+                .help(if show_explorer {
+                    "Hide file explorer"
+                } else {
+                    "Show file explorer"
+                })
+                .fill(if show_explorer {
                     a.hover_bg()
                 } else {
                     a.panel()
@@ -597,7 +611,14 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                         s.dispatch(AppAction::ToggleTerminal, tx)
                     }
                 })
-                .fill(if state.workspace.terminal_focus {
+                .help(if width < 880.0 {
+                    "Show terminal"
+                } else if show_terminal {
+                    "Hide terminal pane"
+                } else {
+                    "Show terminal pane"
+                })
+                .fill(if show_terminal {
                     a.hover_bg()
                 } else {
                     a.panel()
@@ -607,11 +628,14 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                 button(a, "toggle-editor", "Editor", |s, tx| {
                     s.dispatch(AppAction::ToggleEditor, tx)
                 })
-                .fill(if !state.workspace.terminal_focus {
-                    a.hover_bg()
+                .help(if width < 880.0 {
+                    "Show editor"
+                } else if show_editor {
+                    "Hide editor pane"
                 } else {
-                    a.panel()
-                }),
+                    "Show editor pane"
+                })
+                .fill(if show_editor { a.hover_bg() } else { a.panel() }),
             )
             .child(button(a, "settings", "⚙", |s, tx| {
                 s.dispatch(AppAction::Settings, tx)
@@ -623,11 +647,8 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                 }
             })),
     );
-    let width = cx
-        .layout_size("root")
-        .map(|r| r[0])
-        .unwrap_or(state.workspace.body_width);
     root = root.child(workspace::body(state, a, width));
+
     let cwd = if state.preview.is_some() {
         PathBuf::from("~/projects")
     } else {
@@ -639,14 +660,14 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
     root = root.child(
         row()
             .w_full()
-            .h(25.0)
+            .h(25.0_f32.max(ui_label().size * 1.5 + 4.0))
             .px(12.0)
             .gap(10.0)
             .center_y()
             .fill(a.panel())
             .child(
                 text(cwd.to_string_lossy())
-                    .font(LABEL)
+                    .font(ui_label())
                     .color(a.muted())
                     .truncate()
                     .min_w(0.0)
@@ -659,7 +680,7 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                 } else {
                     &state.message
                 })
-                .font(LABEL)
+                .font(ui_label())
                 .color(a.muted())
                 .truncate()
                 .min_w(0.0)
@@ -687,10 +708,10 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
                         .gap(16.0)
                         .radius(10.0)
                         .fill(a.panel())
-                        .child(text(title).font(TextStyle::new(17.0, 600.0)).color(a.ink()))
+                        .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
                         .child(
                             text("Running commands in these sessions will stop.")
-                                .font(LABEL)
+                                .font(ui_label())
                                 .color(a.muted()),
                         )
                         .child(
@@ -712,7 +733,11 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         root = root.child(palette);
     }
     root.on_paste(|s: &mut State, content, _| {
-        if s.pending.is_none() && s.palette.is_none() && s.workspace.terminal_focus {
+        if s.pending.is_none()
+            && s.palette.is_none()
+            && !s.workspace_menu
+            && s.workspace.terminal_focus
+        {
             s.paste(content);
         }
     })
@@ -781,6 +806,16 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if state.palette.is_some() {
         return state.palette_key(event, tx);
     }
+    if (if cfg!(target_os = "macos") {
+        event.mods.cmd
+    } else {
+        event.mods.ctrl
+    }) && event.mods.shift
+        && event.key == Key::Command('p')
+    {
+        state.dispatch(AppAction::CommandPalette, tx);
+        return true;
+    }
     if state.workspace_menu {
         let items = workspace_menu_items();
         let index = items
@@ -803,16 +838,6 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             Key::Enter => state.dispatch(items[index].2, tx),
             _ => return false,
         }
-        return true;
-    }
-    if (if cfg!(target_os = "macos") {
-        event.mods.cmd
-    } else {
-        event.mods.ctrl
-    }) && event.mods.shift
-        && event.key == Key::Command('p')
-    {
-        state.dispatch(AppAction::CommandPalette, tx);
         return true;
     }
     let app_modifier = event.mods.cmd && (cfg!(target_os = "macos") || event.mods.shift);
@@ -881,7 +906,10 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     let changed = generations != state.generations;
     state.generations = generations;
     let settings_changed = state.poll_settings();
-    state.workspace_poll(tx) || changed || settings_changed
+    let (sans, mono) = state.config.fonts.families();
+    tx.set_font_families(sans, mono);
+    let metrics_changed = state.refresh_terminal_metrics();
+    state.workspace_poll(tx) || changed || settings_changed || metrics_changed
 }
 
 fn preview(state: &mut State) {
@@ -977,8 +1005,8 @@ pub fn run() -> Result<()> {
             ("tree", tree_preview),
             ("settings", settings_preview),
         ],
-        fonts: &[include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")],
-        families: ("IBM Plex Mono", "IBM Plex Mono"),
+        fonts: fonts::BUNDLED,
+        families: ("Geist", "Geist Mono"),
         min_size: Some((640.0, 360.0)),
         ..AppSpec::new("Rodtty", (1080.0, 720.0), State::init, view)
     };
@@ -999,7 +1027,11 @@ pub fn run() -> Result<()> {
                 raw.split('(').next().unwrap_or("unknown").to_owned();
         })
         .on_ime(|s, event, _| {
-            if s.pending.is_some() || s.palette.is_some() || !s.workspace.terminal_focus {
+            if s.pending.is_some()
+                || s.palette.is_some()
+                || s.workspace_menu
+                || !s.workspace.terminal_focus
+            {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {
@@ -1022,7 +1054,9 @@ pub fn run() -> Result<()> {
         .map(|instance| instance.watch(move || launch_handle.open()))
         .transpose()?;
     let native_report = std::env::args()
-        .skip_while(|arg| arg != "--native-check" && arg != "--workspace-check")
+        .skip_while(|arg| {
+            arg != "--native-check" && arg != "--workspace-check" && arg != "--font-check"
+        })
         .nth(1)
         .map(PathBuf::from);
     if let Some(report) = native_report.clone() {
@@ -1092,7 +1126,8 @@ fn native_check(
     report: PathBuf,
     backend: Arc<std::sync::Mutex<String>>,
 ) {
-    let with_workspace = std::env::args().any(|a| a == "--workspace-check");
+    let with_fonts = std::env::args().any(|a| a == "--font-check");
+    let with_workspace = with_fonts || std::env::args().any(|a| a == "--workspace-check");
     std::thread::spawn(move || {
         use std::time::{Duration, Instant};
         let check = (|| -> Result<serde_json::Value> {
@@ -1214,6 +1249,60 @@ fn native_check(
             } else {
                 None
             };
+            if with_fonts {
+                let probe = std::env::current_exe()?
+                    .with_file_name(format!("rodtty-probe{}", std::env::consts::EXE_SUFFIX));
+                let command = format!("{} --resize-fixture\r", profile::quote(&probe)?);
+                handle.update(move |s, _| s.send(command.into_bytes()));
+                wait_text("FULL SCREEN FIXTURE")?;
+                let before = session
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .parser
+                    .screen()
+                    .size();
+                handle.update(|s, _| {
+                    let tab = &mut s.workspace.tabs[0];
+                    tab.edit.insert("// font change preserves this buffer\n");
+                    tab.revision += 1;
+                    s.save_config(|c| {
+                        c.fonts.ui_size = 15.0;
+                        c.fonts.terminal_size = 20.0;
+                        c.fonts.editor_size = 18.0;
+                    });
+                });
+                wait_app(&handle, move |s| {
+                    s.with_screen(|screen| {
+                        let (rows, cols) = screen.size();
+                        rows < before.0
+                            && cols < before.1
+                            && screen.alternate_screen()
+                            && screen.contents().contains(&format!("SIZE:{cols}x{rows}"))
+                    })
+                })
+                .with_context(|| {
+                    let terminal = session.lock().unwrap_or_else(|e| e.into_inner());
+                    format!("live font metrics resize the existing full-screen PTY; before {before:?}; after {:?}; output {:?}", terminal.parser.screen().size(), terminal.parser.screen().contents())
+                })?;
+                wait_app(&handle, |s| {
+                    s.workspace.tabs[0].dirty()
+                        && s.workspace.tabs[0]
+                            .edit
+                            .text
+                            .contains("font change preserves this buffer")
+                        && Config::load(&s.root)
+                            .is_ok_and(|c| c.fonts.ui_size == 15.0 && c.fonts.editor_size == 18.0)
+                })?;
+                handle.update(|s, _| {
+                    s.send(b"q".to_vec());
+                    // This isolated harness discards only its own fixture edit.
+                    let tab = &mut s.workspace.tabs[0];
+                    tab.edit.replace_text(&tab.document.saved.text);
+                });
+                wait_app(&handle, |s| {
+                    s.with_screen(|screen| !screen.alternate_screen())
+                })?;
+            }
             handle
                 .update(|state, _| state.send(b"sleep 1; printf 'HIDDEN_%s\\n' OUTPUT\r".to_vec()));
             handle.close();
@@ -1236,6 +1325,11 @@ fn native_check(
             let mut report = serde_json::json!({"passed":true,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                 "window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),
                 "window_closed":true,"output_while_closed":true,"reopened_from_second_launch":true,"same_session":true,"appearance_changes_preserved_session":true,"output_after_appearance_change":true});
+            if with_fonts {
+                report["live_font_sizes"] = true.into();
+                report["fullscreen_pty_resize"] = true.into();
+                report["unsaved_editor_preserved"] = true.into();
+            }
             if with_workspace {
                 report["unsaved_close_prompt"] = true.into();
                 report["editor_saved"] = true.into();
@@ -1245,7 +1339,7 @@ fn native_check(
         let result = match check {
             Ok(result) => result,
             Err(error) => {
-                serde_json::json!({"passed":false,"error":format!("{error:#}"),"window_error":handle.window_error()})
+                serde_json::json!({"passed":false,"error":format!("{error:#}"),"window_backend":backend.lock().unwrap_or_else(|e|e.into_inner()).clone(),"window_error":handle.window_error()})
             }
         };
         if let Some(parent) = report.parent() {
@@ -1331,7 +1425,15 @@ mod tests {
         runtime.pointer_up(x, y);
         runtime.settle_all();
         runtime.frame(0.0);
-        assert!(runtime.find("workspace-menu-popover").is_some());
+        let popover = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("workspace-menu-popover") && !e.exiting)
+            .unwrap();
+        assert!(
+            popover.rect[3] <= 260.0,
+            "a short action menu must fit its content"
+        );
         press(&mut runtime, Key::Down, Default::default());
         press(&mut runtime, Key::Enter, Default::default());
         assert!(runtime.find("workspace-menu-popover").is_none());

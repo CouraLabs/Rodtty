@@ -33,7 +33,9 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 
 Select **Files** to open the explorer at the active terminal's directory. Expand folders in place and use the Up button or folder path field for explicit root changes. **Follow** reveals the terminal directory inside the chosen root and offers a root-change action outside it. **Hidden** includes hidden files, **Ignore** respects Git ignore rules, and Git status badges show changed/untracked entries.
 
-Double-click a file, or select it and press Enter, to open an editor tab beside the terminal. Drag the pane dividers to resize the explorer and editor. **Terminal**, **Editor**, and **Hide** control pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
+The compact header shows the active host folder, **Files**, **Terminal**, **Editor**, Settings, and the workspace menu (**···**). The menu contains the Command Palette, terminal search, session ending, window closing, and Quit. Terminal and editor tabs have separate strips above their panes.
+
+Double-click a file, or select it and press Enter, to open an editor tab beside the terminal. Drag the thin pane dividers to resize the explorer and editor; the terminal occupies the larger initial share. Header controls hide or show panes. As the window narrows, the explorer collapses first; **Files** reveals it temporarily. Below 880 points, **Terminal** and **Editor** switch views, and **‹ Terminal** returns from any editor or Settings tab in one action. Open files, running sessions, and remembered pane widths remain intact. Widening restores requested pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
 
 The editor provides syntax highlighting, undo/redo, find/replace, and save. It edits UTF-8 files up to 2 MiB, preserves BOMs and line endings, and checks for external changes approximately once a second. Clean buffers reload automatically; dirty buffers retain their edits and offer Reload or Keep edits. A conflicting save requires explicit Overwrite. Closing a dirty tab/window or quitting offers Save / Discard / Cancel.
 
@@ -128,7 +130,9 @@ target/debug/rodtty --native-check target/native-check.json
 
 This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and immediate `quit`.
 
-`--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
+`--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. `--font-check <report.json>` also changes UI, terminal and editor sizes live, checks the full-screen application sees the updated PTY dimensions, and verifies unsaved editor work and the terminal session survive. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
+
+Settings provides independent UI, terminal and editor font sizes (defaults: 13px, 14px and 14px), with immediate application and reset. These are saved in the `fonts` object of `settings.json`. The editor follows the terminal family; unavailable saved families fall back to the bundled Geist faces.
 
 ## Design documents
 
@@ -139,4 +143,4 @@ This opens a window, runs a command, closes the window while output continues, r
 - [Domain glossary](GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
 
-Bundled IBM Plex Mono is distributed under its [font license](assets/fonts/IBMPlexMono-LICENSE.txt). Application code is MIT licensed.
+Bundled Geist and Geist Mono are distributed under the [SIL Open Font License](assets/fonts/Geist-OFL.txt). The retained IBM Plex Mono asset has its own [font license](assets/fonts/IBMPlexMono-LICENSE.txt). Application code is MIT licensed.
