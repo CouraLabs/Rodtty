@@ -562,7 +562,16 @@ impl State {
         }
     }
     pub(super) fn activate_editor(&mut self, index: usize) {
+        self.workspace.latest_activation = self
+            .workspace
+            .tabs
+            .get(index)
+            .map(|tab| tab.document.path.clone());
         self.show_editor(index, true);
+    }
+
+    pub(super) fn supersede_pending_preview(&mut self) {
+        self.workspace.latest_activation = None;
     }
 
     fn show_editor(&mut self, index: usize, focus: bool) {
@@ -2662,6 +2671,74 @@ mod tests {
                 .is_some_and(|key| key.starts_with("editor-tab-"))
                 && e.label.as_deref() == Some("b.txt (preview)")
         }));
+    }
+
+    #[test]
+    fn selecting_an_existing_editor_tab_supersedes_a_pending_preview() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt"] {
+            std::fs::write(root.path().join(name), name).unwrap();
+        }
+        let mut state = state(root.path());
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 2);
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        runtime.update(|s, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx));
+        runtime.frame(0.0);
+        click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
+        // Select the retained tab before polling the queued preview result.
+        click(&mut runtime, "editor-tab-1");
+        wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+        assert!(runtime.find("file-editor-1").is_some());
+        assert!(!runtime.elements().iter().any(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("editor-tab-"))
+                && e.label.as_deref() == Some("b.txt (preview)")
+        }));
+    }
+
+    #[test]
+    fn returning_to_settings_or_terminal_supersedes_a_pending_preview() {
+        use super::super::tests::runtime_for;
+        for action in [
+            Some(AppAction::Settings),
+            Some(AppAction::ShowTerminal),
+            Some(AppAction::ToggleEditor),
+            None,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("a.txt"), "a").unwrap();
+            let mut state = state(root.path());
+            state.navigate(root.path().to_owned());
+            state.workspace.layout.explorer = true;
+            // ToggleEditor hides the existing pane, returning to the terminal.
+            state.workspace.layout.editor = true;
+            state.workspace.show_empty_editor = true;
+            wait(&mut state, |s| s.workspace.entries.len() == 1);
+            let mut runtime = runtime_for(state);
+            click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+            if let Some(action) = action {
+                runtime.update(|s, tx| s.dispatch(action, tx));
+            } else {
+                click(&mut runtime, "terminal");
+            }
+            runtime.frame(0.0);
+            wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+            match action {
+                Some(AppAction::Settings) => assert!(runtime.find("settings-search").is_some()),
+                _ => assert!(runtime.state.workspace.terminal_focus),
+            }
+            assert!(!runtime.elements().iter().any(|e| {
+                e.key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("editor-tab-"))
+            }));
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 impl State {
     pub(super) fn open_settings(&mut self, tx: &mut Tx) {
+        self.supersede_pending_preview();
         self.workspace.explorer_revealed = false;
         self.settings_open = true;
         self.settings = true;

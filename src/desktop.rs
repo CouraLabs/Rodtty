@@ -503,10 +503,12 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         s.resize_terminal(metrics);
     })
     .on_background_press_tx(|s: &mut State, tx| {
+        s.supersede_pending_preview();
         s.workspace.terminal_focus = true;
         tx.blur();
     })
     .on_drag(move |s: &mut State, drag, tx| {
+        s.supersede_pending_preview();
         s.workspace.terminal_focus = true;
         tx.blur();
         let (rows, cols) = s.with_screen(vt100::Screen::size);

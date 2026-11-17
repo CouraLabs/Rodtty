@@ -400,6 +400,18 @@ impl State {
             return;
         }
         self.workspace_menu = false;
+        if matches!(
+            action,
+            AppAction::NewTerminal
+                | AppAction::ActivateTerminal(_)
+                | AppAction::ShowTerminal
+                | AppAction::ToggleTerminal
+                | AppAction::ToggleEditor
+                | AppAction::FindTerminal
+                | AppAction::PasteTerminal
+        ) {
+            self.supersede_pending_preview();
+        }
         match action {
             AppAction::CreateFile => {
                 self.begin_file_operation(crate::files::operations::FileOperation::CreateFile, tx)
