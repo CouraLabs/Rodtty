@@ -2223,6 +2223,7 @@ mod tests {
                     ..Default::default()
                 },
             ),
+            "remapped" => press(runtime, Key::Function(9), Default::default()),
             "menu" => {
                 click(runtime, "workspace-menu");
                 click(runtime, "close-tab");
@@ -2230,6 +2231,12 @@ mod tests {
             "palette" => {
                 open_palette(runtime);
                 press(runtime, Key::Text("End Session".into()), Default::default());
+                assert!(
+                    runtime
+                        .elements()
+                        .iter()
+                        .any(|e| e.text.as_deref() == Some("F9"))
+                );
                 press(runtime, Key::Enter, Default::default());
             }
             _ => unreachable!(),
@@ -2251,7 +2258,9 @@ mod tests {
             Policy::CloseImmediately,
         ] {
             for running in [false, true] {
-                for entry in ["button", "middle", "context", "shortcut", "menu", "palette"] {
+                for entry in [
+                    "button", "middle", "context", "shortcut", "remapped", "menu", "palette",
+                ] {
                     let root = tempfile::tempdir().unwrap();
                     let mut state = State::with_root(root.path().into());
                     state.shell = Some(shell.clone());
@@ -2261,7 +2270,12 @@ mod tests {
                         .unwrap()
                         .wait_for("rodtty:", std::time::Duration::from_secs(15))
                         .unwrap();
-                    state.save_config(|c| c.behavior.terminal_tab_close = policy);
+                    state.save_config(|c| {
+                        c.behavior.terminal_tab_close = policy;
+                        if matches!(entry, "remapped" | "palette") {
+                            c.shortcuts.insert("end-terminal".into(), "F9".into());
+                        }
+                    });
                     if running {
                         state.send(b"read answer\r".to_vec());
                         let start = std::time::Instant::now();
