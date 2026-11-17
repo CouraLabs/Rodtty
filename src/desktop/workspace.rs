@@ -5,6 +5,7 @@ use crate::{
     work::{Event, Job, Layout, Worker},
 };
 use rune_kit::{
+    Tree, TreeItem, TreeModel, TreeStyle,
     diff::{DiffMode, DiffState, DiffView},
     syntax::{self, SyntaxTheme},
 };
@@ -44,6 +45,12 @@ impl Tab {
     }
 }
 
+pub(super) struct TreeEntry {
+    entry: Option<Entry>,
+    label: String,
+    badge: String,
+}
+
 pub(super) struct Workspace {
     pub terminal_focus: bool,
     orphan_edit: TextEdit,
@@ -52,6 +59,14 @@ pub(super) struct Workspace {
     pub active: usize,
     pub worker: Option<Worker>,
     pub entries: Vec<Entry>,
+    tree: TreeModel<TreeEntry>,
+    tree_errors: Vec<(PathBuf, String)>,
+    tree_dirty: bool,
+    explorer_error: Option<String>,
+    pub(super) outside_root: Option<PathBuf>,
+    pending_reveal: Option<PathBuf>,
+    revealed_directory: Option<PathBuf>,
+    explorer_preferences: crate::config::ExplorerPreferences,
     pub directory: Option<PathBuf>,
     pub address: TextEdit,
     pub repo: Option<Repository>,
@@ -90,6 +105,14 @@ impl Default for Workspace {
             active: 0,
             worker: None,
             entries: Vec::new(),
+            tree: TreeModel::new().key("file-list"),
+            tree_errors: Vec::new(),
+            tree_dirty: true,
+            explorer_error: None,
+            outside_root: None,
+            pending_reveal: None,
+            revealed_directory: None,
+            explorer_preferences: crate::config::ExplorerPreferences::default(),
             directory: None,
             address: TextEdit::new(""),
             repo: None,
@@ -124,6 +147,7 @@ impl Default for Workspace {
 impl State {
     pub(super) fn workspace_setup(&mut self) {
         self.workspace.worker = Some(Worker::new(self.wake.clone()));
+        self.workspace.explorer_preferences = self.config.explorer.clone();
         match Layout::load(&self.root) {
             Ok(layout) => {
                 if !layout.files.is_empty() {
@@ -138,8 +162,23 @@ impl State {
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 );
+                // Migrate the former workspace-owned switches once, preserving an
+                // explicit owner preference if the new explorer section exists.
+                let has_preferences = self
+                    .settings_seen
+                    .as_deref()
+                    .and_then(|raw| serde_json::from_slice::<serde_json::Value>(raw).ok())
+                    .is_some_and(|value| value.get("explorer").is_some());
+                if !has_preferences && self.config_valid && (layout.follow || layout.hidden) {
+                    self.save_config(|config| {
+                        config.explorer.follow_terminal = layout.follow;
+                        config.explorer.show_hidden = layout.hidden;
+                    });
+                }
                 let paths = layout.files.clone();
                 self.workspace.layout = layout;
+                self.workspace.layout.follow = self.config.explorer.follow_terminal;
+                self.workspace.layout.hidden = self.config.explorer.show_hidden;
                 for path in paths {
                     self.open_file(path);
                 }
@@ -172,10 +211,185 @@ impl State {
         self.workspace.directory = Some(path.clone());
         self.workspace.address.replace_text(path.to_string_lossy());
         self.workspace.entries.clear();
+        self.workspace.tree.clear();
+        self.workspace.tree_dirty = true;
+        self.workspace.layout.expanded_folders.clear();
+        self.workspace.explorer_error = None;
+        self.workspace.outside_root = None;
+        self.workspace.pending_reveal = None;
+        self.workspace.revealed_directory = None;
+        self.workspace.last_follow = None;
         self.workspace.repo = None;
         self.workspace.scan_token += 1;
         self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
     }
+    pub(super) fn reveal_terminal(&mut self, tx: &mut Tx) {
+        let cwd = self
+            .active()
+            .map(Session::cwd)
+            .unwrap_or_else(|| self.directory.clone());
+        self.workspace.last_follow = Some(cwd.clone());
+        let Some(root) = self.workspace.directory.as_ref() else {
+            self.navigate(cwd);
+            return;
+        };
+        if !cwd.starts_with(root) {
+            self.workspace.outside_root = Some(cwd);
+            return;
+        }
+        self.workspace.outside_root = None;
+        self.workspace.revealed_directory = Some(cwd.clone());
+        self.workspace.tree_dirty = true;
+        let mut ancestor = cwd.as_path();
+        while ancestor != root {
+            if !self
+                .workspace
+                .layout
+                .expanded_folders
+                .iter()
+                .any(|p| p == ancestor)
+            {
+                self.workspace
+                    .layout
+                    .expanded_folders
+                    .push(ancestor.to_owned());
+            }
+            self.workspace
+                .tree
+                .set_expanded(&ancestor.to_string_lossy(), true);
+            let Some(parent) = ancestor.parent() else {
+                break;
+            };
+            ancestor = parent;
+        }
+        if cwd != *root {
+            self.workspace.pending_reveal = Some(cwd.clone());
+            self.workspace.tree.reveal(&cwd.to_string_lossy(), tx);
+        }
+        self.workspace.scan_token += 1;
+        self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+    }
+
+    pub(super) fn collapse_tree(&mut self) {
+        self.workspace.tree.collapse_all();
+        self.workspace.tree_dirty = true;
+        self.workspace.layout.expanded_folders.clear();
+        self.workspace.scan_token += 1;
+        self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+    }
+
+    pub(super) fn open_tree_selection(&mut self) {
+        let entry = self
+            .workspace
+            .tree
+            .cursor()
+            .and_then(|id| self.workspace.tree.get(id))
+            .and_then(|n| n.entry.clone());
+        if let Some(entry) = entry {
+            if entry.directory {
+                self.workspace.tree.toggle(&entry.path.to_string_lossy());
+                self.sync_tree_expansion();
+            } else {
+                self.open_file(entry.path);
+            }
+        }
+    }
+
+    fn rebuild_tree(&mut self) {
+        let workspace = &mut self.workspace;
+        workspace.tree_dirty = false;
+        let selected = workspace.tree.cursor().map(str::to_owned);
+        workspace.tree.clear();
+        let Some(root) = workspace.directory.as_ref() else {
+            return;
+        };
+        for entry in &workspace.entries {
+            let id = entry.path.to_string_lossy().into_owned();
+            let parent = entry
+                .path
+                .parent()
+                .filter(|p| *p != root)
+                .map(|p| p.to_string_lossy().into_owned());
+            workspace.tree.insert(
+                parent.as_deref(),
+                &id,
+                TreeEntry {
+                    entry: Some(entry.clone()),
+                    label: entry.name.clone(),
+                    badge: workspace
+                        .repo
+                        .as_ref()
+                        .map(|r| r.badge(&entry.path))
+                        .unwrap_or_default(),
+                },
+            );
+            workspace
+                .tree
+                .set_expanded(&id, workspace.layout.expanded_folders.contains(&entry.path));
+        }
+        // An unloaded folder needs a disclosure affordance before its children arrive.
+        for entry in &workspace.entries {
+            let id = entry.path.to_string_lossy();
+            if entry.directory && !workspace.tree.has_children(&id) {
+                let error = workspace.tree_errors.iter().find(|(p, _)| p == &entry.path);
+                let label = error
+                    .map(|(_, e)| format!("Could not load: {e}"))
+                    .unwrap_or_else(|| {
+                        if workspace.layout.expanded_folders.contains(&entry.path) {
+                            "Empty folder".into()
+                        } else {
+                            "Loading…".into()
+                        }
+                    });
+                workspace.tree.insert(
+                    Some(&id),
+                    format!("{id}/::folder-state"),
+                    TreeEntry {
+                        entry: None,
+                        label,
+                        badge: String::new(),
+                    },
+                );
+            }
+        }
+        if let Some(id) = selected {
+            workspace.tree.select(&id);
+        }
+    }
+
+    fn sync_tree_expansion(&mut self) -> bool {
+        let mut changed = false;
+        for entry in &self.workspace.entries {
+            if !entry.directory {
+                continue;
+            }
+            let expanded = self
+                .workspace
+                .tree
+                .is_expanded(&entry.path.to_string_lossy());
+            let saved = self.workspace.layout.expanded_folders.contains(&entry.path);
+            if expanded != saved {
+                self.workspace
+                    .layout
+                    .expanded_folders
+                    .retain(|p| p != &entry.path);
+                if expanded {
+                    self.workspace
+                        .layout
+                        .expanded_folders
+                        .push(entry.path.clone());
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            self.workspace.tree_dirty = true;
+            self.workspace.scan_token += 1;
+            self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+        }
+        changed
+    }
+
     pub(super) fn open_file(&mut self, path: PathBuf) {
         if let Some(i) = self
             .workspace
@@ -447,6 +661,18 @@ impl State {
         }
     }
     pub(super) fn workspace_poll(&mut self, tx: &mut Tx) -> bool {
+        self.sync_tree_expansion();
+        if self.workspace.explorer_preferences != self.config.explorer {
+            self.workspace.explorer_preferences = self.config.explorer.clone();
+            self.workspace.layout.follow = self.config.explorer.follow_terminal;
+            self.workspace.layout.hidden = self.config.explorer.show_hidden;
+            self.workspace.last_follow = None;
+            self.workspace.outside_root = None;
+            self.workspace.revealed_directory = None;
+            self.workspace.pending_reveal = None;
+            self.workspace.scan_token += 1;
+            self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+        }
         let events = self
             .workspace
             .worker
@@ -581,25 +807,43 @@ impl State {
                     if token == self.workspace.scan_token {
                         if let Some(listing) = listing {
                             match listing {
-                                Ok((path, entries)) => {
+                                Ok(listing) => {
+                                    self.workspace.tree_dirty |= self.workspace.entries
+                                        != listing.entries
+                                        || self.workspace.tree_errors != listing.errors;
+                                    let path = listing.root;
                                     if !self.workspace.address.focused {
                                         self.workspace.address.replace_text(path.to_string_lossy());
                                     }
                                     self.workspace.directory = Some(path);
-                                    self.workspace.entries = entries;
+                                    self.workspace.entries = listing.entries;
+                                    self.workspace.tree_errors = listing.errors;
+                                    self.workspace.explorer_error = None;
                                 }
-                                Err(error) => self.message = format!("Explorer: {error}"),
+                                Err(error) => self.workspace.explorer_error = Some(error),
                             }
                         }
                         match git {
                             Ok(repo) => {
+                                self.workspace.tree_dirty |= self.workspace.repo != repo;
                                 self.workspace.repo = repo;
                                 self.workspace.git_error = None;
                             }
                             Err(error) => {
+                                self.workspace.tree_dirty |= self.workspace.repo.is_some();
                                 self.workspace.repo = None;
                                 self.workspace.git_error = Some(error);
                             }
+                        }
+                    }
+                    if token == self.workspace.scan_token {
+                        if self.workspace.tree_dirty {
+                            self.rebuild_tree();
+                        }
+                        if let Some(path) = self.workspace.pending_reveal.clone()
+                            && self.workspace.tree.reveal(&path.to_string_lossy(), tx)
+                        {
+                            self.workspace.pending_reveal = None;
                         }
                     }
                     for (id, baseline, result) in files {
@@ -696,8 +940,7 @@ impl State {
                 .map(Session::cwd)
                 .unwrap_or_else(|| self.directory.clone());
             if self.workspace.last_follow.as_ref() != Some(&cwd) {
-                self.workspace.last_follow = Some(cwd.clone());
-                self.navigate(cwd);
+                self.reveal_terminal(tx);
                 changed = true;
             }
         }
@@ -719,6 +962,9 @@ impl State {
                 token: self.workspace.scan_token,
                 directory,
                 hidden: self.workspace.layout.hidden,
+                expanded: self.workspace.layout.expanded_folders.clone(),
+                respect_ignore: self.config.explorer.respect_ignore,
+                reveal: self.workspace.revealed_directory.clone(),
                 files,
             }) {
                 self.workspace.scan_busy = true;
@@ -797,17 +1043,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
                 .color(a.ink())
                 .on_edit(|s: &mut State| &mut s.workspace.address)
                 .on_submit(|s: &mut State, tx| {
-                    let path = PathBuf::from(&s.workspace.address.text);
-                    let path = if path.is_absolute() {
-                        path
-                    } else {
-                        s.workspace
-                            .directory
-                            .as_ref()
-                            .unwrap_or(&s.directory)
-                            .join(path)
-                    };
-                    s.navigate(path);
+                    s.dispatch(AppAction::ExplorerSetRoot, tx);
                     tx.blur();
                 }),
         )
@@ -829,84 +1065,87 @@ fn explorer(s: &State, a: &Appearance) -> El {
                         "Follow"
                     },
                     |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
-                ))
+                )),
+        )
+        .child(
+            row()
+                .gap(4.0)
                 .child(button(
                     a,
                     "explorer-hidden",
                     if workspace.layout.hidden {
-                        ".* ✓"
+                        "Hidden ✓"
                     } else {
-                        ".*"
+                        "Hidden"
                     },
                     |s, tx| s.dispatch(AppAction::ToggleHidden, tx),
+                ))
+                .child(button(
+                    a,
+                    "explorer-ignore",
+                    if s.config.explorer.respect_ignore {
+                        "Ignore ✓"
+                    } else {
+                        "Ignore"
+                    },
+                    |s, tx| s.dispatch(AppAction::ToggleIgnore, tx),
                 )),
         );
-    let mut list = col()
-        .key("file-list")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .scroll(rune::ScrollSpec {
-            stick_bottom: false,
-        });
-    for (i, entry) in workspace.entries.iter().enumerate() {
-        let path = entry.path.clone();
-        let directory = entry.directory;
-        let badge = workspace
-            .repo
-            .as_ref()
-            .map(|repo| repo.badge(&path))
-            .unwrap_or_default();
-        let label = format!(
-            "{} {}",
-            if entry.missing {
-                "−"
-            } else if directory {
-                "▸"
-            } else {
-                "·"
-            },
-            entry.name
-        );
-        list = list.child(
-            row()
-                .key(format!("file-{i}"))
-                .w_full()
-                .h(28.0)
-                .gap(4.0)
-                .center_y()
-                .hover(a.hover_bg())
-                .on_press_tx(move |s: &mut State, tx| {
-                    tx.blur();
-                    if directory {
-                        s.navigate(path.clone());
-                    } else {
-                        s.open_file(path.clone());
-                    }
-                })
-                .child(
-                    text(label)
-                        .font(LABEL)
-                        .color(if entry.missing { a.danger() } else { a.ink() })
-                        .truncate()
-                        .shrink()
-                        .grow(1.0),
-                )
-                .child(text(badge).font(LABEL).color(a.accent())),
-        );
+    if let Some(cwd) = &workspace.outside_root {
+        pane = pane
+            .child(
+                text(format!(
+                    "Terminal is outside this host folder: {}",
+                    cwd.display()
+                ))
+                .font(LABEL)
+                .color(a.muted())
+                .wrap_anywhere(),
+            )
+            .child(button(
+                a,
+                "explorer-use-terminal-root",
+                "Use terminal folder",
+                |s, tx| s.dispatch(AppAction::ExplorerTerminalRoot, tx),
+            ));
     }
-    if workspace.entries.is_empty() {
-        list = list.child(
-            text(if workspace.scan_busy {
-                "Loading…"
-            } else {
-                "No visible files"
-            })
-            .font(LABEL)
-            .color(a.muted()),
-        );
-    }
+    let danger = a.danger();
+    let list = Tree::new(
+        |s: &State| &s.workspace.tree,
+        |s: &mut State| &mut s.workspace.tree,
+        |node| &node.label,
+    )
+    .name("Host files")
+    .style(TreeStyle::from_kit(a.kit()).label(LABEL, a.ink(), a.ink()))
+    .row(move |node, _| {
+        let item = TreeItem::new(&node.label).badge(&node.badge);
+        if node.entry.as_ref().is_some_and(|entry| entry.missing) {
+            item.label_color(danger)
+        } else {
+            item
+        }
+    })
+    .on_select(|s, _, _| {
+        s.workspace.terminal_focus = false;
+    })
+    .on_open(|s, _, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx))
+    .build(s, a.kit())
+    .grow(1.0)
+    .min_h(0.0);
     pane = pane.child(list);
+    if workspace.scan_busy {
+        pane = pane.child(text("Loading…").font(LABEL).color(a.muted()));
+    } else if workspace.entries.is_empty() && workspace.explorer_error.is_none() {
+        pane = pane.child(text("No visible files").font(LABEL).color(a.muted()));
+    }
+    if let Some(error) = &workspace.explorer_error {
+        pane = pane.child(
+            text(format!("Could not load folder: {error}"))
+                .font(LABEL)
+                .color(a.muted())
+                .wrap_anywhere(),
+        );
+    }
     if let Some(error) = &workspace.git_error {
         pane = pane.child(text(error).font(LABEL).color(a.muted()).wrap_anywhere());
     }
@@ -1400,6 +1639,8 @@ pub(super) fn demo(s: &mut State, diff: bool) {
             missing: false,
         },
     ];
+    s.workspace.layout.expanded_folders = vec![PathBuf::from("/workspace/rodtty/src")];
+    s.rebuild_tree();
     if diff {
         s.workspace.diff = DiffState::new(vec![rune_kit::diff::FileDiff::from_texts(
             "src/main.rs",
@@ -1408,6 +1649,35 @@ pub(super) fn demo(s: &mut State, diff: bool) {
         )]);
         s.workspace.diff_patch = "preview".into();
         s.workspace.diff_label = "Editor ↔ HEAD · preview includes unsaved changes".into();
+    }
+}
+
+/// Tooling-only scene: inspect a nested tree of the actual selected host folder.
+pub(super) fn host_tree_demo(s: &mut State) {
+    let root = s.directory.clone();
+    s.workspace.layout.explorer = true;
+    s.workspace.layout.expanded_folders = vec![root.join("src"), root.join("src/desktop")];
+    match crate::files::list_tree(
+        &root,
+        &s.workspace.layout.expanded_folders,
+        false,
+        &[],
+        None,
+    ) {
+        Ok(listing) => {
+            s.workspace.directory = Some(listing.root.clone());
+            s.workspace
+                .address
+                .replace_text(listing.root.to_string_lossy());
+            s.workspace.entries = listing.entries;
+            s.workspace.tree_errors = listing.errors;
+            s.workspace.repo = crate::git::inspect(&listing.root).ok().flatten();
+            s.rebuild_tree();
+            s.workspace
+                .tree
+                .select(&root.join("src/desktop/workspace.rs").to_string_lossy());
+        }
+        Err(error) => s.workspace.explorer_error = Some(format!("{error:#}")),
     }
 }
 
@@ -1715,6 +1985,127 @@ mod tests {
     }
 
     #[test]
+    fn explorer_opens_descendants_without_replacing_the_chosen_root() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("src");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        std::fs::write(folder.join("nested/hello.txt"), "hello").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        let (x, y) = runtime.find(folder.to_str().unwrap()).unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        wait(&mut runtime.state, |s| {
+            s.workspace.entries.iter().any(|e| e.name == "nested")
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(root.path())
+        );
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("nested"))
+        );
+    }
+
+    #[test]
+    fn explorer_controls_filter_real_git_ignores_and_persist_owner_preferences() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(["init", "-b", "main"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(root.path().join(".gitignore"), "ignored/\n*.log\n").unwrap();
+        std::fs::create_dir(root.path().join("ignored")).unwrap();
+        std::fs::write(root.path().join("ignored/output"), "output").unwrap();
+        std::fs::write(root.path().join("output.log"), "output").unwrap();
+        std::fs::write(root.path().join("visible.txt"), "hello").unwrap();
+        std::fs::write(root.path().join(".secret"), "hidden").unwrap();
+        std::fs::write(root.path().join(".deleted"), "tracked hidden").unwrap();
+        for args in [
+            vec!["add", ".deleted"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "hidden fixture",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(root.path())
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        std::fs::remove_file(root.path().join(".deleted")).unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        assert!(
+            runtime
+                .find(root.path().join(".deleted").to_str().unwrap())
+                .is_none()
+        );
+        assert!(
+            runtime
+                .find(root.path().join("ignored").to_str().unwrap())
+                .is_none()
+        );
+        assert!(
+            runtime
+                .find(root.path().join("output.log").to_str().unwrap())
+                .is_none()
+        );
+        for key in ["explorer-ignore", "explorer-hidden"] {
+            let (x, y) = runtime.find(key).unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.0);
+        }
+        wait(&mut runtime.state, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == ".secret")
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        for name in ["ignored", "output.log", ".secret", ".deleted"] {
+            assert!(
+                runtime
+                    .find(root.path().join(name).to_str().unwrap())
+                    .is_some(),
+                "missing {name}"
+            );
+        }
+        let settings = Config::load(root.path()).unwrap();
+        let json = serde_json::to_value(settings).unwrap();
+        assert_eq!(json["explorer"]["show_hidden"], true);
+        assert_eq!(json["explorer"]["respect_ignore"], false);
+    }
+
+    #[test]
     fn explorer_only_tracks_terminal_location_when_follow_is_enabled() {
         let root = tempfile::tempdir().unwrap();
         let child = root.path().join("child");
@@ -1732,9 +2123,221 @@ mod tests {
             state.workspace.directory,
             Some(root.path().canonicalize().unwrap())
         );
-        state.workspace.layout.follow = true;
+        state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
         state.workspace_poll(&mut Tx::default());
-        assert_eq!(state.workspace.directory.as_deref(), Some(child.as_path()));
+        wait(&mut state, |s| s.workspace.tree.cursor() == child.to_str());
+        assert_eq!(state.workspace.directory.as_deref(), Some(root.path()));
+        assert!(state.workspace.tree.is_expanded(child.to_str().unwrap()));
+    }
+
+    #[test]
+    fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_filters() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(["init", "-b", "main"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let cwd = root.path().join(".hidden/ignored/nested");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(root.path().join(".gitignore"), ".hidden/\n").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        state.directory = cwd.clone();
+        state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
+        wait(&mut state, |s| s.workspace.tree.cursor() == cwd.to_str());
+        let runtime = super::super::tests::runtime_for(state);
+        assert!(runtime.find(cwd.to_str().unwrap()).is_some());
+        assert!(!runtime.state.config.explorer.show_hidden);
+        assert!(runtime.state.config.explorer.respect_ignore);
+    }
+
+    #[test]
+    fn explorer_follow_outside_root_requires_explicit_root_change() {
+        use super::super::tests::runtime_for;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("host.txt"), "host").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        state.directory = outside.path().to_owned();
+        state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
+        state.workspace_poll(&mut Tx::default());
+        let mut runtime = runtime_for(state);
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(root.path())
+        );
+        let (x, y) = runtime.find("explorer-use-terminal-root").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.0);
+        wait(&mut runtime.state, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "host.txt")
+        });
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(outside.path())
+        );
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        assert!(
+            runtime
+                .find(outside.path().join("host.txt").to_str().unwrap())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("source");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        let path = folder.join("nested/hello.txt");
+        std::fs::write(&path, "host file").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::ExplorerFocus, tx));
+        runtime.frame(0.0);
+        for name in ["source", "nested"] {
+            press(&mut runtime, Key::Text(name.into()), Default::default());
+            press(&mut runtime, Key::Right, Default::default());
+            wait(&mut runtime.state, |s| !s.workspace.scan_busy);
+            runtime.update(|_, _| {});
+            runtime.frame(0.0);
+            // Advance the type-ahead clock beyond its one-second prefix interval.
+            runtime.frame(1.1);
+        }
+        press(&mut runtime, Key::End, Default::default());
+        press(&mut runtime, Key::Enter, Default::default());
+        wait(&mut runtime.state, |s| !s.workspace.tabs.is_empty());
+        assert_eq!(runtime.state.workspace.tabs[0].document.path, path);
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "host file");
+        runtime.state.persist_workspace();
+        let mut restored = self::state(root.path());
+        wait(&mut restored, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "hello.txt")
+        });
+        let runtime = runtime_for(restored);
+        assert!(runtime.find(path.to_str().unwrap()).is_some());
+        assert_eq!(
+            runtime.state.workspace.directory.as_deref(),
+            Some(root.path())
+        );
+    }
+
+    #[test]
+    fn explorer_refresh_keeps_selection_and_shows_folder_failures_while_actions_work() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("source");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("existing.txt"), "hello").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::ExplorerFocus, tx));
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Home, Default::default());
+        press(&mut runtime, Key::Right, Default::default());
+        wait(&mut runtime.state, |s| !s.workspace.scan_busy);
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Down, Default::default());
+        std::fs::write(folder.join("added.txt"), "added").unwrap();
+        runtime.update(|s, tx| s.dispatch(AppAction::RefreshExplorer, tx));
+        wait(&mut runtime.state, |s| {
+            !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "added.txt")
+        });
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Enter, Default::default());
+        wait(&mut runtime.state, |s| !s.workspace.tabs.is_empty());
+        assert_eq!(
+            runtime.state.workspace.tabs[0].document.path,
+            folder.join("existing.txt")
+        );
+        runtime.update(|s, tx| {
+            s.workspace
+                .address
+                .replace_text(root.path().join("missing").to_string_lossy());
+            s.dispatch(AppAction::ExplorerSetRoot, tx);
+            s.workspace_poll(tx);
+            s.dispatch(AppAction::CommandPalette, tx);
+        });
+        runtime.frame(0.0);
+        assert!(runtime.find("command-palette").is_some());
+        wait(&mut runtime.state, |s| !s.workspace.scan_busy);
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        assert!(runtime.elements().iter().any(|e| {
+            e.text
+                .as_deref()
+                .is_some_and(|t| t.contains("Could not load folder:"))
+        }));
+    }
+
+    #[test]
+    fn explorer_type_select_prefix_survives_an_unchanged_refresh() {
+        use super::super::tests::{press, runtime_for};
+        let root = tempfile::tempdir().unwrap();
+        for name in ["sea.txt", "soap.txt"] {
+            std::fs::write(root.path().join(name), "hello").unwrap();
+        }
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, tx| s.dispatch(AppAction::ExplorerFocus, tx));
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Text("s".into()), Default::default());
+        runtime.update(|s, tx| s.dispatch(AppAction::RefreshExplorer, tx));
+        wait(&mut runtime.state, |s| !s.workspace.scan_busy);
+        runtime.update(|_, _| {});
+        runtime.frame(0.0);
+        press(&mut runtime, Key::Text("o".into()), Default::default());
+        press(&mut runtime, Key::Enter, Default::default());
+        wait(&mut runtime.state, |s| !s.workspace.tabs.is_empty());
+        assert_eq!(
+            runtime.state.workspace.tabs[0].document.path,
+            root.path().join("soap.txt")
+        );
+    }
+
+    #[test]
+    fn legacy_explorer_preferences_move_to_owner_json_without_losing_workspace_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("settings.json"), "{}\n").unwrap();
+        let workspace = serde_json::json!({ "explorer": true, "explorer_directory": root.path(), "follow": true, "hidden": true });
+        std::fs::write(
+            root.path().join("workspace-state.json"),
+            serde_json::to_vec(&workspace).unwrap(),
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        wait(&mut state, |s| !s.workspace.scan_busy);
+        assert_eq!(state.workspace.directory.as_deref(), Some(root.path()));
+        let config = Config::load(root.path()).unwrap();
+        assert!(config.explorer.follow_terminal);
+        assert!(config.explorer.show_hidden);
+        state.persist_workspace();
+        let json: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.path().join("workspace-state.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(json.get("follow").is_none());
+        assert!(json.get("hidden").is_none());
     }
 
     #[test]

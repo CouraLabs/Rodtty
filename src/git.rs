@@ -18,12 +18,12 @@ pub enum Comparison {
     Unstaged,
     Staged,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub code: String,
     pub original: Option<PathBuf>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repository {
     pub root: PathBuf,
     pub files: BTreeMap<PathBuf, Status>,
@@ -169,6 +169,32 @@ pub fn inspect(directory: &Path) -> Result<Option<Repository>> {
         );
     }
     Ok(Some(Repository { root, files }))
+}
+
+/// Git's own exclude engine honors nested .gitignore, info/exclude, global
+/// excludes and negations, including repositories opened through linked worktrees.
+pub fn ignored(repo: &Repository) -> Result<Vec<PathBuf>> {
+    let output = run(
+        &repo.root,
+        [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "--full-name",
+            "-z",
+        ],
+    )?;
+    if !output.status.success() {
+        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| repo.root.join(bytes_path(p)))
+        .collect())
 }
 
 fn blob(repo: &Repository, path: &Path, revision: &str) -> Result<String> {
