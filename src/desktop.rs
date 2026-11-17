@@ -11,6 +11,7 @@ use rune::{
 use std::{path::PathBuf, sync::Arc};
 mod actions;
 mod appearance;
+mod clipboard;
 mod file_icon_catalog;
 mod file_icons;
 mod fonts;
@@ -83,6 +84,7 @@ struct State {
     query: TextEdit,
     pending: Option<Pending>,
     selection: Option<((u16, u16), (u16, u16))>,
+    terminal_context_open: bool,
     message: String,
     preview: Option<vt100::Screen>,
     terminal_rect: Option<[f32; 4]>,
@@ -160,6 +162,7 @@ impl State {
             query: TextEdit::new(""),
             pending: None,
             selection: None,
+            terminal_context_open: false,
             message,
             preview: None,
             terminal_rect: None,
@@ -171,7 +174,8 @@ impl State {
     }
 
     pub(super) fn application_overlay_open(&self) -> bool {
-        self.shortcut_recording.is_some()
+        self.terminal_context_open
+            || self.shortcut_recording.is_some()
             || self.pending.is_some()
             || self.palette.is_some()
             || self.workspace_menu
@@ -308,7 +312,9 @@ impl State {
     fn copy(&self, tx: &mut Tx) {
         if let Some((a, b)) = self.selection {
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
-            tx.copy(self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1)));
+            if a != b {
+                tx.copy(self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1)));
+            }
         }
     }
 
@@ -511,6 +517,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         s.workspace.terminal_focus = true;
         tx.blur();
     })
+    .on_secondary_press(clipboard::terminal_menu)
     .on_drag(move |s: &mut State, drag, tx| {
         s.supersede_pending_preview();
         s.workspace.terminal_focus = true;
@@ -530,6 +537,9 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             s.selection = Some((point(drag.x, drag.y), point(drag.x, drag.y)));
         } else if let Some((start, _)) = s.selection {
             s.selection = Some((start, point(drag.x, drag.y)));
+        }
+        if drag.phase == Phase::Up && s.config.terminal_clipboard.copy_on_selection {
+            s.copy(tx);
         }
     })
     .on_wheel(move |s: &mut State, event, _| {
@@ -1007,7 +1017,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if state.shortcut_recording.is_some() {
         return state.record_shortcut(event, tx);
     }
-    if state.tab_strips.context_open {
+    if state.terminal_context_open || state.tab_strips.context_open {
         return true;
     }
     if state.pending.is_some() {
@@ -1396,6 +1406,7 @@ pub fn run() -> Result<()> {
                 && arg != "--font-check"
                 && arg != "--frame-check"
                 && arg != "--session-policy-check"
+                && arg != "--clipboard-check"
         })
         .nth(1)
         .map(PathBuf::from);
@@ -1535,6 +1546,15 @@ fn native_check(
                 anyhow::bail!("terminal did not produce {needle}");
             };
             wait_text("rodtty:")?;
+            if std::env::args().any(|a| a == "--clipboard-check") {
+                let mut result = clipboard::native_check(&handle, &report)?;
+                result["window_backend"] = backend
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                    .into();
+                return Ok(result);
+            }
             let frame_evidence = if with_frame {
                 // Real editor work makes the native custom-close check exercise the
                 // same dirty-file decision as the menu and OS close lifecycle.

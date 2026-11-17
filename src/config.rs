@@ -89,6 +89,7 @@ pub struct Config {
     pub shortcuts: std::collections::BTreeMap<String, String>,
     pub explorer: ExplorerPreferences,
     pub behavior: BehaviorPreferences,
+    pub terminal_clipboard: TerminalClipboardPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -111,6 +112,21 @@ impl Default for ExplorerPreferences {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalRightClick {
+    #[default]
+    ContextMenu,
+    Paste,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TerminalClipboardPreferences {
+    pub right_click: TerminalRightClick,
+    pub copy_on_selection: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -124,6 +140,7 @@ impl Default for Config {
             shortcuts: Default::default(),
             explorer: ExplorerPreferences::default(),
             behavior: BehaviorPreferences::default(),
+            terminal_clipboard: TerminalClipboardPreferences::default(),
             extra: Default::default(),
         }
     }

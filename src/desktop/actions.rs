@@ -390,7 +390,9 @@ impl State {
             {
                 Some("No active terminal session")
             }
-            AppAction::CopyTerminal if self.selection.is_none() => Some("No terminal selection"),
+            AppAction::CopyTerminal if self.selection.is_none_or(|(a, b)| a == b) => {
+                Some("No terminal selection")
+            }
             AppAction::SaveEditor(id)
                 if self
                     .editor_id(id)
