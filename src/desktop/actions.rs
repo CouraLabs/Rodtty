@@ -42,6 +42,7 @@ pub(super) enum AppAction {
     ExplorerFocus,
     ExplorerCollapseAll,
     ExplorerOpenSelection,
+    PreviewExplorerSelection,
     ExplorerParent,
     RefreshExplorer,
     ToggleFollow,
@@ -635,6 +636,7 @@ impl State {
             }
             AppAction::ExplorerCollapseAll => self.collapse_tree(),
             AppAction::ExplorerOpenSelection => self.open_tree_selection(),
+            AppAction::PreviewExplorerSelection => self.preview_tree_selection(),
             AppAction::ExplorerParent => {
                 if let Some(parent) = self
                     .workspace

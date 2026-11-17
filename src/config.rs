@@ -83,6 +83,7 @@ pub struct Config {
     pub disabled: Vec<String>,
     pub scrollback: usize,
     pub history: bool,
+    pub single_click_keeps_open: bool,
     pub fonts: FontPreferences,
     /// Stable action IDs mapped to owner bindings; an empty string unbinds an action.
     pub shortcuts: std::collections::BTreeMap<String, String>,
@@ -118,6 +119,7 @@ impl Default for Config {
             disabled: Vec::new(),
             scrollback: 10_000,
             history: true,
+            single_click_keeps_open: false,
             fonts: FontPreferences::default(),
             shortcuts: Default::default(),
             explorer: ExplorerPreferences::default(),

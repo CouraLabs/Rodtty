@@ -141,6 +141,10 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             matches(
                 s,
                 section,
+                "single click keeps open file preview editor tabs",
+            ) || matches(
+                s,
+                section,
                 "window close keep sessions running ask each time quit Rodtty",
             ) || matches(
                 s,
@@ -233,6 +237,35 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 group = group.child(shortcuts::list(s, a));
             }
             "Behavior" => {
+                if matches(
+                    s,
+                    section,
+                    "single click keeps open file preview editor tabs",
+                ) {
+                    group = group
+                    .child(button(
+                        a,
+                        "single-click-keeps-open",
+                        format!(
+                            "Single click keeps files open: {}",
+                            if s.config.single_click_keeps_open { "on" } else { "off" }
+                        ),
+                        |s, _| {
+                            s.save_config(|c| c.single_click_keeps_open = !c.single_click_keeps_open);
+                        },
+                    ))
+                    .child(button(a, "reset-single-click-keeps-open", "Reset", |s, _| {
+                        s.save_config(|c| {
+                            c.single_click_keeps_open = Config::default().single_click_keeps_open;
+                        });
+                    }))
+                    .child(
+                        text("By default, single click previews a file; double click or editing keeps it open.")
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap(),
+                    );
+                }
                 use crate::config::WindowClosePolicy as Window;
                 if matches(
                     s,
