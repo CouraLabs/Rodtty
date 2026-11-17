@@ -93,6 +93,7 @@ pub enum Job {
         hidden: bool,
         expanded: Vec<PathBuf>,
         respect_ignore: bool,
+        reveal: Option<PathBuf>,
         files: Vec<(u64, u64, PathBuf)>,
     },
     Diff {
@@ -178,6 +179,7 @@ impl Worker {
                         hidden,
                         expanded,
                         respect_ignore,
+                        reveal,
                         files,
                     } => {
                         let mut git = directory
@@ -199,7 +201,7 @@ impl Worker {
                             Vec::new()
                         };
                         let mut listing = directory.as_ref().map(|p| {
-                            files::list_tree(p, &expanded, hidden, &ignored)
+                            files::list_tree(p, &expanded, hidden, &ignored, reveal.as_deref())
                                 .map_err(|e| format!("{e:#}"))
                         });
                         if let (Some(Ok(listing)), Ok(Some(repo))) = (&mut listing, &git) {

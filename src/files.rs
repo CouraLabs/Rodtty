@@ -282,8 +282,9 @@ pub fn list_tree(
     expanded: &[PathBuf],
     hidden: bool,
     ignored: &[PathBuf],
+    reveal: Option<&Path>,
 ) -> Result<TreeListing> {
-    let (root, entries) = list_directory(path, hidden)?;
+    let (root, entries) = list_directory(path, true)?;
     let mut listing = TreeListing {
         root,
         entries: Vec::new(),
@@ -291,11 +292,15 @@ pub fn list_tree(
     };
     let mut stack: Vec<_> = entries.into_iter().rev().collect();
     while let Some(entry) = stack.pop() {
-        if ignored.iter().any(|p| entry.path.starts_with(p)) {
+        let revealed = reveal.is_some_and(|p| p.starts_with(&entry.path));
+        if !revealed
+            && ((!hidden && entry.name.starts_with('.'))
+                || ignored.iter().any(|p| entry.path.starts_with(p)))
+        {
             continue;
         }
         if entry.directory && expanded.contains(&entry.path) {
-            match list_directory(&entry.path, hidden) {
+            match list_directory(&entry.path, true) {
                 Ok((_, children)) => stack.extend(children.into_iter().rev().map(|mut child| {
                     // Preserve a symlink folder's position under the chosen root.
                     if let Some(name) = child.path.file_name() {

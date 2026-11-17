@@ -31,9 +31,9 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 - The terminal displays ANSI colors, Unicode, alternate-screen applications, and a cursor; supports resizing, selection, clipboard paste/copy, and scrollback search.
 - Closing the window keeps sessions running. Relaunching Rodtty or using its tray entry reopens the same instance. Ending a tab or selecting Quit requires confirmation. A computer restart creates fresh sessions.
 
-Select **Files** to open the explorer at the active terminal's directory. Browse folders using the list, Up button, or folder path field. It navigates independently by default; **Follow** tracks subsequent terminal directory changes. The `.*` button includes hidden files, and Git status badges show changed/untracked entries.
+Select **Files** to open the explorer at the active terminal's directory. Expand folders in place and use the Up button or folder path field for explicit root changes. **Follow** reveals the terminal directory inside the chosen root and offers a root-change action outside it. **Hidden** includes hidden files, **Ignore** respects Git ignore rules, and Git status badges show changed/untracked entries.
 
-Select a file to open an editor tab beside the terminal. Drag the pane dividers to resize the explorer and editor. **Terminal**, **Editor**, and **Hide** control pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
+Double-click a file, or select it and press Enter, to open an editor tab beside the terminal. Drag the pane dividers to resize the explorer and editor. **Terminal**, **Editor**, and **Hide** control pane visibility. Saved file tabs, pane sizes, and explorer location are restored on reopening.
 
 The editor provides syntax highlighting, undo/redo, find/replace, and save. It edits UTF-8 files up to 2 MiB, preserves BOMs and line endings, and checks for external changes approximately once a second. Clean buffers reload automatically; dirty buffers retain their edits and offer Reload or Keep edits. A conflicting save requires explicit Overwrite. Closing a dirty tab/window or quitting offers Save / Discard / Cancel.
 
@@ -71,15 +71,20 @@ The Actions control also opens the command palette. Type to filter actions, use 
 
 Owner preferences live at `~/.rodtty/settings.json` on every desktop platform. Settings opens beside the terminal and saves UI changes immediately; Open Settings JSON edits that actual file in the editor. Valid external edits apply automatically within the open app, with command/history/scrollback changes taking effect for new sessions. Invalid JSON keeps the last valid preferences active and reports the problem without replacing the file. Unrecognized preference fields are preserved when existing controls save.
 
+Appearance defaults to Catppuccin with System brightness. Settings → Appearance offers Light (Latte), Dark (Mocha), and System with live palette previews and independent resets. System follows host appearance changes; explicit Light or Dark stays fixed. Changes apply across controls, terminal defaults and ANSI colors, editor highlighting, and Git diffs without replacing running sessions. Extended indexed colors and truecolor requested by terminal programs remain unchanged. Palette source and MIT attribution are bundled in [assets/themes](assets/themes/README.md).
+
 `~/.rodtty/workspace-state.json` separately stores pane layout and saved file paths; workspace activity does not rewrite preferences and unsaved drafts are not stored. Existing platform-directory `config.toml`, `workspace.toml`, optional `startup.sh`, and shared history migrate once while preserving originals and existing destinations. Launch coordination also retains the old owner lock so surviving sessions are reopened safely. Run `rodtty --paths` to locate these files. Set `RODTTY_HOME` to isolate all storage and coordination for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
 
 With history enabled, commands append to the shared history file at each prompt. New sessions load saved history; sessions already running retain their own recall list. The pinned Brush version does not support Bash's `history -n` incremental import.
 
 ```json
 {
+  "theme_family": "catppuccin",
+  "appearance": "system",
   "disabled": ["rm"],
   "scrollback": 10000,
-  "history": true
+  "history": true,
+  "explorer": { "follow_terminal": false, "show_hidden": false, "respect_ignore": true }
 }
 ```
 
