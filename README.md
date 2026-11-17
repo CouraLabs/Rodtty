@@ -29,7 +29,7 @@ Rune and Brush are pinned to Git revisions; the Rune dependency patches are carr
 - The searchable Settings editor tab enables/disables bundled utilities and configures history and scrollback, with individual reset controls. Changes apply to new sessions.
 - Enabled utilities run through native launchers as external processes, supporting concurrent pipelines. Disabled names report an error instead of falling back to a host utility in the managed environment.
 - The terminal displays ANSI colors, Unicode, alternate-screen applications, and a cursor; supports resizing, selection, clipboard paste/copy, and scrollback search.
-- Closing the window keeps sessions running. Relaunching Rodtty or using its tray entry reopens the same instance. Ending a tab or selecting Quit requires confirmation. A computer restart creates fresh sessions.
+- Window close defaults to **Keep sessions running**, with **Ask each time** and **Quit Rodtty** alternatives in Behavior settings. Relaunching Rodtty or using its tray entry reopens the same sessions and retained output. Terminal-tab close defaults to confirming commands in progress; **Always confirm** and **Close immediately** are alternatives. Explicit Quit, including the window-close Quit policy, confirms running commands. Dirty editors keep their Save / Discard / Cancel decision. A computer restart creates fresh sessions.
 
 Select **Files** to open the explorer at the active terminal's directory. Expand folders in place and use the Up button or folder path field for explicit root changes. **Follow** reveals the terminal directory inside the chosen root and offers a root-change action outside it. **Hidden** includes hidden files, **Ignore** respects Git ignore rules, and Git status badges show changed/untracked entries.
 
@@ -52,8 +52,8 @@ Untracked files appear as additions. **Auto** selects inline or split diffs base
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+Shift+T | New terminal tab |
-| Ctrl+Shift+W | End current session, with confirmation |
-| Ctrl+Shift+Q | Quit, with confirmation |
+| Ctrl+Shift+W | End current session using the terminal-tab close policy |
+| Ctrl+Shift+Q | Quit, confirming commands in progress |
 | Ctrl+Shift+F | Search retained scrollback |
 | Ctrl+Shift+P / Cmd+Shift+P | Search and run workspace actions |
 | Ctrl+Shift+C / Ctrl+Shift+V | Copy selection / paste |
@@ -77,6 +77,8 @@ Appearance defaults to Catppuccin with System brightness. Settings → Appearanc
 
 `~/.rodtty/workspace-state.json` separately stores pane layout and saved file paths; workspace activity does not rewrite preferences and unsaved drafts are not stored. Existing platform-directory `config.toml`, `workspace.toml`, optional `startup.sh`, and shared history migrate once while preserving originals and existing destinations. Launch coordination also retains the old owner lock so surviving sessions are reopened safely. Run `rodtty --paths` to locate these files. Set `RODTTY_HOME` to isolate all storage and coordination for a test instance. `RODTTY_SHELL` can select a companion executable explicitly.
 
+Behavior preferences apply immediately from Settings or valid external JSON edits; each control has its own reset. Running sessions retain their command/history/startup snapshots. Shell activity markers distinguish an idle prompt from foreground commands and shell builtins, while preserving owner PS0 and PROMPT_COMMAND hooks. Known background jobs also require confirmation. Brush jobs without a PID remain conservatively protected until the next prompt refresh (for example, after `wait`); asynchronous completion alone does not clear that protection. See [session policy validation](docs/session-policy-validation.md).
+
 With history enabled, commands append to the shared history file at each prompt. New sessions load saved history; sessions already running retain their own recall list. The pinned Brush version does not support Bash's `history -n` incremental import.
 
 ```json
@@ -86,11 +88,17 @@ With history enabled, commands append to the shared history file at each prompt.
   "disabled": ["rm"],
   "scrollback": 10000,
   "history": true,
-  "explorer": { "follow_terminal": false, "show_hidden": false, "respect_ignore": true }
+  "explorer": { "follow_terminal": false, "show_hidden": false, "respect_ignore": true },
+  "behavior": {
+    "window_close": "keep_sessions_running",
+    "terminal_tab_close": "confirm_running",
+    "new_terminal_directory": "active",
+    "specified_directory": ""
+  }
 }
 ```
 
-New tabs inherit the active tab's directory but begin with the host environment and Rodtty-specific startup file. Host Bash/Zsh startup files are loaded only when explicitly sourced. Startup-file PATH changes are followed by prepending the session's managed utility directory.
+New tabs inherit the active terminal directory by default. Behavior settings also offers the explorer root folder or a specified absolute folder; a missing folder reports an error without creating a replacement session. The first session still uses the explicit startup folder, launcher directory, or home fallback. New sessions begin with the host environment and Rodtty-specific startup file. Host Bash/Zsh startup files are loaded only when explicitly sourced. Startup-file PATH changes are followed by prepending the session's managed utility directory.
 
 Command selection configures a convenience environment. Explicit host executable paths and arbitrary host programs remain available; it is not a sandbox. The exact limits of deliberate shell/environment overrides are recorded in the feasibility report.
 
@@ -138,9 +146,11 @@ Run the native window-close/relaunch check in a logged-in desktop session:
 target/debug/rodtty --native-check target/native-check.json
 ```
 
-This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and immediate `quit`.
+This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and `quit` (using the normal confirmation flow).
 
 `--frame-check <report.json>` is driven by the isolated KWin native input harness described in the custom-frame report. It exercises actual pointer resize/drag/controls, compositor/native state, dirty-close cancellation and the lifecycle below.
+
+`--session-policy-check <report.json>` additionally exercises native Ask/Cancel/Keep/Quit policies, dirty Save/close/reopen, tab policies, all three new-tab directory modes, immutable command snapshots, background output and same-session relaunch.
 
 `--workspace-check <report.json>` additionally verifies native unsaved-file prompts and editor saving. `--font-check <report.json>` also discovers native fonts, changes UI and terminal families and UI, terminal and editor sizes live, checks the full-screen application sees the updated PTY dimensions, and verifies unsaved editor work and the terminal session survive. Run developer lifecycle checks with a fresh `RODTTY_HOME` so they use isolated sessions and test files.
 

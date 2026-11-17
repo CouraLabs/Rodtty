@@ -544,3 +544,70 @@ fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     assert_eq!(terminal.state.lock().unwrap().parser.callbacks().title, "");
     assert_eq!(terminal.tab_title(), "›_  Term project; 日本語;");
 }
+
+fn wait_activity(session: &Session, running: bool) {
+    let start = Instant::now();
+    while session.has_running_commands() != running {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "activity did not become {running}: {}",
+            session.screen().contents()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn command_confirmation_distinguishes_idle_builtin_foreground_background_interrupt_and_exit() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("startup.sh"),
+        "PS0='OWNER-PS0'; PROMPT_COMMAND=('printf OWNER-HOOK-ONE' 'printf OWNER-HOOK-TWO')\n",
+    )
+    .unwrap();
+    let session = session(root.path(), Config::default());
+    wait_activity(&session, false);
+    assert!(
+        session
+            .screen()
+            .contents()
+            .contains("OWNER-HOOK-ONEOWNER-HOOK-TWO")
+    );
+    session.send(b"read answer\r".to_vec()).unwrap();
+    wait_activity(&session, true);
+    session.send(b"reply\r".to_vec()).unwrap();
+    wait_activity(&session, false);
+    assert!(session.screen().contents().contains("OWNER-PS0"));
+    session.send(b"sleep 10\r".to_vec()).unwrap();
+    wait_activity(&session, true);
+    session.send(vec![3]).unwrap();
+    wait_activity(&session, false);
+    session.send(b"sleep 2 &\r".to_vec()).unwrap();
+    wait_activity(&session, true);
+    // A live job remains protected even when the shell has returned to its prompt.
+    session.wait_for("[1]", Duration::from_secs(10)).unwrap();
+    assert!(session.has_running_commands());
+    session.send(b"wait\r".to_vec()).unwrap();
+    wait_activity(&session, false);
+    #[cfg(unix)]
+    {
+        session.send(b"/bin/sleep 10\r".to_vec()).unwrap();
+        wait_activity(&session, true);
+        session.send(vec![3]).unwrap();
+        wait_activity(&session, false);
+        session.send(b"/bin/sleep 1 &\r".to_vec()).unwrap();
+        wait_activity(&session, true);
+        // Brush can wrap even an external background command in an internal
+        // async job without a representative PID. An authoritative wait/prompt
+        // clears it; a PID-bearing job additionally gets a Unix liveness check.
+        session.send(b"wait\r".to_vec()).unwrap();
+        wait_activity(&session, false);
+    }
+    session.send(b"exit\r".to_vec()).unwrap();
+    let start = Instant::now();
+    while session.state.lock().unwrap().exit.is_none() {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!session.has_running_commands());
+}
