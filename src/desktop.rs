@@ -11,6 +11,7 @@ use rune::{
 use std::{path::PathBuf, sync::Arc};
 mod actions;
 mod appearance;
+mod autosave;
 mod file_icon_catalog;
 mod file_icons;
 mod fonts;
