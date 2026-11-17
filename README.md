@@ -141,7 +141,7 @@ Run the native window-close/relaunch check in a logged-in desktop session:
 target/debug/rodtty --native-check target/native-check.json
 ```
 
-This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and immediate `quit`.
+This opens a window, runs a command, closes the window while output continues, relaunches the executable, verifies the same session, writes a JSON report, and exits. Use a separate `RODTTY_HOME` if another Rodtty instance is running. `--control-stdin` is an additional developer-only channel accepting `open`, `close`, `status`, and `quit` (using the normal confirmation flow).
 
 `--frame-check <report.json>` is driven by the isolated KWin native input harness described in the custom-frame report. It exercises actual pointer resize/drag/controls, compositor/native state, dirty-close cancellation and the lifecycle below.
 
