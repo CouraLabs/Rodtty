@@ -465,6 +465,50 @@ fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_sta
 }
 
 #[test]
+fn semicolon_rich_application_titles_remain_exact_through_the_pty() {
+    let root = tempfile::tempdir().unwrap();
+    let terminal = session(root.path(), Config::default());
+    let first = "Agent; 日本語 — long application title;".repeat(20);
+    let second = format!("{};;", "続き; application title;".repeat(20));
+    let title = format!("{first}{second}");
+
+    for command in [0, 2] {
+        for (ending, terminator) in [("BEL", "\\007"), ("ST", "\\033\\\\")] {
+            run(
+                &terminal,
+                &format!(
+                    "printf '\\033]{command};'; printf '%s' '{first}'; sleep 0.03; printf '%s' '{second}'; printf '{terminator}'"
+                ),
+                &format!("EXACT_TITLE_{command}_{ending}"),
+            );
+            assert_eq!(terminal.tab_title(), title, "OSC {command} with {ending}");
+        }
+    }
+}
+
+#[test]
+fn semicolon_rich_working_directories_remain_exact_through_the_pty() {
+    let root = tempfile::tempdir().unwrap();
+    let terminal = session(root.path(), Config::default());
+    run(&terminal, "PROMPT_COMMAND=''", "DIRECTORY_HOOK_DISABLED");
+    for (ending, terminator) in [("BEL", "\\007"), ("ST", "\\033\\\\")] {
+        let name = format!("{ending};{}日本語;;", "x;".repeat(40));
+        let child = root.path().join(&name);
+        std::fs::create_dir(&child).unwrap();
+        run(
+            &terminal,
+            &format!(
+                "cd {}; printf '\\033]7;file://localhost%s{terminator}' \"$PWD\"",
+                rodtty::profile::quote(&child).unwrap()
+            ),
+            &format!("EXACT_DIRECTORY_{ending}"),
+        );
+        assert_eq!(terminal.cwd(), child, "OSC 7 with {ending}");
+        assert_eq!(terminal.tab_title(), format!("›_  Term {name}"));
+    }
+}
+
+#[test]
 fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     let root = tempfile::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
