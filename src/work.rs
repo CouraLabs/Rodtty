@@ -31,6 +31,59 @@ pub struct Layout {
     pub active_terminal: usize,
     pub terminal_focus: bool,
     pub selected_path: Option<PathBuf>,
+    /// Where the window sat when it was last saved, so relaunching reopens it
+    /// there instead of at the host's default placement. `None` before the
+    /// first save on a build that records it.
+    pub window: Option<WindowGeometry>,
+}
+
+/// A window's place on the desktop, saved so a relaunch reopens it there.
+///
+/// Every field is physical pixels, as the host reports them: `x`/`y` is the
+/// frame's top-left and `width`/`height` the content's size, matching
+/// [`rune::WindowOptions::position`] and `physical_size`. Points would move the
+/// window when the display's scale or the app's zoom changed between runs.
+///
+/// `display` records the bounds of the display the window was on. A monitor
+/// that has since been unplugged, rearranged or rescaled leaves the saved
+/// origin outside every display, so the restore drops it and lets the host
+/// place the window instead of reopening it off-screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// The display's origin and size, physical pixels, at save time.
+    pub display: Option<((i32, i32), (u32, u32))>,
+}
+
+impl WindowGeometry {
+    /// A saved geometry, if it is small enough to be a real window and big
+    /// enough to stay usable. A corrupt or truncated record is dropped rather
+    /// than reopening the window at an unusable size.
+    pub fn sanitized(self) -> Option<Self> {
+        let (min_w, min_h) = (640u32, 360u32);
+        (self.width >= min_w
+            && self.height >= min_h
+            && self.width <= 16_384
+            && self.height <= 16_384)
+            .then_some(self)
+    }
+
+    /// Whether the saved origin still lands on the display it was saved on.
+    /// The window's top-left is enough: a window wider than its display still
+    /// opens where the owner left it.
+    pub fn origin_on_display(self) -> bool {
+        let Some(((dx, dy), (dw, dh))) = self.display else {
+            return true;
+        };
+        let (dw, dh) = (dw as i64, dh as i64);
+        let (x, y) = (self.x as i64, self.y as i64);
+        let (dx, dy) = (dx as i64, dy as i64);
+        x >= dx && y >= dy && x < dx + dw && y < dy + dh
+    }
 }
 impl Default for Layout {
     fn default() -> Self {
@@ -52,6 +105,7 @@ impl Default for Layout {
             active_terminal: 0,
             terminal_focus: true,
             selected_path: None,
+            window: None,
         }
     }
 }
@@ -304,6 +358,7 @@ impl Worker {
                                             .into_owned(),
                                         directory: false,
                                         missing: true,
+                                        size: None,
                                     });
                                 }
                             }
@@ -357,5 +412,106 @@ impl Worker {
     }
     pub fn drain(&self) -> Vec<Event> {
         self.rx.try_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_placement_is_dropped_when_it_no_longer_lands_on_its_display() {
+        // On its display: reopened where the owner left it.
+        let on = WindowGeometry {
+            x: 100,
+            y: 100,
+            width: 1200,
+            height: 800,
+            display: Some(((0, 0), (2560, 1440))),
+        };
+        assert!(on.origin_on_display());
+        assert_eq!(on.sanitized(), Some(on));
+
+        // A monitor that has been unplugged or rearranged: the saved origin is
+        // outside every current display, so the host places the window instead.
+        let off = WindowGeometry {
+            x: 3000,
+            y: 100,
+            ..on
+        };
+        assert!(!off.origin_on_display());
+    }
+
+    #[test]
+    fn a_negative_origin_still_counts_as_on_display() {
+        // A display to the left of the primary one has a negative origin, and a
+        // window there is legitimate.
+        let left = WindowGeometry {
+            x: -1500,
+            y: 40,
+            width: 1000,
+            height: 700,
+            display: Some(((-1920, 0), (1920, 1080))),
+        };
+        assert!(left.origin_on_display());
+    }
+
+    #[test]
+    fn an_unusable_size_is_dropped_rather_than_reopened() {
+        let base = WindowGeometry {
+            x: 0,
+            y: 0,
+            width: 1200,
+            height: 800,
+            display: None,
+        };
+        assert_eq!(base.sanitized(), Some(base));
+        // Below the window's own minimum: the host would clamp it, so don't
+        // start from it.
+        assert_eq!(WindowGeometry { width: 200, ..base }.sanitized(), None);
+        // Absurd: a corrupt record.
+        assert_eq!(
+            WindowGeometry {
+                width: 99_999,
+                ..base
+            }
+            .sanitized(),
+            None
+        );
+        // A record with no display recorded still restores: it came from a host
+        // that hides positions, and the origin is trusted.
+        assert!(base.origin_on_display());
+    }
+
+    #[test]
+    fn a_layout_without_a_window_record_still_loads() {
+        // The field is new: a workspace saved before it existed must not fail.
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("workspace-state.json"),
+            br#"{"explorer":true,"explorer_width":300.0,"terminals":["/tmp"]}"#,
+        )
+        .unwrap();
+        let layout = Layout::load(root.path()).unwrap();
+        assert!(layout.explorer);
+        assert_eq!(layout.window, None);
+    }
+
+    #[test]
+    fn a_saved_placement_round_trips_through_the_layout_file() {
+        let root = crate::test_support::tempdir().unwrap();
+        let layout = Layout {
+            window: Some(WindowGeometry {
+                x: 429,
+                y: 276,
+                width: 1080,
+                height: 720,
+                display: Some(((0, 0), (4112, 2658))),
+            }),
+            ..Layout::default()
+        };
+        layout.save(root.path()).unwrap();
+        let reloaded = Layout::load(root.path()).unwrap();
+        assert_eq!(reloaded.window, layout.window);
     }
 }

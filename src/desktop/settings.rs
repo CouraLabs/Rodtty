@@ -9,7 +9,7 @@ impl State {
         self.settings_open = true;
         self.settings = true;
         self.workspace.layout.editor = true;
-        self.workspace.terminal_focus = false;
+        self.workspace.set_terminal_focus(false);
         tx.focus_when_shown("settings-search", true);
     }
 
@@ -45,8 +45,12 @@ impl State {
             Ok(config) => {
                 self.behavior_directory
                     .replace_text(config.behavior.specified_directory.to_string_lossy());
+                let prompt_changed = self.config.prompt != config.prompt;
                 self.config = config.clone();
                 self.last_valid_config = config;
+                if prompt_changed {
+                    self.publish_prompt();
+                }
                 self.config_valid = true;
                 self.settings_error = None;
                 self.message =
@@ -74,27 +78,47 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .px(12.0)
+        .px(16.0)
         .py(12.0)
-        .gap(10.0)
-        .child(text("Settings").font(ui_style(18.0, 600.0)).color(a.ink()))
+        .gap(12.0)
         .child(
-            text_input(&s.settings_query, ui_label())
-                .caret(a.accent(), a.selection())
-                .key("settings-search")
-                .label("Search settings")
-                .w_full()
-                .h(30.0)
-                .color(a.ink())
-                .placeholder("Search settings", a.muted())
-                .on_edit(|s: &mut State| &mut s.settings_query),
+            text("Settings")
+                .role("heading")
+                .level(1)
+                .font(ui_style(18.0, 600.0))
+                .color(a.ink()),
         )
-        .child(button(
-            a,
-            "open-settings-json",
-            "Open Settings JSON",
-            |s, tx| s.dispatch(AppAction::OpenSettingsJson, tx),
-        ));
+        .child(
+            row()
+                .key("settings-toolbar")
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    text_input(&s.settings_query, ui_label())
+                        .caret(a.accent(), a.selection())
+                        .key("settings-search")
+                        .label("Search settings")
+                        .single_line()
+                        .w_full()
+                        .min_w(0.0)
+                        .grow(1.0)
+                        .px(8.0)
+                        .py(5.0)
+                        .color(a.ink())
+                        .placeholder("Search settings", a.muted())
+                        // A thin border marks the field's bounds against the page.
+                        .border(1.0, a.kit().c.border_base)
+                        .radius(6.0)
+                        .on_edit(|s: &mut State| &mut s.settings_query),
+                )
+                .child(
+                    button(a, "open-settings-json", "Open Settings JSON", |s, tx| {
+                        s.dispatch(AppAction::OpenSettingsJson, tx)
+                    })
+                    .shrink(),
+                ),
+        );
     if let Some(error) = &s.settings_error {
         page = page.child(
             text(error)
@@ -161,7 +185,9 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 "startup restore workspace one single fresh terminal",
             )
         } else if section == "Terminal" {
-            matches(s, section, "history save shell commands")
+            matches(s, section, PROMPT_STYLE_SEARCH)
+                || matches(s, section, PROMPT_SYMBOL_SEARCH)
+                || matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
                 || matches(
                     s,
@@ -195,9 +221,22 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         count += 1;
         let mut group = col()
             .key(format!("settings-section-{section}"))
+            .role("group")
+            .label(section)
             .w_full()
-            .gap(6.0)
-            .child(text(section).font(ui_style(13.0, 600.0)).color(a.accent()));
+            .gap(8.0)
+            .px(14.0)
+            .py(12.0)
+            .radius(8.0)
+            .fill(a.panel())
+            .border(1.0, a.kit().c.border_base)
+            .child(
+                text(section)
+                    .role("heading")
+                    .level(2)
+                    .font(ui_style(13.0, 600.0))
+                    .color(a.accent()),
+            );
         let target = match section {
             "Appearance" => Some("ui"),
             "Terminal" => Some("terminal"),
@@ -219,31 +258,39 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 .color(a.ink()),
             );
             let mut buttons = row().gap(6.0).scroll_x();
-            for (action, title, delta) in [
-                ("less", "−", -1.0),
-                ("more", "+", 1.0),
-                ("reset", "Reset", 0.0),
+            let subject = format!("{} font size", if target == "ui" { "UI" } else { target });
+            for (action, title, delta, name) in [
+                ("less", "−", -1.0, "Decrease"),
+                ("more", "+", 1.0, "Increase"),
+                ("reset", "Reset", 0.0, "Reset"),
             ] {
-                buttons = buttons.child(button(
-                    a,
-                    format!("{action}-{target}-font-size"),
-                    title,
-                    move |s, _| {
-                        s.save_config(|c| {
-                            let defaults = config::FontPreferences::default();
-                            let (size, default) = match target {
-                                "ui" => (&mut c.fonts.ui_size, defaults.ui_size),
-                                "terminal" => (&mut c.fonts.terminal_size, defaults.terminal_size),
-                                _ => (&mut c.fonts.editor_size, defaults.editor_size),
-                            };
-                            *size = if delta == 0.0 {
-                                default
-                            } else {
-                                (*size + delta).clamp(8.0, 32.0)
-                            };
-                        });
-                    },
-                ));
+                let name = format!("{name} {subject}");
+                buttons = buttons.child(
+                    button(
+                        a,
+                        format!("{action}-{target}-font-size"),
+                        title,
+                        move |s, _| {
+                            s.save_config(|c| {
+                                let defaults = config::FontPreferences::default();
+                                let (size, default) = match target {
+                                    "ui" => (&mut c.fonts.ui_size, defaults.ui_size),
+                                    "terminal" => {
+                                        (&mut c.fonts.terminal_size, defaults.terminal_size)
+                                    }
+                                    _ => (&mut c.fonts.editor_size, defaults.editor_size),
+                                };
+                                *size = if delta == 0.0 {
+                                    default
+                                } else {
+                                    (*size + delta).clamp(8.0, 32.0)
+                                };
+                            });
+                        },
+                    )
+                    .label(name.clone())
+                    .help(name),
+                );
             }
             group = group.child(sizes.child(buttons));
         }
@@ -256,7 +303,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 ) =>
             {
                 use config::AutosavePolicy;
-                let mut choices = row().gap(6.0).scroll_x();
+                let mut choices = row()
+                    .role("radiogroup")
+                    .label("Autosave")
+                    .gap(6.0)
+                    .scroll_x();
                 for (id, title, policy) in [
                     ("explicit", "Explicit Save", AutosavePolicy::Explicit),
                     ("after-delay", "After Delay", AutosavePolicy::AfterDelay),
@@ -266,18 +317,14 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         AutosavePolicy::EditorFocusLoss,
                     ),
                 ] {
-                    choices = choices.child(button(
+                    let on = s.config.autosave.policy == policy;
+                    choices = choices.child(state_button(
                         a,
                         format!("autosave-{id}"),
-                        format!(
-                            "{}{}",
-                            if s.config.autosave.policy == policy {
-                                "✓ "
-                            } else {
-                                ""
-                            },
-                            title
-                        ),
+                        format!("{}{title}", if on { "✓ " } else { "" }),
+                        "radio",
+                        title,
+                        on,
                         move |s, _| {
                             s.save_config(|c| c.autosave.policy = policy);
                         },
@@ -302,23 +349,36 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     .child(
                         row()
                             .gap(6.0)
-                            .child(button(a, "less-autosave-delay", "− 100 ms", |s, _| {
-                                s.save_config(|c| {
-                                    c.autosave.delay_ms =
-                                        c.autosave.delay_ms.saturating_sub(100).max(100)
-                                });
-                            }))
-                            .child(button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
-                                s.save_config(|c| {
-                                    c.autosave.delay_ms = (c.autosave.delay_ms + 100).min(60_000)
-                                });
-                            }))
-                            .child(button(a, "reset-autosave-delay", "Reset delay", |s, _| {
-                                s.save_config(|c| {
-                                    c.autosave.delay_ms =
-                                        config::AutosavePreferences::default().delay_ms
-                                });
-                            }))
+                            .child(
+                                button(a, "less-autosave-delay", "− 100 ms", |s, _| {
+                                    s.save_config(|c| {
+                                        c.autosave.delay_ms =
+                                            c.autosave.delay_ms.saturating_sub(100).max(100)
+                                    });
+                                })
+                                .label("Decrease autosave delay by 100 ms")
+                                .help("Decrease autosave delay by 100 ms"),
+                            )
+                            .child(
+                                button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
+                                    s.save_config(|c| {
+                                        c.autosave.delay_ms =
+                                            (c.autosave.delay_ms + 100).min(60_000)
+                                    });
+                                })
+                                .label("Increase autosave delay by 100 ms")
+                                .help("Increase autosave delay by 100 ms"),
+                            )
+                            .child(
+                                button(a, "reset-autosave-delay", "Reset delay", |s, _| {
+                                    s.save_config(|c| {
+                                        c.autosave.delay_ms =
+                                            config::AutosavePreferences::default().delay_ms
+                                    });
+                                })
+                                .label("Reset autosave delay")
+                                .help("Reset autosave delay"),
+                            )
                             .child(button(a, "reset-autosave", "Reset Autosave", |s, _| {
                                 s.save_config(|c| c.autosave = Default::default());
                             })),
@@ -335,6 +395,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 ) {
                     use crate::config::TerminalStartup;
                     group = group.child(text("Terminal startup").font(ui_label()).color(a.muted()));
+                    let mut choices = radio_group("Terminal startup", 8.0);
                     for (key, title, choice) in [
                         (
                             "startup-restore",
@@ -347,18 +408,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             TerminalStartup::SingleFresh,
                         ),
                     ] {
-                        group = group.child(
-                            button(
+                        choices = choices.child(
+                            radio_button(
                                 a,
                                 key,
-                                format!(
-                                    "{} {title}",
-                                    if s.config.behavior.terminal_startup == choice {
-                                        "●"
-                                    } else {
-                                        "○"
-                                    }
-                                ),
+                                title,
+                                s.config.behavior.terminal_startup == choice,
                                 move |s, _| {
                                     s.save_config(|c| c.behavior.terminal_startup = choice);
                                 },
@@ -366,7 +421,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .w_full(),
                         );
                     }
-                    group = group.child(button(a, "reset-terminal-startup", "Reset terminal startup", |s, _| {
+                    group = group.child(choices).child(button(a, "reset-terminal-startup", "Reset terminal startup", |s, _| {
                         s.save_config(|c| c.behavior.terminal_startup = TerminalStartup::default());
                     })).child(text("Applies after Quit or restart. Reopening a running host keeps its sessions. One fresh terminal uses the new-terminal directory choice; first launch keeps the startup directory.").font(ui_label()).color(a.muted()).wrap());
                 }
@@ -376,13 +431,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     "single click keeps open file preview editor tabs",
                 ) {
                     group = group
-                    .child(button(
+                    .child(switch_button(
                         a,
                         "single-click-keeps-open",
-                        format!(
-                            "Single click keeps files open: {}",
-                            if s.config.single_click_keeps_open { "on" } else { "off" }
-                        ),
+                        "Single click keeps files open",
+                        s.config.single_click_keeps_open,
                         |s, _| {
                             s.save_config(|c| c.single_click_keeps_open = !c.single_click_keeps_open);
                         },
@@ -391,7 +444,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         s.save_config(|c| {
                             c.single_click_keeps_open = Config::default().single_click_keeps_open;
                         });
-                    }))
+                    }).label("Reset single click keeps files open").help("Reset single click keeps files open"))
                     .child(
                         text("By default, single click previews a file; double click or editing keeps it open.")
                             .font(ui_label())
@@ -406,6 +459,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     "window close keep sessions running ask each time quit Rodtty",
                 ) {
                     group = group.child(text("Window close").font(ui_label()).color(a.muted()));
+                    let mut choices = radio_group("Window close", 8.0);
                     for (key, label, policy) in [
                         (
                             "window-close-keep",
@@ -415,18 +469,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         ("window-close-ask", "Ask each time", Window::AskEachTime),
                         ("window-close-quit", "Quit Rodtty", Window::QuitRodtty),
                     ] {
-                        group = group.child(
-                            button(
+                        choices = choices.child(
+                            radio_button(
                                 a,
                                 key,
-                                format!(
-                                    "{} {label}",
-                                    if s.config.behavior.window_close == policy {
-                                        "●"
-                                    } else {
-                                        "○"
-                                    }
-                                ),
+                                label,
+                                s.config.behavior.window_close == policy,
                                 move |s, _| {
                                     s.save_config(|c| c.behavior.window_close = policy);
                                 },
@@ -434,7 +482,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .w_full(),
                         );
                     }
-                    group = group.child(button(
+                    group = group.child(choices).child(button(
                         a,
                         "reset-window-close",
                         "Reset window close",
@@ -453,6 +501,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 ) {
                     group =
                         group.child(text("Terminal tab close").font(ui_label()).color(a.muted()));
+                    let mut choices = radio_group("Terminal tab close", 8.0);
                     for (key, label, policy) in [
                         (
                             "terminal-close-running",
@@ -470,18 +519,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             Terminal::CloseImmediately,
                         ),
                     ] {
-                        group = group.child(
-                            button(
+                        choices = choices.child(
+                            radio_button(
                                 a,
                                 key,
-                                format!(
-                                    "{} {label}",
-                                    if s.config.behavior.terminal_tab_close == policy {
-                                        "●"
-                                    } else {
-                                        "○"
-                                    }
-                                ),
+                                label,
+                                s.config.behavior.terminal_tab_close == policy,
                                 move |s, _| {
                                     s.save_config(|c| c.behavior.terminal_tab_close = policy);
                                 },
@@ -489,7 +532,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .w_full(),
                         );
                     }
-                    group = group.child(button(
+                    group = group.child(choices).child(button(
                         a,
                         "reset-terminal-close",
                         "Reset terminal tab close",
@@ -508,6 +551,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .font(ui_label())
                             .color(a.muted()),
                     );
+                    let mut choices = radio_group("New terminal directory", 8.0);
                     for (key, label, policy) in [
                         (
                             "new-directory-active",
@@ -525,18 +569,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             Directory::Specified,
                         ),
                     ] {
-                        group = group.child(
-                            button(
+                        choices = choices.child(
+                            radio_button(
                                 a,
                                 key,
-                                format!(
-                                    "{} {label}",
-                                    if s.config.behavior.new_terminal_directory == policy {
-                                        "●"
-                                    } else {
-                                        "○"
-                                    }
-                                ),
+                                label,
+                                s.config.behavior.new_terminal_directory == policy,
                                 move |s, _| {
                                     s.save_config(|c| c.behavior.new_terminal_directory = policy);
                                 },
@@ -545,13 +583,16 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         );
                     }
                     group = group
+                        .child(choices)
                         .child(button(a, "reset-new-directory", "Reset new terminal directory", |s, _| {
                             s.save_config(|c| c.behavior.new_terminal_directory = Directory::default());
                         }))
                         .child(text_input(&s.behavior_directory, ui_label())
                             .caret(a.accent(), a.selection()).key("specified-directory")
-                            .label("Specified terminal folder").single_line().w_full().h(30.0).color(a.ink())
+                            .label("Specified terminal folder").single_line().w_full().px(8.0).py(5.0).color(a.ink())
                             .placeholder("Absolute folder path", a.muted())
+                            .border(1.0, a.kit().c.border_base)
+                            .radius(6.0)
                             .on_edit(|s: &mut State| &mut s.behavior_directory)
                             .on_input_change(|s: &mut State, _| {
                                 let path = PathBuf::from(&s.behavior_directory.text);
@@ -572,7 +613,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     .child(button(a, "reset-theme-family", "Reset family", |s, _| {
                         s.save_config(|c| c.theme_family = Config::default().theme_family);
                     }));
-                let mut choices = row().gap(6.0).scroll_x();
+                let mut choices = row()
+                    .role("radiogroup")
+                    .label("Appearance")
+                    .gap(6.0)
+                    .scroll_x();
                 for (key, label, mode) in [
                     ("light", "Light", Mode::Light),
                     ("dark", "Dark", Mode::Dark),
@@ -616,6 +661,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             }
             "Appearance" | "Editor" => {}
             "Terminal" => {
+                if matches(s, section, PROMPT_STYLE_SEARCH) {
+                    group = group.child(prompt_style_row(s, a));
+                }
+                if matches(s, section, PROMPT_SYMBOL_SEARCH) {
+                    group = group.child(prompt_symbol_row(s, a));
+                }
                 if matches(
                     s,
                     section,
@@ -624,6 +675,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     use crate::config::TerminalRightClick;
                     group =
                         group.child(text("Terminal clipboard").font(ui_label()).color(a.muted()));
+                    let mut choices = radio_group("Terminal right-click", 8.0);
                     for (key, label, value) in [
                         (
                             "terminal-right-click-menu",
@@ -636,18 +688,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             TerminalRightClick::Paste,
                         ),
                     ] {
-                        group = group.child(
-                            button(
+                        choices = choices.child(
+                            radio_button(
                                 a,
                                 key,
-                                format!(
-                                    "{} {label}",
-                                    if s.config.terminal_clipboard.right_click == value {
-                                        "●"
-                                    } else {
-                                        "○"
-                                    }
-                                ),
+                                label,
+                                s.config.terminal_clipboard.right_click == value,
                                 move |s, _| {
                                     s.save_config(|c| c.terminal_clipboard.right_click = value);
                                 },
@@ -655,7 +701,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .w_full(),
                         );
                     }
-                    group = group.child(button(
+                    group = group.child(choices).child(button(
                         a,
                         "reset-terminal-right-click",
                         "Reset right-click",
@@ -667,17 +713,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     ));
                     group = group
                         .child(
-                            button(
+                            switch_button(
                                 a,
                                 "copy-on-selection",
-                                format!(
-                                    "Copy on selection: {}",
-                                    if s.config.terminal_clipboard.copy_on_selection {
-                                        "on"
-                                    } else {
-                                        "off"
-                                    }
-                                ),
+                                "Copy on selection",
+                                s.config.terminal_clipboard.copy_on_selection,
                                 |s, _| {
                                     s.save_config(|c| {
                                         c.terminal_clipboard.copy_on_selection =
@@ -692,7 +732,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             "reset-copy-on-selection",
                             "Reset copy on selection",
                             |s, _| {
-                                s.save_config(|c| c.terminal_clipboard.copy_on_selection = false);
+                                s.save_config(|c| {
+                                    c.terminal_clipboard.copy_on_selection =
+                                        config::TerminalClipboardPreferences::default()
+                                            .copy_on_selection
+                                });
                             },
                         ));
                 }
@@ -701,17 +745,24 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         row()
                             .gap(6.0)
                             .center_y()
-                            .child(button(
+                            .child(switch_button(
                                 a,
                                 "history",
-                                format!("History: {}", if s.config.history { "on" } else { "off" }),
+                                "History",
+                                s.config.history,
                                 |s, _| {
                                     s.save_config(|config| config.history = !config.history);
                                 },
                             ))
-                            .child(button(a, "reset-history", "Reset", |s, _| {
-                                s.save_config(|config| config.history = Config::default().history);
-                            })),
+                            .child(
+                                button(a, "reset-history", "Reset", |s, _| {
+                                    s.save_config(|config| {
+                                        config.history = Config::default().history
+                                    });
+                                })
+                                .label("Reset history")
+                                .help("Reset history"),
+                            ),
                     );
                 }
                 if matches(s, section, "scrollback retained lines") {
@@ -725,27 +776,39 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                                     .font(ui_label())
                                     .color(a.ink()),
                             )
-                            .child(button(a, "less-scrollback", "− 1000", |s, _| {
-                                s.save_config(|config| {
-                                    config.scrollback =
-                                        config.scrollback.saturating_sub(1000).max(100)
-                                });
-                            }))
-                            .child(button(a, "more-scrollback", "+ 1000", |s, _| {
-                                s.save_config(|config| {
-                                    config.scrollback = (config.scrollback + 1000).min(100_000)
-                                });
-                            }))
-                            .child(button(a, "reset-scrollback", "Reset", |s, _| {
-                                s.save_config(|config| {
-                                    config.scrollback = Config::default().scrollback
-                                });
-                            })),
+                            .child(
+                                button(a, "less-scrollback", "− 1000", |s, _| {
+                                    s.save_config(|config| {
+                                        config.scrollback =
+                                            config.scrollback.saturating_sub(1000).max(100)
+                                    });
+                                })
+                                .label("Decrease scrollback by 1000 lines")
+                                .help("Decrease scrollback by 1000 lines"),
+                            )
+                            .child(
+                                button(a, "more-scrollback", "+ 1000", |s, _| {
+                                    s.save_config(|config| {
+                                        config.scrollback = (config.scrollback + 1000).min(100_000)
+                                    });
+                                })
+                                .label("Increase scrollback by 1000 lines")
+                                .help("Increase scrollback by 1000 lines"),
+                            )
+                            .child(
+                                button(a, "reset-scrollback", "Reset", |s, _| {
+                                    s.save_config(|config| {
+                                        config.scrollback = Config::default().scrollback
+                                    });
+                                })
+                                .label("Reset scrollback")
+                                .help("Reset scrollback"),
+                            ),
                     );
                 }
                 group = group.child(
                     text(
-                        "Command, history, and scrollback choices apply to new terminal sessions.",
+                        "Prompt choices apply to running Rodtty shells at their next prompt, unless the shell sets its own PS1. Command, history, and scrollback choices apply to new terminal sessions.",
                     )
                     .font(ui_label())
                     .color(a.muted())
@@ -787,35 +850,37 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             row()
                                 .gap(6.0)
                                 .center_y()
-                                .child(button(
-                                    a,
-                                    key,
-                                    format!("{title}: {}", if enabled { "on" } else { "off" }),
-                                    move |s, tx| s.dispatch(action, tx),
-                                ))
-                                .child(button(a, format!("reset-{key}"), "Reset", move |s, _| {
-                                    s.save_config(|config| {
-                                        let defaults = Config::default().explorer;
-                                        match action {
-                                            AppAction::ToggleDeletionConfirmation => {
-                                                config.explorer.confirm_deletion =
-                                                    defaults.confirm_deletion
+                                .child(switch_button(a, key, title, enabled, move |s, tx| {
+                                    s.dispatch(action, tx)
+                                }))
+                                .child(
+                                    button(a, format!("reset-{key}"), "Reset", move |s, _| {
+                                        s.save_config(|config| {
+                                            let defaults = Config::default().explorer;
+                                            match action {
+                                                AppAction::ToggleDeletionConfirmation => {
+                                                    config.explorer.confirm_deletion =
+                                                        defaults.confirm_deletion
+                                                }
+                                                AppAction::ToggleFollow => {
+                                                    config.explorer.follow_terminal =
+                                                        defaults.follow_terminal
+                                                }
+                                                AppAction::ToggleHidden => {
+                                                    config.explorer.show_hidden =
+                                                        defaults.show_hidden
+                                                }
+                                                AppAction::ToggleIgnore => {
+                                                    config.explorer.respect_ignore =
+                                                        defaults.respect_ignore
+                                                }
+                                                _ => unreachable!(),
                                             }
-                                            AppAction::ToggleFollow => {
-                                                config.explorer.follow_terminal =
-                                                    defaults.follow_terminal
-                                            }
-                                            AppAction::ToggleHidden => {
-                                                config.explorer.show_hidden = defaults.show_hidden
-                                            }
-                                            AppAction::ToggleIgnore => {
-                                                config.explorer.respect_ignore =
-                                                    defaults.respect_ignore
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    });
-                                })),
+                                        });
+                                    })
+                                    .label(format!("Reset {title}"))
+                                    .help(format!("Reset {title}")),
+                                ),
                         );
                     }
                 }
@@ -835,14 +900,18 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     }
                     let enabled = !s.config.disabled.contains(&name);
                     let reset = name.clone();
+                    let name_reset = name.clone();
                     group = group.child(
                         row()
                             .gap(6.0)
                             .center_y()
-                            .child(button(
+                            .child(state_button(
                                 a,
                                 format!("utility-{name}"),
                                 format!("{} {name}", if enabled { "✓" } else { "−" }),
+                                "checkbox",
+                                name.clone(),
+                                enabled,
                                 move |s, _| {
                                     s.save_config(|config| {
                                         if config.disabled.contains(&name) {
@@ -853,14 +922,20 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                                     });
                                 },
                             ))
-                            .child(button(
-                                a,
-                                format!("reset-utility-{reset}"),
-                                "Reset",
-                                move |s, _| {
-                                    s.save_config(|config| config.disabled.retain(|n| n != &reset));
-                                },
-                            )),
+                            .child(
+                                button(
+                                    a,
+                                    format!("reset-utility-{reset}"),
+                                    "Reset",
+                                    move |s, _| {
+                                        s.save_config(|config| {
+                                            config.disabled.retain(|n| n != &reset)
+                                        });
+                                    },
+                                )
+                                .label(format!("Reset {name_reset}"))
+                                .help(format!("Reset {name_reset}")),
+                            ),
                     );
                 }
             }
@@ -894,7 +969,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
     page.child(list)
 }
 
-const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Light Dark System palette";
+const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Rosé Pine Dawn Moon Kanagawa Lotus Wave Everforest Light Dark System palette";
 
 fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     use crate::config::ThemeFamily;
@@ -910,12 +985,16 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
                 ThemeFamily::NightOwl => "Light Owl / Night Owl",
                 ThemeFamily::Catppuccin => "Latte / Mocha",
                 ThemeFamily::TokyoNight => "Light / Night",
+                ThemeFamily::RosePine => "Dawn / Moon",
+                ThemeFamily::Kanagawa => "Lotus / Wave",
+                ThemeFamily::Everforest => "Light / Dark Green",
                 _ => "Light / Dark",
             }
             .into(),
             disabled: false,
         })
         .collect();
+    pressable("theme-family-value-trigger");
     rune_kit::Combobox::new(
         "theme-family",
         &s.theme_family_picker,
@@ -928,7 +1007,7 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     )
     .label("Theme family")
     .current(Some(s.config.theme_family.label()))
-    .search_placeholder("Search nine theme families")
+    .search_placeholder("Search theme families")
     .width(280.0)
     .max_height(256.0)
     .on_choose(|s, label, _| {
@@ -950,6 +1029,156 @@ pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
         let _ = family_picker(s, a, &mut layers);
     }
     layers
+}
+
+const PROMPT_STYLE_SEARCH: &str = "prompt style classic directory rodtty powerline two-line ps1";
+const PROMPT_SYMBOL_SEARCH: &str = "prompt symbol dollar chevron triangle ps1";
+
+fn prompt_style_row(s: &State, a: &Appearance) -> El {
+    use crate::prompt::PromptStyle;
+    let current = s.config.prompt.style;
+    let mut choices = row()
+        .role("radiogroup")
+        .label("Prompt style")
+        .w_full()
+        .gap(6.0)
+        // Wrap rather than clip the last choice when Settings is narrow.
+        .flex_wrap();
+    for &style in PromptStyle::ALL {
+        choices = choices.child(radio_button(
+            a,
+            format!("prompt-style-{}", style.key()),
+            style.label(),
+            current == style,
+            move |s, _| s.save_config(|c| c.prompt.style = style),
+        ));
+    }
+    let mut preview = col()
+        .key("prompt-style-preview")
+        .gap(4.0)
+        .child(prompt_preview(s.config.prompt, false, a));
+    if current.reports_status() {
+        preview = preview.child(
+            text("After a failed command:")
+                .font(ui_label())
+                .color(a.muted()),
+        );
+        preview = preview.child(prompt_preview(s.config.prompt, true, a));
+    }
+    col()
+        .key("prompt-style")
+        .w_full()
+        .gap(6.0)
+        .child(text("Prompt style").font(ui_label()).color(a.muted()))
+        .child(choices)
+        .child(preview)
+        .child(button(
+            a,
+            "reset-prompt-style",
+            "Reset prompt style",
+            |s, _| {
+                s.save_config(|c| c.prompt.style = Default::default());
+            },
+        ))
+}
+
+fn prompt_symbol_row(s: &State, a: &Appearance) -> El {
+    use crate::prompt::PromptSymbol;
+    let prefs = s.config.prompt;
+    let mut choices = row()
+        .role("radiogroup")
+        .label("Prompt symbol")
+        .w_full()
+        .gap(6.0)
+        // Wrap rather than clip the last choice when Settings is narrow.
+        .flex_wrap();
+    for &symbol in PromptSymbol::ALL {
+        let on = prefs.symbol == symbol;
+        choices = choices.child(state_button(
+            a,
+            format!("prompt-symbol-{}", symbol.key()),
+            format!("{} {}", if on { "●" } else { "○" }, symbol.glyph()),
+            "radio",
+            symbol_name(symbol),
+            on,
+            move |s, _| s.save_config(|c| c.prompt.symbol = symbol),
+        ));
+    }
+    // The line holding the symbol, as drawn after success and, when the
+    // style reports it, after failure.
+    let mut preview = row().key("prompt-symbol-preview").gap(12.0).scroll_x();
+    let last_line = |failed| {
+        let lines = prefs.preview(failed, PREVIEW_DIRECTORY);
+        prompt_line(lines.last().map(Vec::as_slice).unwrap_or_default(), a)
+    };
+    preview = preview.child(last_line(false));
+    if prefs.style.reports_status() {
+        preview = preview.child(last_line(true));
+    }
+    col()
+        .key("prompt-symbol")
+        .w_full()
+        .gap(6.0)
+        .child(text("Prompt symbol").font(ui_label()).color(a.muted()))
+        .child(choices)
+        .child(preview)
+        .child(button(
+            a,
+            "reset-prompt-symbol",
+            "Reset prompt symbol",
+            |s, _| {
+                s.save_config(|c| c.prompt.symbol = Default::default());
+            },
+        ))
+}
+
+/// A prompt symbol's spoken name: a screen reader may skip or misread the
+/// glyph alone.
+fn symbol_name(symbol: crate::prompt::PromptSymbol) -> String {
+    use crate::prompt::PromptSymbol;
+    let word = match symbol {
+        PromptSymbol::Dollar => "Dollar sign",
+        PromptSymbol::Chevron => "Chevron",
+        PromptSymbol::Triangle => "Triangle",
+        PromptSymbol::DoubleChevron => "Double chevron",
+    };
+    format!("{word} {}", symbol.glyph())
+}
+
+const PREVIEW_DIRECTORY: &str = "~/project";
+
+/// The prompt drawn with the active theme's ANSI palette, as the terminal would.
+fn prompt_preview(prefs: crate::prompt::PromptPreferences, failed: bool, a: &Appearance) -> El {
+    let mut lines = col()
+        .px(8.0)
+        .py(6.0)
+        .radius(6.0)
+        .fill(a.bg())
+        .label(prefs.preview_text(failed, PREVIEW_DIRECTORY));
+    for line in prefs.preview(failed, PREVIEW_DIRECTORY) {
+        lines = lines.child(prompt_line(&line, a));
+    }
+    lines
+}
+
+fn prompt_line(line: &[(String, crate::prompt::Segment)], a: &Appearance) -> El {
+    let font = ui_label().family(Family::Mono);
+    let mut spans = row().label(line.iter().map(|(t, _)| t.as_str()).collect::<String>());
+    for (content, segment) in line {
+        let color = segment
+            .fg
+            .map_or(a.ink(), |i| a.terminal(vt100::Color::Idx(i), true));
+        let mut font = font;
+        if segment.bold {
+            font.weight = 700.0;
+        }
+        let mut span = row().child(text(content).font(font).color(color));
+        if let Some(bg) = segment.bg {
+            span = span.fill(a.terminal(vt100::Color::Idx(bg), false));
+        }
+        spans = spans.child(span);
+    }
+    spans
 }
 
 fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appearance) -> El {
@@ -1003,6 +1232,12 @@ mod tests {
         runtime.frame(0.0);
         runtime
     }
+    fn open_settings(runtime: &mut rune::Runtime<State>) {
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+    }
     fn click(runtime: &mut rune::Runtime<State>, key: &str) {
         let (x, y) = runtime
             .find(key)
@@ -1025,8 +1260,66 @@ mod tests {
         );
     }
     #[test]
+    fn prompt_choices_wrap_inside_a_narrow_settings_pane_instead_of_clipping() {
+        use crate::desktop::fonts::BUNDLED;
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        // The default 1080 pt workspace gives Settings about 450 pt, where the
+        // five prompt styles used to run past the section and clip "Two-line".
+        for (size, share) in [((1080.0, 720.0), 0.42), ((1200.0, 800.0), 0.24)] {
+            let root = crate::test_support::tempdir().unwrap();
+            let mut state = State::with_root(root.path().into());
+            state.workspace.layout.editor_share = share;
+            state.open_settings(&mut Tx::default());
+            state.settings_query.replace_text("prompt");
+            let mut rt = rune::Runtime::with_text(
+                state,
+                view,
+                size,
+                rune::Env {
+                    system_dark: true,
+                    scale: 1.0,
+                },
+                rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+            );
+            for _ in 0..3 {
+                rt.frame(0.0);
+                rt.settle_all();
+            }
+            let elements = rt.elements();
+            let rect = |key: &str| {
+                elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                    .unwrap_or_else(|| panic!("missing {key}"))
+            };
+            let section = rect("settings-section-Terminal").rect;
+            let right = |r: [f32; 4]| r[0] + r[2];
+            let keys = crate::prompt::PromptStyle::ALL
+                .iter()
+                .map(|style| format!("prompt-style-{}", style.key()))
+                .chain(
+                    crate::prompt::PromptSymbol::ALL
+                        .iter()
+                        .map(|symbol| format!("prompt-symbol-{}", symbol.key())),
+                );
+            for key in keys {
+                let e = rect(&key);
+                assert!(
+                    right(e.rect) <= right(section) + 0.5,
+                    "{size:?} {key} stays inside its section: {:?} in {section:?}",
+                    e.rect
+                );
+                assert!(
+                    (e.visible[2] - e.rect[2]).abs() < 0.5,
+                    "{size:?} {key} is not clipped: {:?}",
+                    e.visible
+                );
+            }
+        }
+    }
+    #[test]
     fn file_preferences_reset_individually_without_changing_other_choices() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut config = Config::default();
         config.explorer.confirm_deletion = false;
         config.explorer.follow_terminal = true;
@@ -1034,7 +1327,7 @@ mod tests {
         config.explorer.respect_ignore = false;
         config.save(root.path()).unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         for (query, control, expected) in [
             (
                 "Trash",
@@ -1081,9 +1374,9 @@ mod tests {
     #[test]
     fn behavior_settings_save_and_reset_terminal_close_and_directory_choices() {
         use crate::config::{NewTerminalDirectory, TerminalClosePolicy};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("terminal tab close"));
         rt.frame(0.0);
         click(&mut rt, "terminal-close-always");
@@ -1168,9 +1461,9 @@ mod tests {
 
     #[test]
     fn behavior_settings_search_apply_live_persist_and_reset_window_policy() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("window close"));
         rt.frame(0.0);
         click(&mut rt, "window-close-ask");
@@ -1195,9 +1488,9 @@ mod tests {
 
     #[test]
     fn owner_selects_dracula_family_and_keeps_both_appearances_on_reopen() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("theme"));
         runtime.frame(0.0);
         click(&mut runtime, "theme-family-trigger");
@@ -1215,10 +1508,10 @@ mod tests {
     }
 
     #[test]
-    fn all_nine_families_apply_both_previews_live_system_json_and_independent_resets() {
-        let root = tempfile::tempdir().unwrap();
+    fn all_families_apply_both_previews_live_system_json_and_independent_resets() {
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         rt.frame(0.0);
         // Independently specified upstream canvas values, not derived from the resolver.
@@ -1288,8 +1581,32 @@ mod tests {
                 "Solarized Light",
                 "Solarized Dark",
             ),
+            (
+                "Rosé Pine",
+                "rose_pine",
+                "#faf4ed",
+                "#191724",
+                "Rosé Pine Dawn",
+                "Rosé Pine",
+            ),
+            (
+                "Kanagawa",
+                "kanagawa",
+                "#f2ecbc",
+                "#1f1f28",
+                "Kanagawa Lotus",
+                "Kanagawa",
+            ),
+            (
+                "Everforest",
+                "everforest",
+                "#fdf0d5",
+                "#2f383e",
+                "Everforest Light",
+                "Everforest",
+            ),
         ];
-        assert_eq!(crate::config::ThemeFamily::ALL.len(), 9);
+        assert_eq!(crate::config::ThemeFamily::ALL.len(), 12);
         for (label, json_name, light, dark, light_name, dark_name) in families {
             click(&mut rt, "theme-family-trigger");
             rt.paste(label);
@@ -1361,7 +1678,7 @@ mod tests {
 
     #[test]
     fn every_family_recolors_rendered_ansi_without_rewriting_program_rgb_or_terminal_selection() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         rt.update(|s, _| {
             let mut parser = vt100::Parser::new(8, 30, 0);
@@ -1438,13 +1755,13 @@ mod tests {
 
     #[test]
     fn ayu_light_settings_labels_remain_readable_on_the_light_canvas() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let config: Config =
             serde_json::from_value(serde_json::json!({"theme_family":"ayu","appearance":"light"}))
                 .unwrap();
         config.save(root.path()).unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
@@ -1478,7 +1795,7 @@ mod tests {
 
     #[test]
     fn editor_and_read_only_diff_draw_the_selected_familys_keyword_palette() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         for (family, light, dark) in [
             ("catppuccin", "#8839ef", "#cba6f7"),
@@ -1518,13 +1835,13 @@ mod tests {
 
     #[test]
     fn narrow_settings_theme_dropdown_is_searchable_and_selectable() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         rt.set_viewport((680.0, 800.0), 1.0);
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
         }
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
@@ -1545,9 +1862,9 @@ mod tests {
 
     #[test]
     fn owner_changes_and_resets_independent_live_font_sizes() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("font size"));
         runtime.frame(0.0);
         let before = runtime
@@ -1587,7 +1904,7 @@ mod tests {
     }
     #[test]
     fn system_tracks_live_host_changes_while_explicit_appearance_stays_fixed() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         assert_canvas(&runtime, "#1e1e2e");
         runtime.set_system_dark(false);
@@ -1595,7 +1912,7 @@ mod tests {
             runtime.frame(1.0 / 60.0);
         }
         assert_canvas(&runtime, "#eff1f5");
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-dark");
         runtime.set_system_dark(true);
         runtime.frame(0.0);
@@ -1627,7 +1944,7 @@ mod tests {
     }
     #[test]
     fn switching_appearance_recolors_ansi_but_preserves_extended_output_and_selection() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         runtime.update(|s, _| {
             let mut parser = vt100::Parser::new(8, 30, 0);
@@ -1662,7 +1979,7 @@ mod tests {
         assert_eq!(cell_background(&runtime, 0), rgb("#f38ba8"));
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
         assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-light");
         assert_eq!(cell_background(&runtime, 0), rgb("#d20f39"));
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
@@ -1676,9 +1993,9 @@ mod tests {
     }
     #[test]
     fn owner_selects_persists_and_resets_autosave_preferences() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("autosave"));
         runtime.frame(0.0);
         click(&mut runtime, "autosave-after-delay");
@@ -1718,9 +2035,9 @@ mod tests {
 
     #[test]
     fn owner_changes_appearance_live_and_reopens_with_saved_choice() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = self::runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-light");
         assert_canvas(&runtime, "#eff1f5");
         click(&mut runtime, "appearance-dark");
@@ -1738,10 +2055,126 @@ mod tests {
         assert_canvas(&reopened, "#1e1e2e");
     }
     #[test]
+    fn prompt_style_and_symbol_preview_reset_persist_and_reach_a_running_shell() {
+        use crate::prompt::{PromptStyle, PromptSymbol};
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.directory = root.path().into();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.workspace_setup();
+        if state.sessions.is_empty() {
+            state.new_tab();
+        }
+        // Bash's `\w` shows a directory under $HOME as `~/…`; the README gate
+        // keeps TMPDIR under target/, which is inside $HOME for most checkouts.
+        let dir = match std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .and_then(|home| root.path().strip_prefix(home).ok().map(|p| p.to_owned()))
+        {
+            Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+            _ => root.path().display().to_string(),
+        };
+        fn terminal(rt: &rune::Runtime<State>) -> &Session {
+            rt.state.active().unwrap()
+        }
+        let wait_prompt = |rt: &mut rune::Runtime<State>, expected: &str| {
+            let start = Instant::now();
+            loop {
+                // The settings pane narrows the terminal, so prompts may wrap.
+                let row = terminal(rt).with_screen(|s| s.contents().trim_end().to_owned());
+                if row.ends_with(expected.trim_end()) {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(15),
+                    "screen {row:?}, expected prompt {expected:?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let mut rt = rune::Runtime::new(
+            state,
+            view,
+            (1200.0, 800.0),
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
+        rt.frame(0.0);
+        wait_prompt(&mut rt, &format!("rodtty:{dir}$ "));
+        open_settings(&mut rt);
+        rt.update(|s, _| s.settings_query.replace_text("prompt"));
+        rt.frame(1.0 / 60.0);
+        assert!(
+            rt.find("history").is_none(),
+            "search narrows to prompt rows"
+        );
+        let labelled = |rt: &rune::Runtime<State>, label: &str| {
+            rt.elements()
+                .iter()
+                .any(|e| e.label.as_deref() == Some(label))
+        };
+        assert!(rt.find("prompt-style-preview").is_some());
+        assert!(rt.find("prompt-symbol-preview").is_some());
+        assert!(
+            labelled(&rt, "rodtty:~/project$ "),
+            "default Classic $ preview"
+        );
+
+        click(&mut rt, "prompt-style-two_line");
+        click(&mut rt, "prompt-symbol-chevron");
+        let saved = Config::load(root.path()).unwrap().prompt;
+        assert_eq!(saved.style, PromptStyle::TwoLine);
+        assert_eq!(saved.symbol, PromptSymbol::Chevron);
+        assert!(labelled(&rt, "~/project\n› "), "live style preview");
+        assert!(labelled(&rt, "› "), "live symbol preview");
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, "› ");
+
+        click(&mut rt, "reset-prompt-style");
+        let saved = Config::load(root.path()).unwrap().prompt;
+        assert_eq!(saved.style, PromptStyle::Classic);
+        assert_eq!(
+            saved.symbol,
+            PromptSymbol::Chevron,
+            "resets are independent"
+        );
+        assert!(labelled(&rt, "rodtty:~/project› "));
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, &format!("rodtty:{dir}› "));
+
+        // External JSON edits apply to running shells as well.
+        let mut external = Config::load(root.path()).unwrap();
+        external.prompt.style = PromptStyle::Rodtty;
+        external.save(root.path()).unwrap();
+        rt.update(|s, tx| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            poll(s, 0.0, tx);
+        });
+        rt.frame(1.0 / 60.0);
+        assert!(labelled(&rt, "Rodtty › "));
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, "Rodtty › ");
+
+        click(&mut rt, "reset-prompt-symbol");
+        click(&mut rt, "reset-prompt-style");
+        assert_eq!(
+            Config::load(root.path()).unwrap().prompt,
+            Default::default()
+        );
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, &format!("rodtty:{dir}$ "));
+    }
+    #[test]
     fn owner_searches_resets_and_edits_actual_json_beside_the_terminal() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         assert!(runtime.find("editor-pane").is_some());
         assert!(runtime.find("terminal-pane").is_some());
         assert!(runtime.find("settings-tab").is_some());
@@ -1782,9 +2215,11 @@ mod tests {
             runtime.frame(0.0);
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(
-            runtime.state.workspace.tabs[0].document.path,
-            root.path().join("settings.json")
+        assert!(
+            runtime.state.workspace.tabs[0]
+                .document
+                .path
+                .ends_with("settings.json")
         );
         assert!(runtime.find("file-editor-1").is_some());
         assert!(runtime.find("terminal-pane").is_some());
@@ -1794,7 +2229,7 @@ mod tests {
             key: Key::Command('a'),
             mods: rune::Mods {
                 cmd: true,
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 ..Default::default()
             },
         });
@@ -1822,10 +2257,10 @@ mod tests {
     }
     #[test]
     fn external_json_updates_preferences_but_invalid_edits_keep_the_last_valid_choices() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         Config::default().save(root.path()).unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         let path = root.path().join("settings.json");
         std::fs::write(
             &path,
@@ -1880,10 +2315,10 @@ mod tests {
     }
     #[test]
     fn a_ui_edit_preserves_unrelated_external_changes_before_the_next_poll() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         Config::default().save(root.path()).unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("scrollback"));
         runtime.frame(1.0 / 60.0);
         std::fs::write(

@@ -177,15 +177,9 @@ pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
         .font(ui_style(10.0, 400.0))
         .color(a.muted()),
     );
-    Some(
-        col()
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .items_center()
-            .px(16.0)
-            .pt(16.0)
-            .child(content),
-    )
+    Some(motion::modal(
+        a,
+        col().items_center().px(16.0).pt(16.0).child(content),
+        Entrance::Drawer(0.0, -8.0),
+    ))
 }

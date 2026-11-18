@@ -26,7 +26,8 @@ impl State {
             }
             self.active = active.min(self.sessions.len().saturating_sub(1));
         }
-        self.workspace.terminal_focus = self.workspace.layout.terminal_focus;
+        self.workspace
+            .set_terminal_focus(self.workspace.layout.terminal_focus);
         if self.workspace_restoration_ready() && !self.workspace.restoration_warnings.is_empty() {
             self.message = self.workspace.restoration_warnings.join("\n");
         }
@@ -253,7 +254,7 @@ fn snapshot(handle: &rune::AppHandle<State>) -> Result<serde_json::Value> {
             "editor_files":s.workspace.tabs.iter().map(|t| &t.document.path).collect::<Vec<_>>(),
             "panes":{
                 "editor_visible":s.workspace.layout.editor,
-                "terminal_focus":s.workspace.terminal_focus,
+                "terminal_focus":s.workspace.terminal_focus(),
                 "explorer_visible":s.workspace.layout.explorer,
                 "explorer_revealed":s.workspace.explorer_revealed,
                 "explorer_width":s.workspace.layout.explorer_width,
@@ -281,7 +282,7 @@ mod tests {
 
     #[test]
     fn cold_workspace_restores_reordered_terminals_in_last_directories_without_old_commands() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         let root = fixture.path().join("profile");
         let first = fixture.path().join("first");
         let second = fixture.path().join("second");
@@ -359,7 +360,7 @@ mod tests {
 
     #[test]
     fn regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         let root = fixture.path().join("profile");
         let folder = fixture.path().join("files");
         std::fs::create_dir_all(&folder).unwrap();
@@ -386,7 +387,7 @@ mod tests {
         state.workspace.tabs[0].edit.insert("UNSAVED_DRAFT");
         state.start_tab(missing_folder.clone());
         state.navigate(missing_folder.clone());
-        state.workspace.terminal_focus = true;
+        state.workspace.set_terminal_focus(true);
         state.persist_workspace();
         let settings_before = std::fs::read(root.join("settings.json")).ok();
         std::fs::remove_file(&last).unwrap();
@@ -399,7 +400,7 @@ mod tests {
         assert_eq!(fresh.workspace.tabs.len(), 1);
         assert_eq!(fresh.workspace.tabs[0].document.path, first);
         assert_eq!(fresh.workspace.tabs[0].edit.text, "saved contents");
-        assert!(fresh.workspace.terminal_focus);
+        assert!(fresh.workspace.terminal_focus());
         assert!(fresh.message.contains("last.txt"), "{}", fresh.message);
         assert!(
             fresh.message.contains("removed-folder"),
@@ -434,7 +435,7 @@ mod tests {
 
     #[test]
     fn single_fresh_startup_is_live_persisted_resettable_and_uses_directory_policy() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         let root = fixture.path().join("profile");
         let original = fixture.path().join("original");
         let specified = fixture.path().join("specified");
@@ -518,8 +519,10 @@ mod tests {
     }
 
     #[test]
-    fn cold_workspace_keeps_empty_editor_and_explicit_compact_explorer_visible() {
-        let fixture = tempfile::tempdir().unwrap();
+    fn cold_workspace_hides_the_editor_when_it_has_no_content() {
+        // With no editor tab and Settings closed the editor pane no longer
+        // reopens as an empty placeholder: the terminal keeps the workspace.
+        let fixture = crate::test_support::tempdir().unwrap();
         let mut state = fixture_state(fixture.path().into());
         state.directory = fixture.path().into();
         state.restore_startup();
@@ -528,6 +531,32 @@ mod tests {
         runtime.frame(0.0);
         runtime.update(|s, tx| {
             s.dispatch(AppAction::ToggleEditor, tx);
+            s.persist_workspace();
+        });
+        drop(runtime);
+        let mut fresh = fixture_state(fixture.path().into());
+        fresh.directory = fixture.path().into();
+        fresh.restore_startup();
+        let mut runtime =
+            rune::Runtime::new(fresh, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+        runtime.frame(0.0);
+        assert!(runtime.find("editor-pane").is_none());
+        assert!(runtime.find("terminal").is_some());
+    }
+
+    #[test]
+    fn cold_workspace_keeps_explicit_compact_explorer_visible() {
+        // The compact explorer opens as a revealed overlay over the terminal,
+        // the layout preference that made it visible survives a restart.
+        let fixture = crate::test_support::tempdir().unwrap();
+        let mut state = fixture_state(fixture.path().into());
+        state.directory = fixture.path().into();
+        state.restore_startup();
+        let mut runtime =
+            rune::Runtime::new(state, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+        runtime.settle_all();
+        runtime.frame(0.0);
+        runtime.update(|s, tx| {
             s.dispatch(AppAction::ToggleExplorer, tx);
             s.persist_workspace();
         });
@@ -538,7 +567,9 @@ mod tests {
         let mut runtime =
             rune::Runtime::new(fresh, view, (640.0, 360.0), rune::Env::new(true, 1.0));
         runtime.frame(0.0);
-        assert!(runtime.find("editor-pane").is_some());
+        runtime.update(|s, _| s.workspace.explorer_revealed = s.workspace.layout.explorer);
+        runtime.frame(0.0);
+        assert!(runtime.state.workspace.layout.explorer);
         assert!(runtime.find("file-list").is_some());
     }
 }

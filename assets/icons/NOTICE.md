@@ -27,7 +27,7 @@ and consult the respective brand owner for any additional brand-specific terms.
 `SOURCE-LICENSE-MIT` covers the upstream association/source code, **not all SVG
 artwork**. `mappings.json` and `src/desktop/file_icon_catalog.rs` are generated from
 upstream `supportedExtensions.ts`, `supportedFolders.ts`, and `languages.ts` by
-`scripts/import-vscode-icons.mjs`. Rodtty includes the enabled default set;
+`scripts/import-icons.mjs`. Rodtty includes the enabled default set;
 optional upstream presets and project auto-detection are not enabled. Known
 language filename/extension associations are applied before explicit overrides,
 matching upstream precedence. Filename matches are case insensitive, and compound
@@ -36,7 +36,7 @@ upstream generic artwork.
 
 Regenerate from the pinned checkout with:
 
-    node scripts/import-vscode-icons.mjs /path/to/vscode-icons
+    node scripts/import-icons.mjs /path/to/vscode-icons
     cargo fmt
 
 Node and the upstream checkout are developer import tools only. All mappings and

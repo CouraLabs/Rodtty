@@ -15,7 +15,7 @@ struct Associations {
 pub(super) fn resolve(path: &Path, folder: bool, expanded: bool, dark: bool) -> &'static Icon {
     static ASSOCIATIONS: OnceLock<Associations> = OnceLock::new();
     let maps = ASSOCIATIONS.get_or_init(|| {
-        serde_json::from_str(include_str!("../../assets/vscode-icons/mappings.json"))
+        serde_json::from_str(include_str!("../../assets/icons/mappings.json"))
             .expect("bundled vscode-icons associations")
     });
     let name = path

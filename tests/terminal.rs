@@ -1,4 +1,9 @@
-use rodtty::{config::Config, profile::PreparedProfile, session::Session};
+use rodtty::{
+    config::Config,
+    profile::PreparedProfile,
+    prompt::{PromptPreferences, PromptStyle, PromptSymbol},
+    session::Session,
+};
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -7,12 +12,14 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
+mod common;
+
 fn shell() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_rodtty-shell"))
 }
 
 fn execute(script: &str, config: Config) -> std::process::Output {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let profile = PreparedProfile::new(shell(), root.path(), &config).unwrap();
     let mut child = Command::new(shell())
         .args(["--no-config", "--noprofile", "--norc", "-c", script])
@@ -148,14 +155,23 @@ fn run(session: &Session, script: &str, marker: &str) {
     session
         .send(format!("{script}; printf '\\n__DONE_%s__\\n' '{marker}'\r").into_bytes())
         .unwrap();
-    session
-        .wait_for(&format!("__DONE_{marker}__"), Duration::from_secs(15))
-        .unwrap();
+    let marker = format!("__DONE_{marker}__");
+    session.wait_for(&marker, Duration::from_secs(15)).unwrap();
+    // Between commands, while prompt hooks run, the terminal is in canonical
+    // mode, where the tty truncates a typed-ahead line at MAX_CANON (1024 bytes
+    // on macOS). Brush switches to raw mode before drawing its prompt, so the
+    // next command is sent only once the prompt shows after the marker.
+    wait_screen(session, "the prompt after the marker", |screen| {
+        screen
+            .contents()
+            .rsplit_once(&marker)
+            .is_some_and(|(_, after)| !after.trim().is_empty())
+    });
 }
 
 #[test]
 fn sessions_keep_independent_directories_environments_and_command_snapshots() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::create_dir(root.path().join("child")).unwrap();
     let first = session(root.path(), Config::default());
     let second = session(
@@ -197,7 +213,7 @@ fn sessions_keep_independent_directories_environments_and_command_snapshots() {
 
 #[test]
 fn owner_startup_path_edits_preserve_managed_commands() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         root.path().join("startup.sh"),
         "export RODTTY_STARTUP=yes\nexport PATH=/usr/bin:/bin\n",
@@ -221,7 +237,7 @@ fn owner_startup_path_edits_preserve_managed_commands() {
 
 #[test]
 fn full_screen_app_resizes_and_returns_to_shell() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let mut terminal = session(root.path(), Config::default());
     let fixture = rodtty::profile::quote(Path::new(env!("CARGO_BIN_EXE_rodtty-probe"))).unwrap();
     terminal
@@ -249,7 +265,7 @@ fn full_screen_app_resizes_and_returns_to_shell() {
 
 #[test]
 fn interrupt_stops_foreground_command_and_preserves_shell() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     terminal.send(b"sleep 20\r".to_vec()).unwrap();
     std::thread::sleep(Duration::from_millis(200));
@@ -260,7 +276,7 @@ fn interrupt_stops_foreground_command_and_preserves_shell() {
 
 #[test]
 fn terminal_output_and_scrollback_survive_without_a_view() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(
         root.path(),
         Config {
@@ -280,7 +296,7 @@ fn terminal_output_and_scrollback_survive_without_a_view() {
 
 #[test]
 fn completion_and_unicode_paste_reach_the_shell() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         root.path().join("unique_completion_file"),
         "COMPLETION_WORKED\n",
@@ -302,7 +318,7 @@ fn completion_and_unicode_paste_reach_the_shell() {
 
 #[test]
 fn history_sync_does_not_print_errors_at_each_prompt() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     terminal
         .send(b"printf 'history_probe\\n'\r".to_vec())
@@ -321,7 +337,7 @@ fn history_sync_does_not_print_errors_at_each_prompt() {
 
 #[test]
 fn saved_history_is_shared_and_can_be_disabled() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let first = session(root.path(), Config::default());
     run(&first, "printf history_marker", "HISTORY");
     first.wait_for("rodtty:", Duration::from_secs(5)).unwrap();
@@ -348,7 +364,7 @@ fn saved_history_is_shared_and_can_be_disabled() {
     search
         .wait_for("__DONE_HISTORY__", Duration::from_secs(10))
         .unwrap();
-    let private_root = tempfile::tempdir().unwrap();
+    let private_root = common::tempdir().unwrap();
     let private = session(
         private_root.path(),
         Config {
@@ -362,7 +378,7 @@ fn saved_history_is_shared_and_can_be_disabled() {
 
 #[test]
 fn ending_session_stops_a_normal_foreground_child() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     let fixture = rodtty::profile::quote(Path::new(env!("CARGO_BIN_EXE_rodtty-probe"))).unwrap();
     terminal
@@ -388,7 +404,7 @@ fn ending_session_stops_a_normal_foreground_child() {
 #[test]
 #[ignore = "requires host-installed vim; run explicitly for real-app validation"]
 fn real_vim_accepts_keyboard_input_and_saves_a_file() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     terminal
         .send(b"vim -Nu NONE -n sample.txt\r".to_vec())
@@ -412,8 +428,8 @@ fn real_vim_accepts_keyboard_input_and_saves_a_file() {
 
 #[test]
 fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_startup() {
-    let legacy = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let legacy = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         legacy.path().join("config.toml"),
         "disabled = ['cat']\nhistory = true\n",
@@ -466,7 +482,7 @@ fn migrated_json_preferences_keep_existing_session_snapshots_and_new_session_sta
 
 #[test]
 fn semicolon_rich_application_titles_remain_exact_through_the_pty() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     let first = "Agent; 日本語 — long application title;".repeat(20);
     let second = format!("{};;", "続き; application title;".repeat(20));
@@ -488,7 +504,7 @@ fn semicolon_rich_application_titles_remain_exact_through_the_pty() {
 
 #[test]
 fn semicolon_rich_working_directories_remain_exact_through_the_pty() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     run(&terminal, "PROMPT_COMMAND=''", "DIRECTORY_HOOK_DISABLED");
     for (ending, terminator) in [("BEL", "\\007"), ("ST", "\\033\\\\")] {
@@ -504,13 +520,17 @@ fn semicolon_rich_working_directories_remain_exact_through_the_pty() {
             &format!("EXACT_DIRECTORY_{ending}"),
         );
         assert_eq!(terminal.cwd(), child, "OSC 7 with {ending}");
-        assert_eq!(terminal.tab_title(), format!("›_  Term {name}"));
+        assert_eq!(
+            terminal.tab_title(),
+            "Terminal",
+            "the fallback label names no directory"
+        );
     }
 }
 
 #[test]
 fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     let title = format!("Agent; 日本語 — {};;", "long application title ".repeat(12));
     run(
@@ -542,7 +562,7 @@ fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     assert_eq!(terminal.tab_title(), "Second; app 日本語; title");
     run(&terminal, "printf '\\033]2;\\007'", "TITLE_CLEARED");
     assert_eq!(terminal.state.lock().unwrap().parser.callbacks().title, "");
-    assert_eq!(terminal.tab_title(), "›_  Term project; 日本語;");
+    assert_eq!(terminal.tab_title(), "Terminal");
 }
 
 fn wait_activity(session: &Session, running: bool) {
@@ -559,7 +579,7 @@ fn wait_activity(session: &Session, running: bool) {
 
 #[test]
 fn command_confirmation_distinguishes_idle_builtin_foreground_background_interrupt_and_exit() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         root.path().join("startup.sh"),
         "PS0='OWNER-PS0'; PROMPT_COMMAND=('printf OWNER-HOOK-ONE' 'printf OWNER-HOOK-TWO')\n",
@@ -614,7 +634,7 @@ fn command_confirmation_distinguishes_idle_builtin_foreground_background_interru
 
 #[test]
 fn public_prompt_markers_cannot_hide_a_running_builtin() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let terminal = session(root.path(), Config::default());
     let deadline = Instant::now() + Duration::from_secs(5);
     while terminal.has_running_commands() && Instant::now() < deadline {
@@ -651,8 +671,8 @@ fn public_prompt_markers_cannot_hide_a_running_builtin() {
 
 #[test]
 fn other_sessions_activity_markers_cannot_hide_a_running_builtin() {
-    let root = tempfile::tempdir().unwrap();
-    let other_root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
+    let other_root = common::tempdir().unwrap();
     let other = PreparedProfile::new(shell(), other_root.path(), &Config::default()).unwrap();
     let terminal = session(root.path(), Config::default());
     wait_activity(&terminal, false);
@@ -676,4 +696,166 @@ fn other_sessions_activity_markers_cannot_hide_a_running_builtin() {
         running,
         "another session's prompt marker must not clear this owning shell's command"
     );
+}
+
+fn wait_screen(session: &Session, what: &str, ready: impl Fn(&vt100::Screen) -> bool) {
+    let start = Instant::now();
+    while !session.with_screen(&ready) {
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "timed out waiting for {what}; screen:\n{}",
+            session.screen().contents()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The row holding the cursor, where the shell's current prompt ends.
+fn prompt_row(screen: &vt100::Screen) -> String {
+    let (row, _) = screen.cursor_position();
+    screen
+        .rows(0, screen.size().1)
+        .nth(usize::from(row))
+        .unwrap_or_default()
+}
+
+fn prefs(style: PromptStyle, symbol: PromptSymbol) -> PromptPreferences {
+    PromptPreferences { style, symbol }
+}
+
+#[test]
+fn prompt_preferences_apply_to_a_running_shell_at_its_next_prompt() {
+    let root = common::tempdir().unwrap();
+    // Bash's `\w` shows a directory under $HOME as `~/…`; the README gate
+    // keeps TMPDIR under target/, which is inside $HOME for most checkouts.
+    let dir = match std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .and_then(|home| root.path().strip_prefix(home).ok().map(|p| p.to_owned()))
+    {
+        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        _ => root.path().display().to_string(),
+    };
+    let terminal = session(root.path(), Config::default());
+    wait_screen(&terminal, "default classic prompt", |s| {
+        prompt_row(s) == format!("rodtty:{dir}$ ")
+    });
+    let pid = "printf 'PID:%s\\n' \"$$\"";
+    run(&terminal, pid, "PID_BEFORE");
+    let shell_pid = terminal
+        .screen()
+        .contents()
+        .lines()
+        .find_map(|l| l.strip_prefix("PID:").map(str::to_owned))
+        .unwrap();
+    for (style, symbol, expected) in [
+        (
+            PromptStyle::Directory,
+            PromptSymbol::Chevron,
+            format!("{dir} › "),
+        ),
+        (
+            PromptStyle::Rodtty,
+            PromptSymbol::Triangle,
+            "Rodtty ▶ ".into(),
+        ),
+        (
+            PromptStyle::Powerline,
+            PromptSymbol::DoubleChevron,
+            format!(" Rodtty  {dir}  ⟫ "),
+        ),
+        (
+            PromptStyle::Classic,
+            PromptSymbol::Dollar,
+            format!("rodtty:{dir}$ "),
+        ),
+    ] {
+        terminal.publish_prompt(prefs(style, symbol)).unwrap();
+        terminal.send(b"\r".to_vec()).unwrap();
+        wait_screen(&terminal, &expected, |s| prompt_row(s) == expected);
+        if style == PromptStyle::Powerline {
+            let cell = terminal.with_screen(|s| {
+                let (row, _) = s.cursor_position();
+                s.cell(row, 1).unwrap().bgcolor()
+            });
+            assert_eq!(cell, vt100::Color::Idx(6), "indexed ANSI cyan segment");
+        }
+    }
+    run(&terminal, pid, "PID_AFTER");
+    assert_eq!(
+        terminal
+            .screen()
+            .contents()
+            .matches(&format!("PID:{shell_pid}"))
+            .count(),
+        2,
+        "the same shell keeps running"
+    );
+
+    terminal
+        .publish_prompt(prefs(PromptStyle::TwoLine, PromptSymbol::Dollar))
+        .unwrap();
+    let symbol_color = |failed: bool| {
+        terminal
+            .send(if failed { &b"false\r"[..] } else { b"true\r" }.to_vec())
+            .unwrap();
+        let color = vt100::Color::Idx(if failed { 1 } else { 2 });
+        let what = format!("two-line prompt with symbol {color:?}");
+        wait_screen(&terminal, &what, |s| {
+            let (row, _) = s.cursor_position();
+            let directory = s.rows(0, s.size().1).nth(usize::from(row) - 1);
+            prompt_row(s) == "$ "
+                && s.cell(row, 0).unwrap().fgcolor() == color
+                && directory.is_some_and(|line| line.trim_end() == dir)
+        });
+    };
+    symbol_color(true);
+    symbol_color(false);
+    symbol_color(true);
+}
+
+#[test]
+fn owner_defined_ps1_from_startup_or_interactively_stays_unmanaged() {
+    let root = common::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("startup.sh"),
+        "PS1='owner> '\nPROMPT_COMMAND=('printf \"[status=%s]\" $?')\n",
+    )
+    .unwrap();
+    let owner = Session::spawn(
+        shell(),
+        root.path(),
+        root.path(),
+        Config::default(),
+        30,
+        110,
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    wait_screen(&owner, "owner prompt", |s| {
+        prompt_row(s) == "owner> " && s.contents().contains("[status=0]")
+    });
+    owner
+        .publish_prompt(prefs(PromptStyle::Rodtty, PromptSymbol::Dollar))
+        .unwrap();
+    // Owner hooks still see the finished command's own exit status.
+    owner.send(b"false\r".to_vec()).unwrap();
+    wait_screen(&owner, "owner prompt after change", |s| {
+        prompt_row(s) == "owner> " && s.contents().contains("[status=1]")
+    });
+    assert!(!owner.screen().contents().contains("Rodtty $"));
+
+    let other = common::tempdir().unwrap();
+    let interactive = session(other.path(), Config::default());
+    interactive.send(b"PS1='x> '\r".to_vec()).unwrap();
+    wait_screen(&interactive, "interactive prompt", |s| {
+        prompt_row(s) == "x> "
+    });
+    interactive
+        .publish_prompt(prefs(PromptStyle::TwoLine, PromptSymbol::Chevron))
+        .unwrap();
+    run(&interactive, "true", "INTERACTIVE");
+    wait_screen(&interactive, "interactive prompt kept", |s| {
+        prompt_row(s) == "x> "
+    });
+    assert!(!interactive.screen().contents().contains('›'));
 }

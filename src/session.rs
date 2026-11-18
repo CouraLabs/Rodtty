@@ -85,6 +85,9 @@ pub struct TerminalState {
     pub error: Option<String>,
 }
 
+/// A terminal tab's label while its application has set no terminal title.
+pub const FALLBACK_TAB_TITLE: &str = "Terminal";
+
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
 
 pub struct Session {
@@ -100,6 +103,7 @@ pub struct Session {
     shell_pid: Option<u32>,
     jobs: PathBuf,
     job_pids: PathBuf,
+    profile: PathBuf,
 }
 
 impl Session {
@@ -208,6 +212,7 @@ impl Session {
         });
         let jobs = profile.jobs.clone();
         let job_pids = profile.job_pids.clone();
+        let profile_directory = profile.directory.path().to_owned();
         let exit_state = state.clone();
         std::thread::spawn(move || {
             // Windows cannot remove in-use launcher executables. Keep the
@@ -236,6 +241,7 @@ impl Session {
             shell_pid,
             jobs,
             job_pids,
+            profile: profile_directory,
         })
     }
 
@@ -292,6 +298,22 @@ impl Session {
         }
     }
 
+    /// Republish prompt preferences to this shell's private profile; the
+    /// shell applies them when it next draws a prompt. An ended session has
+    /// no prompt left to update.
+    pub fn publish_prompt(&self, prompt: crate::prompt::PromptPreferences) -> Result<()> {
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .exit
+            .is_some()
+        {
+            return Ok(());
+        }
+        prompt.publish(&self.profile)
+    }
+
     pub fn send(&self, bytes: impl Into<Vec<u8>>) -> Result<()> {
         self.input
             .as_ref()
@@ -345,19 +367,21 @@ impl Session {
         read(state.parser.screen())
     }
 
-    /// Current application title, or the directory fallback when the app has none.
+    pub fn with_screen_mut<R>(&self, change: impl FnOnce(&mut vt100::Screen) -> R) -> R {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        change(state.parser.screen_mut())
+    }
+
+    /// The terminal title the running application set, or `Terminal` when it
+    /// set none. The tab's tooltip, not its label, shows the directory.
     pub fn tab_title(&self) -> String {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let events = state.parser.callbacks();
-        if !events.title.is_empty() {
-            return events.title.clone();
+        let title = &state.parser.callbacks().title;
+        if title.is_empty() {
+            FALLBACK_TAB_TITLE.into()
+        } else {
+            title.clone()
         }
-        let cwd = events.cwd.as_ref().unwrap_or(&self.initial_cwd);
-        let folder = cwd
-            .file_name()
-            .unwrap_or_else(|| cwd.as_os_str())
-            .to_string_lossy();
-        format!("›_  Term {folder}")
     }
 
     pub fn cwd(&self) -> PathBuf {

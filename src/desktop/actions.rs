@@ -39,8 +39,6 @@ pub(super) enum AppAction {
     Compare(Comparison),
     CloseWindow,
     Quit,
-    ExplorerRootAddress,
-    ExplorerSetRoot,
     ExplorerTerminalRoot,
     ExplorerReveal,
     ExplorerFocus,
@@ -52,6 +50,7 @@ pub(super) enum AppAction {
     ToggleFollow,
     ToggleHidden,
     ToggleIgnore,
+    SearchFiles,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -226,12 +225,6 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             AppAction::PasteTerminal,
         ),
         (
-            "explorer-root",
-            "Explorer: Choose Root Folder",
-            "",
-            AppAction::ExplorerRootAddress,
-        ),
-        (
             "explorer-terminal-root",
             "Explorer: Use Terminal Folder as Root",
             "",
@@ -266,6 +259,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             "Explorer: Open Parent Folder",
             "",
             AppAction::ExplorerParent,
+        ),
+        (
+            "explorer-search",
+            "Explorer: Search Files",
+            "",
+            AppAction::SearchFiles,
         ),
         (
             "explorer-refresh",
@@ -358,6 +357,12 @@ impl State {
     }
     fn editor_id(&self, id: Option<u64>) -> Option<u64> {
         id.or_else(|| self.workspace.tabs.get(self.workspace.active).map(|t| t.id))
+    }
+    /// Whether an editor pane has real content to draw: an open editor tab or
+    /// a Settings tab. Used to decide whether hiding the terminal would strand
+    /// the workspace behind an empty pane.
+    fn editor_pane_contents(&self) -> bool {
+        !self.workspace.tabs.is_empty() || self.settings_open
     }
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
@@ -557,59 +562,57 @@ impl State {
             AppAction::ActivateTerminal(index) => {
                 if index < self.sessions.len() {
                     tx.blur();
+                    if index != self.active {
+                        self.workspace.note_session_switch();
+                    }
                     self.active = index;
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     self.workspace.layout.terminal = true;
                     self.selection = None;
                 }
             }
-            AppAction::ToggleExplorer => self.toggle_files(),
+            AppAction::ToggleExplorer => self.toggle_files_with_focus(tx),
             AppAction::ShowTerminal => {
                 self.workspace.layout.terminal = true;
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.workspace.explorer_revealed = false;
                 tx.blur();
             }
             AppAction::ToggleTerminal => {
                 self.workspace.layout.terminal = !self.workspace.layout.terminal;
                 if !self.workspace.layout.terminal {
-                    self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
-                    if !self.settings_open && self.workspace.tabs.is_empty() {
-                        self.workspace.show_empty_editor = true;
+                    // The terminal can only hide behind a real editor pane: with no
+                    // editor tab or Settings, it stays visible instead of an empty pane.
+                    if self.editor_pane_contents() {
+                        self.workspace.layout.editor = true;
+                        self.workspace.set_terminal_focus(false);
+                    } else {
+                        self.workspace.layout.terminal = true;
+                        self.message = "Open a file or Settings to hide the terminal".into();
                     }
                 }
             }
             AppAction::ToggleEditor => {
-                if self.workspace.tabs.is_empty()
-                    && !self.settings_open
-                    && !self.workspace.show_empty_editor
-                {
-                    self.workspace.show_empty_editor = true;
+                if self.workspace.tabs.is_empty() && !self.settings_open {
+                    // Nothing to show in the pane: closing the terminal behind an
+                    // empty editor would strand the workspace.
+                    self.message = "Open a file or Settings to fill the editor pane".into();
+                } else if self.workspace.body_width < 880.0 && self.workspace.terminal_focus() {
                     self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
-                } else if self.workspace.body_width < 880.0 && self.workspace.terminal_focus {
-                    self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
+                    self.workspace.set_terminal_focus(false);
                 } else {
                     self.workspace.layout.editor = !self.workspace.layout.editor;
                 }
                 if !self.workspace.layout.editor {
                     self.workspace.layout.terminal = true;
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     tx.blur();
                 }
             }
-            AppAction::FindTerminal => {
-                self.workspace.layout.terminal = true;
-                self.workspace.terminal_focus = true;
-                self.workspace.explorer_revealed = false;
-                self.search = true;
-                tx.focus_when_shown("search-query", true);
-            }
+            AppAction::FindTerminal => self.open_terminal_search(tx),
             AppAction::FindEditor | AppAction::ReplaceEditor => {
                 self.workspace.layout.editor = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 self.workspace.find = true;
                 if let Some(tab) = self.workspace.tabs.get_mut(self.workspace.active) {
                     tab.mode = workspace::View::Edit;
@@ -629,7 +632,7 @@ impl State {
                 self.settings_open = false;
                 self.settings = false;
                 if self.workspace.tabs.is_empty() {
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     tx.blur();
                 } else {
                     self.dispatch(AppAction::EditFile, tx);
@@ -638,7 +641,7 @@ impl State {
             AppAction::ActivateEditor(index) => self.activate_editor(index),
             AppAction::CopyTerminal => self.copy(tx),
             AppAction::PasteTerminal => {
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.workspace.layout.terminal = true;
                 tx.blur();
                 self.request_terminal_paste(tx);
@@ -652,7 +655,7 @@ impl State {
                         .iter()
                         .any(|t| t.id == id && t.mode == workspace::View::Edit)
                     {
-                        self.workspace.terminal_focus = false;
+                        self.workspace.set_terminal_focus(false);
                         self.workspace.layout.editor = true;
                         tx.focus_when_shown(format!("file-editor-{id}"), true);
                     }
@@ -666,9 +669,10 @@ impl State {
             AppAction::EditFile => {
                 if let Some(tab) = self.workspace.tabs.get_mut(self.workspace.active) {
                     tab.mode = workspace::View::Edit;
+                    let id = tab.id;
                     self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
-                    tx.focus_when_shown(format!("file-editor-{}", tab.id), true);
+                    self.workspace.set_terminal_focus(false);
+                    tx.focus_when_shown(format!("file-editor-{id}"), true);
                 }
             }
             AppAction::Compare(mode) => {
@@ -676,29 +680,12 @@ impl State {
                     tab.mode = workspace::View::Diff(mode);
                 }
                 self.workspace.layout.editor = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 tx.blur();
                 self.invalidate_diff(true);
             }
             AppAction::CloseWindow => self.request_action(workspace::Action::Window, tx),
             AppAction::Quit => self.request_action(workspace::Action::Quit, tx),
-            AppAction::ExplorerRootAddress => {
-                self.workspace.layout.explorer = true;
-                tx.focus_when_shown("explorer-address", true);
-            }
-            AppAction::ExplorerSetRoot => {
-                let path = PathBuf::from(&self.workspace.address.text);
-                let path = if path.is_absolute() {
-                    path
-                } else {
-                    self.workspace
-                        .directory
-                        .as_ref()
-                        .unwrap_or(&self.directory)
-                        .join(path)
-                };
-                self.navigate(path);
-            }
             AppAction::ExplorerTerminalRoot => {
                 let cwd = self
                     .active()
@@ -713,7 +700,7 @@ impl State {
             }
             AppAction::ExplorerFocus => {
                 self.workspace.layout.explorer = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 tx.focus_when_shown("file-list", false);
             }
             AppAction::ExplorerCollapseAll => self.collapse_tree(),
@@ -742,6 +729,7 @@ impl State {
             AppAction::ToggleIgnore => {
                 self.save_config(|c| c.explorer.respect_ignore = !c.explorer.respect_ignore);
             }
+            AppAction::SearchFiles => self.open_explorer_search(tx),
         }
     }
 }

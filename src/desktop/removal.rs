@@ -50,7 +50,8 @@ impl State {
                 permanent: false,
             });
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
-            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.workspace
+                .set_terminal_focus(self.workspace.layout.terminal);
             self.message = "Preparing Move to Trash… Terminal input remains available.".into();
             tx.blur();
         }
@@ -111,7 +112,8 @@ impl State {
         }) {
             self.workspace.operation_busy = true;
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
-            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.workspace
+                .set_terminal_focus(self.workspace.layout.terminal);
             self.message = if permanent {
                 "Deleting permanently…"
             } else {
@@ -400,6 +402,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
         }
     };
     content = content
+        .role("alertdialog")
+        .label(title)
+        .description(format!("{path}. {description}"))
         .child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()))
         .child(text(path).font(ui_label()).color(a.muted()).wrap_anywhere())
         .child(
@@ -411,14 +416,12 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
     if let Some(fields) = fields {
         content = content.child(fields);
     }
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
+    Some(motion::modal(
+        a,
+        el().center()
             .px(16.0)
             .py(16.0)
             .child(content.child(buttons)),
-    )
+        Entrance::Dialog,
+    ))
 }

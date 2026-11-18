@@ -163,6 +163,18 @@ pub struct Glyphs {
     pub circle_x: &'static Icon,
     /// A short horizontal rule (card title placeholder).
     pub dash: &'static Icon,
+    /// A gear, for an app's settings.
+    pub gear: &'static Icon,
+    /// A panel with a sidebar column.
+    pub sidebar: &'static Icon,
+    /// A terminal prompt.
+    pub terminal: &'static Icon,
+    /// A page with a pencil, for an editor pane.
+    pub pane_edit: &'static Icon,
+    /// Three dots in a row, for a menu.
+    pub ellipsis: &'static Icon,
+    /// A plus, for adding an item.
+    pub plus: &'static Icon,
 }
 
 /// The type scale. Sizes, weights, line heights and tracking in points.

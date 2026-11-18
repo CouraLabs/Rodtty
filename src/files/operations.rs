@@ -396,7 +396,35 @@ fn rename_exclusive(source: &Path, target: &Path) -> Result<bool> {
         }
         Err(error).context("Move source without replacing destination")
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        use nix::libc;
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let source = CString::new(source.as_os_str().as_bytes())?;
+        let target = CString::new(target.as_os_str().as_bytes())?;
+        // Both C strings stay alive for the call; no pointer escapes it.
+        let result = unsafe {
+            libc::renameatx_np(
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                libc::AT_FDCWD,
+                target.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        if result == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOSYS | libc::EINVAL | libc::ENOTSUP | libc::EXDEV)
+        ) {
+            return Ok(false);
+        }
+        Err(error).context("Move source without replacing destination")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (source, target);
         Ok(false)

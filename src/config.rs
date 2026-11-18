@@ -16,6 +16,9 @@ pub enum ThemeFamily {
     NightOwl,
     Ayu,
     Solarized,
+    RosePine,
+    Kanagawa,
+    Everforest,
 }
 impl ThemeFamily {
     pub const ALL: &[Self] = &[
@@ -28,6 +31,9 @@ impl ThemeFamily {
         Self::NightOwl,
         Self::Ayu,
         Self::Solarized,
+        Self::RosePine,
+        Self::Kanagawa,
+        Self::Everforest,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -40,6 +46,9 @@ impl ThemeFamily {
             Self::NightOwl => "Night Owl",
             Self::Ayu => "Ayu",
             Self::Solarized => "Solarized",
+            Self::RosePine => "Rosé Pine",
+            Self::Kanagawa => "Kanagawa",
+            Self::Everforest => "Everforest",
         }
     }
     pub fn key(self) -> &'static str {
@@ -53,6 +62,9 @@ impl ThemeFamily {
             Self::NightOwl => "nightowl",
             Self::Ayu => "ayu",
             Self::Solarized => "solarized",
+            Self::RosePine => "rosepine",
+            Self::Kanagawa => "kanagawa",
+            Self::Everforest => "everforest",
         }
     }
 }
@@ -115,6 +127,8 @@ pub struct Config {
     pub explorer: ExplorerPreferences,
     pub behavior: BehaviorPreferences,
     pub terminal_clipboard: TerminalClipboardPreferences,
+    /// Applies live: running Rodtty shells pick it up at their next prompt.
+    pub prompt: crate::prompt::PromptPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -147,11 +161,21 @@ pub enum TerminalRightClick {
     Paste,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TerminalClipboardPreferences {
     pub right_click: TerminalRightClick,
+    /// On unless the owner saved `false`: a finished, nonempty terminal
+    /// selection is copied to the clipboard.
     pub copy_on_selection: bool,
+}
+impl Default for TerminalClipboardPreferences {
+    fn default() -> Self {
+        Self {
+            right_click: TerminalRightClick::default(),
+            copy_on_selection: true,
+        }
+    }
 }
 
 impl Default for Config {
@@ -169,6 +193,7 @@ impl Default for Config {
             explorer: ExplorerPreferences::default(),
             behavior: BehaviorPreferences::default(),
             terminal_clipboard: TerminalClipboardPreferences::default(),
+            prompt: Default::default(),
             extra: Default::default(),
         }
     }
@@ -491,4 +516,44 @@ pub enum NewTerminalDirectory {
     Active,
     Explorer,
     Specified,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load(json: &str) -> Config {
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("settings.json"), json).unwrap();
+        Config::load(root.path()).unwrap()
+    }
+
+    #[test]
+    fn copy_on_selection_defaults_on_and_honors_saved_choices() {
+        let root = crate::test_support::tempdir().unwrap();
+        assert!(
+            Config::load(root.path())
+                .unwrap()
+                .terminal_clipboard
+                .copy_on_selection,
+            "no settings.json"
+        );
+        assert!(load("{}").terminal_clipboard.copy_on_selection);
+        assert!(
+            load(r#"{"terminal_clipboard":{"right_click":"paste"}}"#)
+                .terminal_clipboard
+                .copy_on_selection,
+            "the preference itself is absent"
+        );
+        assert!(
+            !load(r#"{"terminal_clipboard":{"copy_on_selection":false}}"#)
+                .terminal_clipboard
+                .copy_on_selection
+        );
+        assert!(
+            load(r#"{"terminal_clipboard":{"copy_on_selection":true}}"#)
+                .terminal_clipboard
+                .copy_on_selection
+        );
+    }
 }

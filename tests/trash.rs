@@ -1,5 +1,8 @@
 use rodtty::files::removal::{RemovalOutcome, RemovalPlan};
 use std::fs;
+
+mod common;
+
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
@@ -8,7 +11,7 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 #[test]
 fn host_trash_preserves_items_and_metadata_in_an_isolated_data_home() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let test = "host_trash_preserves_items_and_metadata_in_an_isolated_data_home";
     if std::env::var_os("RODTTY_TRASH_CHILD").is_none() {
         let output = Command::new(std::env::current_exe().unwrap())
@@ -142,7 +145,7 @@ fn host_trash_preserves_items_and_metadata_in_an_isolated_data_home() {
 
 #[test]
 fn changed_removal_version_retains_files_and_explicit_permanent_removal_checks_again() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("notes.txt");
     fs::write(&source, "first version").unwrap();
     let stale = RemovalPlan::prepare(source.clone()).unwrap();
@@ -172,7 +175,7 @@ fn changed_removal_version_retains_files_and_explicit_permanent_removal_checks_a
 #[cfg(unix)]
 #[test]
 fn permanently_removing_a_directory_link_retains_the_link_target() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let folder = root.path().join("original");
     fs::create_dir(&folder).unwrap();
     fs::write(folder.join("notes.txt"), "retained").unwrap();

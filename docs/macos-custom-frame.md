@@ -1,28 +1,19 @@
-# macOS app-drawn window frame
+# macOS window frame
 
-macOS opts into the same themed six-point frame and header as Linux. The left
-controls are Close, Minimize, and Maximize/Restore, with the same button focus,
-hover, help, and canonical Close Window action as the rest of Rodtty. The native
-window is undecorated: no standard title bar, traffic lights, or visible OS border.
-[Windows](windows-custom-frame.md) uses the shared winit resize adapter and right
-controls; native Windows execution also remains pending.
+macOS keeps its native frame. The traffic lights, window movement, resizing and
+zoom are the system's own, so they match the owner's accent, hover reveals and
+Option-click behaviors, and AppKit answers `is_zoomed` without a style-mask
+round trip. Rodtty draws a full-size content view under a transparent titlebar
+(`App::titlebar(Titlebar::new(44.0))`), keeps its header clear of the lights
+with `Cx::chrome_insets().leading`, and marks the band `.window_drag()`.
 
-The [owned Rune bridge](../vendor/rune/UPSTREAM.md) starts an AppKit resize gesture
-in the actual pressed event. It captures the NSWindow frame, global NSEvent pointer,
-and native minimum/maximum frame size on the main thread. Subsequent winit
-mouseDragged events update NSWindow with setFrame:display:, including while the
-pointer is outside NSView; mouseUp applies the final location and releases the
-gesture. Focus loss cancels tracking. No unsupported winit drag_resize_window call
-is made on macOS. All eight edge/corner directions preserve their opposite edge
-when clamped. AppKit's bottom-left origin is handled directly in global points,
-independent of Retina scale and app zoom. Maximized/fullscreen windows bypass the
-resize band. Header drag, minimize, and maximize/restore retain winit's native
-AppKit operations. App-frame double-click explicitly toggles maximize once,
-regardless of the OS titlebar double-click preference.
+[Windows](windows-custom-frame.md) and Linux keep the app-drawn frame: neither
+has a native frame Rodtty can style, so they draw the six-point border, the
+header and the minimize/maximize/close controls at the trailing edge.
+See [ADR-0009](adr/0009-keep-native-macos-window-frame.md) for why macOS
+diverges, and [ADR-0007](adr/0007-draw-themed-desktop-window-chrome.md) for the
+frame the other two still use.
 
-The pinned winit NSView implementation forwards mouseDragged outside its bounds
-while a button is held and sends a final mouse-motion event before mouseUp. The
-bridge uses that real event path rather than installing a second input monitor.
 
 ## Validation status
 
@@ -32,8 +23,11 @@ actual AppKit adapter, desktop, and tests. For metadata checking on Linux, set
 `CARGO_FEATURE_PURE=1` to select blake3's portable Rust path; no Apple SDK or native
 linking/runtime result is implied. The pinned dependency has existing warnings.
 
-**Native macOS GUI execution remains pending.** No native geometry, resize,
-miniaturization, visual, or macOS session-lifecycle pass is claimed. The runtime
+**Native macOS GUI execution has now been run** on Apple Silicon: the traffic
+lights render, the header band drags and double-clicks the window, the header's
+icon buttons take their presses, and the window's place on the desktop is saved
+and reopened. Resize-by-edge, minimize, and the session-lifecycle pass remain
+unclaimed. The runtime
 suite exercises the actual left-control layout at 640×360 and 2× scale, header
 child exclusion, header drag/double-click actions, Settings access, and a dirty
 custom-close/Cancel that preserves the draft.
@@ -42,8 +36,8 @@ custom-close/Cancel that preserves the draft.
 
 On a macOS GUI host with Xcode command-line tools, build Rodtty and grant the
 invoking terminal Accessibility permission for synthetic Quartz input. The
-harness queries only its launched PID; it uses an isolated RODTTY_HOME. Keep
-TMPDIR on the binary's filesystem so session profiles can hard-link executables.
+harness queries only its launched PID; it uses an isolated RODTTY_HOME. Session
+profiles symlink their utility launchers to the shell binary.
 
 ```sh
 cargo build --locked --bins
@@ -67,13 +61,15 @@ The harness itself has not been compiled or executed on macOS yet.
 Before qualifying the platform, also perform and record these manual checks:
 
 - Inspect whole-window light/dark screenshots at wide and minimum sizes; confirm
-  no native traffic lights, title strip or standard frame, and visible focus/hover.
+  the native traffic lights are present and the header's icons keep their
+  hover/focus states clear of them.
 - Repeat at Retina and non-Retina scales, after changing display scale, and across
   monitors with negative origins. Resize outward beyond the original NSView and
   back inward; release outside it and confirm subsequent clicks work.
 - Set System Settings → Desktop & Dock → titlebar double-click to Minimize, rerun
   the harness, and confirm double-click still only maximizes/restores. Repeat with
-  None/Zoom. Leave the owner's preference as found.
+  None/Zoom. Leave the owner's preference as found. (Only the traffic lights and
+  the band above the header now follow that preference; the header band does not.)
 - Enter native full screen and verify edge/corner drags do not resize; leave full
   screen and verify resizing and restore geometry. Check focus loss mid-gesture.
 - Click Files, Terminal, Editor, Settings and menu controls; verify clicks do not

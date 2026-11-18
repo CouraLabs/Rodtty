@@ -30,8 +30,8 @@ geometry, drives real pointer input, restores prior focus/pointer where exposed,
 then verifies dirty-close cancellation, saving, background terminal output and
 same-session relaunch. It does not inspect unrelated window titles.
 
-Keep temporary session roots on the binary's filesystem (set TMPDIR under
-`target/`) so utility profiles use hard links instead of copying each executable.
+Session profiles symlink their utility launchers to the shell binary, so
+temporary session roots can live on any filesystem.
 
 ```sh
 mkdir -p "$PWD/target/native-tmp"

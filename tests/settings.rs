@@ -1,8 +1,10 @@
 use rodtty::{config::Config, work::Layout};
 
+mod common;
+
 #[test]
 fn preferences_migrate_once_and_workspace_writes_leave_owner_json_untouched() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         root.path().join("config.toml"),
         "history = false\nscrollback = 2000\ndisabled = ['cat']\n",
@@ -34,8 +36,8 @@ fn preferences_migrate_once_and_workspace_writes_leave_owner_json_untouched() {
 
 #[test]
 fn existing_destinations_win_and_unknown_preferences_survive_preference_saves() {
-    let legacy = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let legacy = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(legacy.path().join("config.toml"), "history = false\n").unwrap();
     std::fs::write(
         legacy.path().join("startup.sh"),
@@ -75,8 +77,8 @@ fn existing_destinations_win_and_unknown_preferences_survive_preference_saves() 
 #[test]
 fn migration_launch_reopens_the_old_host_and_new_hosts_also_hold_the_old_lock() {
     use rodtty::instance::Instance;
-    let legacy = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let legacy = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let old_host = Instance::acquire(legacy.path()).unwrap().unwrap();
     assert!(
         Instance::acquire_owner(root.path(), legacy.path())
@@ -107,4 +109,34 @@ fn migration_launch_reopens_the_old_host_and_new_hosts_also_hold_the_old_lock() 
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn prompt_preferences_default_when_absent_and_round_trip_through_settings_json() {
+    use rodtty::prompt::{PromptPreferences, PromptStyle, PromptSymbol};
+    let root = common::tempdir().unwrap();
+    let settings = root.path().join("settings.json");
+    // Files written before prompt preferences existed keep Classic `$`.
+    std::fs::write(&settings, r#"{"history":false}"#).unwrap();
+    let mut config = Config::load(root.path()).unwrap();
+    assert_eq!(config.prompt, PromptPreferences::default());
+    assert_eq!(config.prompt.style, PromptStyle::Classic);
+    assert_eq!(config.prompt.symbol, PromptSymbol::Dollar);
+    config.prompt = PromptPreferences {
+        style: PromptStyle::TwoLine,
+        symbol: PromptSymbol::DoubleChevron,
+    };
+    config.save(root.path()).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        json["prompt"],
+        serde_json::json!({"style": "two_line", "symbol": "double_chevron"})
+    );
+    assert_eq!(Config::load(root.path()).unwrap().prompt, config.prompt);
+    // A partial object keeps the other preference's default.
+    std::fs::write(&settings, r#"{"prompt":{"symbol":"triangle"}}"#).unwrap();
+    let partial = Config::load(root.path()).unwrap().prompt;
+    assert_eq!(partial.style, PromptStyle::Classic);
+    assert_eq!(partial.symbol, PromptSymbol::Triangle);
 }

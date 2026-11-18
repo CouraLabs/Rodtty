@@ -43,6 +43,26 @@ pub fn cleanup_stale(root: &Path) {
     }
 }
 
+/// Points a utility launcher at the shell binary.
+///
+/// On Unix the launcher is a symbolic link, so every exec resolves to the
+/// shell binary's own, single name. Hard links give that one file a name in
+/// every session's profile; macOS then can report an exec under another
+/// session's name, and when that session has already removed its profile,
+/// Gatekeeper's scan of the vanished path fails and the system SIGKILLs the
+/// command. Windows keeps hard links: symbolic links there need privileges.
+fn link_launcher(shell: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let shell = std::path::absolute(shell)?;
+        std::os::unix::fs::symlink(shell, target)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::hard_link(shell, target)
+    }
+}
+
 pub struct PreparedProfile {
     pub directory: tempfile::TempDir,
     pub rc: PathBuf,
@@ -51,6 +71,8 @@ pub struct PreparedProfile {
     pub jobs: PathBuf,
     pub job_pids: PathBuf,
     pub activity_tag: String,
+    /// Prompt data file read by the shell's prompt hook at each prompt.
+    pub prompt: PathBuf,
 }
 
 pub fn quote(path: &Path) -> Result<String> {
@@ -72,7 +94,7 @@ impl PreparedProfile {
         std::fs::create_dir(&bin)?;
         for name in utility_names() {
             let target = bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-            if std::fs::hard_link(shell, &target).is_err() {
+            if link_launcher(shell, &target).is_err() {
                 std::fs::copy(shell, &target)
                     .with_context(|| format!("create launcher {}", target.display()))?;
             }
@@ -85,6 +107,12 @@ impl PreparedProfile {
         let rc = directory.path().join("startup.sh");
         let user_rc = root.join("startup.sh");
         let mut script = String::new();
+        // Rodtty's prompt is assigned before the owner's startup file so an
+        // owner-defined PS1 there wins and ends Rodtty's prompt management.
+        let prompt = directory.path().join(crate::prompt::DATA_FILE);
+        config.prompt.publish(directory.path())?;
+        script.push_str(&crate::prompt::shell_hook(&prompt)?);
+        script.push_str("__rodtty_prompt_update\n");
         if user_rc.is_file() {
             script.push_str(&format!("source {}\n", quote(&user_rc)?));
         }
@@ -116,7 +144,6 @@ impl PreparedProfile {
             "export HISTFILE={}\nHISTSIZE=10000\nHISTFILESIZE=10000\n",
             quote(&history)?
         ));
-        script.push_str("PS1='rodtty:\\w\\$ '\n");
         let history_sync = if config.history {
             // Brush implements append, but not Bash's incremental import (-n).
             // New sessions load the shared file during shell initialization.
@@ -148,8 +175,11 @@ impl PreparedProfile {
             "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]777;rodtty;{activity_tag};A\\007'\n}}\n",
             jobs = quote(&jobs)?, pids = quote(&job_pids)?,
         ));
+        // The status entry runs before every owner entry and returns `$?`
+        // unchanged, so exit-status-aware prompts and owner hooks agree.
+        script.push_str("PROMPT_COMMAND=('__rodtty_prompt_status' \"${PROMPT_COMMAND[@]}\")\n");
         script.push_str(&format!(
-            "PROMPT_COMMAND+=('{history_sync}printf \"\\033]7;file://localhost%s\\007\" \"$PWD\"; __rodtty_prompt_activity')\n"
+            "PROMPT_COMMAND+=('{history_sync}printf \"\\033]7;file://localhost%s\\007\" \"$PWD\"; __rodtty_prompt_activity; __rodtty_prompt_update')\n"
         ));
         std::fs::write(&rc, script)?;
         Ok(Self {
@@ -160,6 +190,7 @@ impl PreparedProfile {
             jobs,
             job_pids,
             activity_tag,
+            prompt,
         })
     }
 }

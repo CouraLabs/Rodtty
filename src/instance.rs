@@ -54,11 +54,18 @@ impl Instance {
     }
 
     fn request_open(root: &Path) -> Result<()> {
+        use std::io::Write;
         let id = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        std::fs::write(
-            root.join("open.request"),
-            format!("{}-{id}", std::process::id()),
-        )?;
+        // Replace the request file instead of rewriting it in place: macOS's
+        // FSEvents reports no event for a rewrite of a file that already
+        // exists, so every launch after the first would go unheard. A rename
+        // over it is reported everywhere, and the host never reads a partial
+        // request.
+        let mut request = tempfile::NamedTempFile::new_in(root)?;
+        write!(request, "{}-{id}", std::process::id())?;
+        request
+            .persist(root.join("open.request"))
+            .map_err(|error| error.error)?;
         Ok(())
     }
 
@@ -101,7 +108,7 @@ mod tests {
     use super::*;
     #[test]
     fn another_launch_requests_reopen_without_owning_sessions() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let host = Instance::acquire(root.path()).unwrap().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let _watcher = host
@@ -109,8 +116,23 @@ mod tests {
                 let _ = tx.send(());
             })
             .unwrap();
-        assert!(Instance::acquire(root.path()).unwrap().is_none());
-        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        // macOS FSEvents can drop changes made while a new stream is still
+        // registering, which a busy test host hits and a real second launch
+        // never does. Relaunch until the host hears one request.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            assert!(Instance::acquire(root.path()).unwrap().is_none());
+            if rx
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_ok()
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "host never heard a reopen request"
+            );
+        }
         drop(host);
         assert!(Instance::acquire(root.path()).unwrap().is_some());
     }

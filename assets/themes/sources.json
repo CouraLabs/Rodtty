@@ -329,5 +329,115 @@
     "revision": "b0a0ad47792ef7e9e70f272798dcd7fce357bd0c",
     "source_path": "license",
     "source_url": "https://github.com/ayu-theme/ayu-colors/blob/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c/license"
+  },
+  {
+    "cache": "everforest-LICENSE",
+    "repository": "sainnhe/everforest",
+    "source_path": "LICENSE",
+    "git_blob_sha": "546ed63436d1f30a9b06115f1b6b0e94a352ae22",
+    "git_tree_sha": "85a86eb62409e3ec88713bff3d1b9d7374e112e4",
+    "source_url": "https://github.com/sainnhe/everforest/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sainnhe/everforest/git/blobs/546ed63436d1f30a9b06115f1b6b0e94a352ae22"
+  },
+  {
+    "cache": "kanagawa-LICENSE",
+    "repository": "rebelot/kanagawa.nvim",
+    "source_path": "LICENSE",
+    "git_blob_sha": "fe87b961cefdbe16a88c80302d2c8f927cadc5d1",
+    "git_tree_sha": "bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3",
+    "source_url": "https://github.com/rebelot/kanagawa.nvim/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rebelot/kanagawa.nvim/git/blobs/fe87b961cefdbe16a88c80302d2c8f927cadc5d1"
+  },
+  {
+    "cache": "rosepine-LICENSE",
+    "repository": "rose-pine/palette",
+    "source_path": "LICENSE",
+    "git_blob_sha": "3162bd90b273c38d733126cb9d31a033dfd47105",
+    "git_tree_sha": "92af52b465ab6e47437aca223c9b8d3009a2023b",
+    "source_url": "https://github.com/rose-pine/palette/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/palette/git/blobs/3162bd90b273c38d733126cb9d31a033dfd47105"
+  },
+  {
+    "cache": "rosepine-palette.json",
+    "repository": "rose-pine/palette",
+    "source_path": "palette.json",
+    "git_blob_sha": "4d98f3b9677fd2fd3da1d2398409f39c4552d41a",
+    "git_tree_sha": "92af52b465ab6e47437aca223c9b8d3009a2023b",
+    "source_url": "https://github.com/rose-pine/palette/blob/HEAD/palette.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/palette/git/blobs/4d98f3b9677fd2fd3da1d2398409f39c4552d41a"
+  },
+  {
+    "cache": "rosepine-alacritty-LICENSE",
+    "repository": "rose-pine/alacritty",
+    "source_path": "LICENSE",
+    "git_blob_sha": "7ef727b73c1d0bc96e753b1072d8b10171103c8f",
+    "git_tree_sha": "04f64444ba8fc7116b82f7939cdcce99992e8171",
+    "source_url": "https://github.com/rose-pine/alacritty/blob/a6f7c8245e5bba639befe52e1e025f84ba8b3ee5/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/alacritty/git/blobs/7ef727b73c1d0bc96e753b1072d8b10171103c8f"
+  },
+  {
+    "cache": "rosepine-alacritty.toml",
+    "repository": "rose-pine/alacritty",
+    "source_path": "dist/rose-pine.toml",
+    "git_blob_sha": "ff757b26764debbc8251d08365f95c261f19a3f4",
+    "git_tree_sha": "04f64444ba8fc7116b82f7939cdcce99992e8171",
+    "source_url": "https://github.com/rose-pine/alacritty/blob/a6f7c8245e5bba639befe52e1e025f84ba8b3ee5/dist/rose-pine.toml",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/alacritty/git/blobs/ff757b26764debbc8251d08365f95c261f19a3f4"
+  },
+  {
+    "cache": "rosepine-dawn-alacritty.toml",
+    "repository": "rose-pine/alacritty",
+    "source_path": "dist/rose-pine-dawn.toml",
+    "git_blob_sha": "0e0444ad8c2cd17f4e73727173a5370acf5eab20",
+    "git_tree_sha": "04f64444ba8fc7116b82f7939cdcce99992e8171",
+    "source_url": "https://github.com/rose-pine/alacritty/blob/a6f7c8245e5bba639befe52e1e025f84ba8b3ee5/dist/rose-pine-dawn.toml",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/alacritty/git/blobs/0e0444ad8c2cd17f4e73727173a5370acf5eab20"
+  },
+  {
+    "cache": "kanagawa-themes.lua",
+    "repository": "rebelot/kanagawa.nvim",
+    "source_path": "lua/kanagawa/themes.lua",
+    "git_blob_sha": "7d2a78814c028999a2c6ec5fab20e7779190b1d4",
+    "git_tree_sha": "c0c437f112c00bcc7e28a7477ea0dd9c1f83dd28",
+    "source_url": "https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/lua/kanagawa/themes.lua",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rebelot/kanagawa.nvim/git/blobs/7d2a78814c028999a2c6ec5fab20e7779190b1d4"
+  },
+  {
+    "cache": "kanagawa-colors.lua",
+    "repository": "rebelot/kanagawa.nvim",
+    "source_path": "lua/kanagawa/colors.lua",
+    "git_blob_sha": "a3ddc5a891ac7ebc1b6852c920c6769a7ec63014",
+    "git_tree_sha": "c0c437f112c00bcc7e28a7477ea0dd9c1f83dd28",
+    "source_url": "https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/lua/kanagawa/colors.lua",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rebelot/kanagawa.nvim/git/blobs/a3ddc5a891ac7ebc1b6852c920c6769a7ec63014"
+  },
+  {
+    "cache": "everforest.vim",
+    "repository": "sainnhe/everforest",
+    "source_path": "colors/everforest.vim",
+    "git_blob_sha": "9e1dfdb0c151a2cfc0f585d5916be49665899add",
+    "git_tree_sha": "1d00afb3eb1e49a41a8185bcf326b09ba50e6c21",
+    "source_url": "https://github.com/sainnhe/everforest/blob/85a86eb62409e3ec88713bff3d1b9d7374e112e4/colors/everforest.vim",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sainnhe/everforest/git/blobs/9e1dfdb0c151a2cfc0f585d5916be49665899add"
+  },
+  {
+    "cache": "everforest-autoload.vim",
+    "repository": "sainnhe/everforest",
+    "source_path": "autoload/everforest.vim",
+    "git_blob_sha": "9f86a44112c202e18ab033d3ec4ec293a9b0b744",
+    "git_tree_sha": "1d00afb3eb1e49a41a8185bcf326b09ba50e6c21",
+    "source_url": "https://github.com/sainnhe/everforest/blob/85a86eb62409e3ec88713bff3d1b9d7374e112e4/autoload/everforest.vim",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sainnhe/everforest/git/blobs/9f86a44112c202e18ab033d3ec4ec293a9b0b744"
   }
 ]

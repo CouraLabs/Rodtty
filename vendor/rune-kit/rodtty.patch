@@ -1,6 +1,25 @@
 --- a/src/kit.rs
 +++ b/src/kit.rs
-@@ -228,6 +228,10 @@
+@@ -163,6 +163,18 @@
+     pub circle_x: &'static Icon,
+     /// A short horizontal rule (card title placeholder).
+     pub dash: &'static Icon,
++    /// A gear, for an app's settings.
++    pub gear: &'static Icon,
++    /// A panel with a sidebar column.
++    pub sidebar: &'static Icon,
++    /// A terminal prompt.
++    pub terminal: &'static Icon,
++    /// A page with a pencil, for an editor pane.
++    pub pane_edit: &'static Icon,
++    /// Three dots in a row, for a menu.
++    pub ellipsis: &'static Icon,
++    /// A plus, for adding an item.
++    pub plus: &'static Icon,
+ }
+ 
+ /// The type scale. Sizes, weights, line heights and tracking in points.
+@@ -228,6 +240,10 @@
  
  #[derive(Clone, Debug)]
  pub struct Kit {
@@ -11,7 +30,7 @@
      pub dark: bool,
      pub c: Palette,
      pub elevation: Elevation,
-@@ -278,7 +282,7 @@
+@@ -278,7 +294,7 @@
      /// The text selection highlight of the kit's fields. Pass it to `El::selection_color` on
      /// `El::selectable` text so its selection looks the same.
      pub fn selection(&self) -> Color {
@@ -41,3 +60,237 @@
          let c = &k.c;
          let text_l = c.text_base.to_oklab()[0];
          let (l, chroma) =
+--- a/src/glyphs.rs
++++ b/src/glyphs.rs
+@@ -163,6 +163,110 @@
+         r#"<circle cx="6.5" cy="7.5" r="1" fill="currentColor"/><path d="M3.5 12.5L6.5 9.5L8 11L9.5 9.5L12.5 12.5" stroke="currentColor" stroke-linejoin="round"/>"#
+     ),
+ };
++/// A gear, for an app's settings.
++pub static GEAR: Icon = Icon {
++    name: "kit-gear",
++    view: 16.0,
++    body: r#"<circle cx="8" cy="8" r="2.25" stroke="currentColor"/><path d="M8 1.75V3.25M8 12.75V14.25M1.75 8H3.25M12.75 8H14.25M3.58 3.58L4.64 4.64M11.36 11.36L12.42 12.42M12.42 3.58L11.36 4.64M4.64 11.36L3.58 12.42" stroke="currentColor" stroke-linecap="round"/>"#,
++};
++/// A panel with a sidebar column, for showing and hiding an explorer.
++pub static SIDEBAR: Icon = Icon {
++    name: "kit-sidebar",
++    view: 16.0,
++    body: r#"<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" stroke="currentColor"/><path d="M6 2.75V13.25" stroke="currentColor"/>"#,
++};
++/// A terminal prompt, for a terminal pane.
++pub static TERMINAL: Icon = Icon {
++    name: "kit-terminal",
++    view: 16.0,
++    body: concat!(
++        r#"<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" stroke="currentColor"/>"#,
++        r#"<path d="M4.5 6L6.5 8L4.5 10M8.5 10H11.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#
++    ),
++};
++/// A page with a pencil, for an editor pane.
++pub static PANE_EDIT: Icon = Icon {
++    name: "kit-pane-edit",
++    view: 16.0,
++    body: concat!(
++        r#"<path d="M9 2.5H4.5A1.5 1.5 0 0 0 3 4V13A1.5 1.5 0 0 0 4.5 14.5H11A1.5 1.5 0 0 0 12.5 13V8.5" stroke="currentColor" stroke-linecap="round"/>"#,
++        r#"<path d="M11.5 2.5L13.5 4.5L9 9H7V7L11.5 2.5Z" stroke="currentColor" stroke-linejoin="round"/>"#
++    ),
++};
++/// Three dots in a row, for a menu.
++pub static ELLIPSIS: Icon = Icon {
++    name: "kit-ellipsis",
++    view: 16.0,
++    body: r#"<circle cx="3.5" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor"/>"#,
++};
++/// A plus, for adding an item.
++pub static PLUS: Icon = Icon {
++    name: "kit-plus",
++    view: 16.0,
++    body: r#"<path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" stroke-linecap="round"/>"#,
++};
++/// An up arrow, for opening the parent folder.
++pub static ARROW_UP: Icon = Icon {
++    name: "kit-arrow-up",
++    view: 16.0,
++    body: r#"<path d="M8 12.5V3.5M4.5 7L8 3.5L11.5 7" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
++};
++/// A down arrow, for jumping to the next change.
++pub static ARROW_DOWN: Icon = Icon {
++    name: "kit-arrow-down",
++    view: 16.0,
++    body: r#"<path d="M8 3.5V12.5M4.5 9L8 12.5L11.5 9" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
++};
++/// A circular refresh arrow.
++pub static REFRESH: Icon = Icon {
++    name: "kit-refresh",
++    view: 16.0,
++    body: r#"<path d="M13.2 8A5.2 5.2 0 1 1 8 2.8C10 2.8 11.7 3.9 12.6 5.5M13.2 2.6V5.6H10.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
++};
++/// A location crosshair, for following the terminal's folder.
++pub static CROSSHAIR: Icon = Icon {
++    name: "kit-crosshair",
++    view: 16.0,
++    body: r#"<circle cx="8" cy="8" r="2" stroke="currentColor"/><path d="M8 1.5V3.5M8 12.5V14.5M1.5 8H3.5M12.5 8H14.5" stroke="currentColor" stroke-linecap="round"/>"#,
++};
++/// An eye, for showing hidden files.
++pub static EYE_FILES: Icon = Icon { name: "kit-eye-files", view: 16.0, body: EYE.body };
++/// A slash, for Git ignore rules.
++pub static FILTER: Icon = Icon {
++    name: "kit-filter",
++    view: 16.0,
++    body: r#"<path d="M2.5 3.5H13.5L9.5 8.2V12.5L6.5 13.5V8.2L2.5 3.5Z" stroke="currentColor" stroke-linejoin="round"/>"#,
++};
++/// A soft-back/return arrow, for going back to the terminal.
++pub static ARROW_LEFT: Icon = Icon {
++    name: "kit-arrow-left",
++    view: 16.0,
++    body: r#"<path d="M13.5 8H2.5M7 3.5L2.5 8L7 12.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
++};
++/// A pencil, for the editor's Edit mode.
++pub static PENCIL: Icon = Icon {
++    name: "kit-pencil",
++    view: 16.0,
++    body: r#"<path d="M2.5 13.5L3.2 10.5L11 2.7A1.4 1.4 0 0 1 13 2.7L13.3 3A1.4 1.4 0 0 1 13.3 5L5.5 12.8L2.5 13.5Z" stroke="currentColor" stroke-linejoin="round"/>"#,
++};
++/// A floppy disk, for saving.
++pub static SAVE: Icon = Icon {
++    name: "kit-save",
++    view: 16.0,
++    body: r#"<path d="M2.5 2.5H11.5L13.5 4.5V13.5H2.5V2.5Z" stroke="currentColor" stroke-linejoin="round"/><path d="M5 2.5V6H10.5V2.5M5 13.5V10H11V13.5" stroke="currentColor" stroke-linejoin="round"/>"#,
++};
++/// A Git-style compare (split arrows), for diff modes.
++pub static COMPARE: Icon = Icon {
++    name: "kit-compare",
++    view: 16.0,
++    body: r#"<path d="M5 2.5V13.5M11 2.5V13.5M2.5 5H5M11 9H13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
++};
++/// Rendered text, for a markdown preview.
++pub static PREVIEW_TEXT: Icon = Icon {
++    name: "kit-preview-text",
++    view: 16.0,
++    body: r#"<path d="M3 3.5H13M3 6.5H10M3 9.5H13M3 12.5H8" stroke="currentColor" stroke-linecap="round"/>"#,
++};
+ 
+ pub const DEFAULT: Glyphs = Glyphs {
+     check: &CHECK,
+@@ -181,4 +285,10 @@
+     eye_off: &EYE_OFF,
+     circle_x: &CIRCLE_X,
+     dash: &DASH,
++    gear: &GEAR,
++    sidebar: &SIDEBAR,
++    terminal: &TERMINAL,
++    pane_edit: &PANE_EDIT,
++    ellipsis: &ELLIPSIS,
++    plus: &PLUS,
+ };
+--- a/src/diff/view.rs
++++ b/src/diff/view.rs
+@@ -190,6 +190,8 @@
+     separator: Color,
+     /// The advance of a mono column.
+     adv: f32,
++    /// The `+`/`−` column beside the line numbers: one mono column with room either side.
++    sign_w: f32,
+     bg: Color,
+     text: Color,
+     muted: Color,
+@@ -245,6 +247,7 @@
+             separator_text: TextStyle { size: font.size, line_height: GAP_H, ..k.ty.ui },
+             separator: tint(bg, if dark { c.white } else { Color::BLACK }, if dark { 0.05 } else { 0.02 }),
+             adv: 0.6 * font.size,
++            sign_w: (0.6 * font.size + 8.0).ceil(),
+             bg,
+             text: c.text_base,
+             muted: c.text_muted,
+@@ -340,7 +343,7 @@
+     fn content_width(&self, st: &DiffState) -> f32 {
+         let l = &self.look;
+         let digits = (0..st.files().len()).map(|f| st.digits(f)).max().unwrap_or(3);
+-        BAR + 2.0 * l.number_w(digits) + st.columns() as f32 * l.adv + CODE_PAD.0 + CODE_PAD.1
++        BAR + 2.0 * l.number_w(digits) + l.sign_w + st.columns() as f32 * l.adv + CODE_PAD.0 + CODE_PAD.1
+     }
+ 
+     /// The most a full-width part of a row (a header, an annotation) spans: the viewport, not
+@@ -474,7 +477,8 @@
+             .fill(l.gutter_fill(c.kind, selected))
+             .child(self.bar(c.kind))
+             .child(self.number(st, i, f, c.old, Side::Old, c.kind, selected, digits).key("no"))
+-            .child(self.number(st, i, f, c.new, Side::New, c.kind, selected, digits).key("nn"));
++            .child(self.number(st, i, f, c.new, Side::New, c.kind, selected, digits).key("nn"))
++            .child(self.sign(c.kind, selected, false));
+         if self.d.on_comment.is_some() {
+             let at = c.new.map(|n| LineRef::new(Side::New, n)).or(c.old.map(|n| LineRef::new(Side::Old, n)));
+             if let Some(at) = at {
+@@ -525,6 +529,7 @@
+                 .label(cell.label())
+                 .child(self.bar(kind))
+                 .child(self.number(st, i, f, n, side, kind, selected, digits).key("n"))
++                .child(self.sign(kind, selected, true))
+                 .child(self.code(st, f, &cell, copy, side, &st.keys[i]).key("code"));
+             if let (Some(n), true) = (n, self.d.on_comment.is_some()) {
+                 h = h.child(self.plus(f, LineRef::new(side, n)).absolute(BAR + l.number_w(digits) - 10.0, 2.0));
+@@ -543,6 +548,24 @@
+         }
+     }
+ 
++    /// The `+` or `−` (U+2212) beside an added or removed line's numbers, so a line's change
++    /// reads without its colour; an unchanged line keeps the column empty. Hidden from
++    /// assistive technology, whose row label already says "added" or "removed".
++    fn sign(&self, kind: LineKind, selected: bool, fill: bool) -> El {
++        let l = &self.look;
++        let mut c = row().key("sign").w(l.sign_w).min_h(LINE_H).self_stretch().justify_center().items_start().a11y_hidden();
++        if fill {
++            c = c.fill(l.gutter_fill(kind, selected));
++        }
++        let mark = match kind {
++            LineKind::Added => "+",
++            LineKind::Removed => "\u{2212}",
++            LineKind::Context => return c,
++        };
++        let color = if selected { l.text } else { l.tints(kind).map_or(l.text, |t| t.count) };
++        c.child(text(mark).font(l.font).color(color))
++    }
++
+     fn bar(&self, kind: LineKind) -> El {
+         let b = col().key("bar").w(BAR).self_stretch().a11y_hidden();
+         match self.look.tints(kind) {
+@@ -662,7 +685,7 @@
+ 
+     fn gutter_w(&self, st: &DiffState, f: usize) -> f32 {
+         let n = self.look.number_w(st.digits(f));
+-        BAR + if st.mode() == DiffMode::Unified { 2.0 * n } else { n }
++        BAR + self.look.sign_w + if st.mode() == DiffMode::Unified { 2.0 * n } else { n }
+     }
+ 
+     /// The unchanged lines between two hunks, folded: buttons to show more, and the next
+--- a/src/tree/view.rs
++++ b/src/tree/view.rs
+@@ -116,6 +116,9 @@
+         if r.cursor && r.multi {
+             e = e.outline(1.0, -1.0, c.border_focus);
+         }
++        if let Some(mark) = style.selected_mark.filter(|_| r.selected) {
++            e = e.child(el().key("selected-mark").pin(Some(0.0), Some(5.0), None, Some(5.0)).w(2.0).radius(1.0).fill(mark).a11y_hidden());
++        }
+         if style.guides {
+             for level in 0..r.depth {
+                 let x = pad + level as f32 * style.indent + chevron_w * 0.5 - 0.5;
+@@ -209,6 +212,9 @@
+     pub guides: bool,
+     pub guide: Color,
+     pub selected: Color,
++    /// A bar along a selected row's leading edge in this colour, so selection reads beyond
++    /// the fill's quiet change (none by default).
++    pub selected_mark: Option<Color>,
+     hover: Color,
+     gap: f32,
+     radius: f32,
+@@ -233,6 +239,7 @@
+             guides: true,
+             guide: k.c.border_muted,
+             selected: k.alpha(k.c.text_accent, if k.dark { 0.24 } else { 0.2 }),
++            selected_mark: None,
+             hover: k.c.hover,
+             gap: 4.0,
+             radius: k.radius.sm,

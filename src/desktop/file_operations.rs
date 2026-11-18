@@ -143,7 +143,7 @@ impl State {
             };
             self.workspace.operation_error = None;
             tx.blur();
-            self.workspace.terminal_focus = true;
+            self.workspace.set_terminal_focus(true);
             self.message = "Working on files…".into();
         }
     }
@@ -264,7 +264,8 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .radius(8.0)
             .fill(a.panel())
             .border(1.0, a.hover_bg())
-            .shadow(6.0, 20.0, a.scrim());
+            .shadow(6.0, 20.0, a.scrim())
+            .enters(a, Entrance::Menu(motion::FROM_TOP_LEADING));
         for (key, title, action) in [
             (
                 "context-open-file",
@@ -295,18 +296,22 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             );
         }
         return Some(
-            el().absolute(0.0, 0.0).w_full().h_full().child(
-                menu.absolute(
-                    x.clamp(8.0, (s.workspace.operation_viewport.0 - 228.0).max(8.0)),
-                    y.clamp(
-                        8.0,
-                        (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 7.0
-                            - 28.0)
-                            .max(8.0),
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .enters(a, Entrance::Holder)
+                .child(
+                    menu.absolute(
+                        x.clamp(8.0, (s.workspace.operation_viewport.0 - 228.0).max(8.0)),
+                        y.clamp(
+                            8.0,
+                            (s.workspace.operation_viewport.1
+                                - (ui_label().size * 1.5 + 8.0).max(29.0) * 7.0
+                                - 28.0)
+                                .max(8.0),
+                        ),
                     ),
                 ),
-            ),
         );
     }
     let Some(Pending::Operation(prompt)) = &s.pending else {
@@ -342,7 +347,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::SaveAs { .. } => ("Save work as", "Save As"),
                 FileOperation::Move { .. } => ("Rename or move item", "Move"),
             };
-            content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
+            content = content
+                .label(title)
+                .child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
             if let FileOperation::Copy { source } | FileOperation::Move { source } = operation {
                 content = content.child(
                     text(format!("From {}", source.display()))
@@ -367,7 +374,14 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             );
         }
         OperationPrompt::Collision(collision) => {
-            content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
+            content = content
+                .role("alertdialog")
+                .label("An item already exists")
+                .description(format!(
+                    "{}. Replace removes the existing item after the new item is ready. Keep Both uses a separate, available name.",
+                    collision.request.target.display()
+                ))
+                .child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
                 .child(text(collision.request.target.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
                 .child(text("Replace removes the existing item after the new item is ready. Keep Both uses a separate, available name.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {
@@ -382,16 +396,14 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 }));
         }
     }
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
+    Some(motion::modal(
+        a,
+        el().center()
             .px(16.0)
             .py(16.0)
             .child(content.child(buttons)),
-    )
+        Entrance::Dialog,
+    ))
 }
 
 /// Labelled renderer scene, using a temporary sample rather than any owner file.
