@@ -103,7 +103,8 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         .w_full()
                         .min_w(0.0)
                         .grow(1.0)
-                        .h(30.0)
+                        .px(8.0)
+                        .py(5.0)
                         .color(a.ink())
                         .placeholder("Search settings", a.muted())
                         // A thin border marks the field's bounds against the page.
@@ -588,7 +589,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                         }))
                         .child(text_input(&s.behavior_directory, ui_label())
                             .caret(a.accent(), a.selection()).key("specified-directory")
-                            .label("Specified terminal folder").single_line().w_full().h(30.0).color(a.ink())
+                            .label("Specified terminal folder").single_line().w_full().px(8.0).py(5.0).color(a.ink())
                             .placeholder("Absolute folder path", a.muted())
                             .border(1.0, a.kit().c.border_base)
                             .radius(6.0)
@@ -1039,8 +1040,10 @@ fn prompt_style_row(s: &State, a: &Appearance) -> El {
     let mut choices = row()
         .role("radiogroup")
         .label("Prompt style")
+        .w_full()
         .gap(6.0)
-        .scroll_x();
+        // Wrap rather than clip the last choice when Settings is narrow.
+        .flex_wrap();
     for &style in PromptStyle::ALL {
         choices = choices.child(radio_button(
             a,
@@ -1085,8 +1088,10 @@ fn prompt_symbol_row(s: &State, a: &Appearance) -> El {
     let mut choices = row()
         .role("radiogroup")
         .label("Prompt symbol")
+        .w_full()
         .gap(6.0)
-        .scroll_x();
+        // Wrap rather than clip the last choice when Settings is narrow.
+        .flex_wrap();
     for &symbol in PromptSymbol::ALL {
         let on = prefs.symbol == symbol;
         choices = choices.child(state_button(
@@ -1253,6 +1258,64 @@ mod tests {
                 .all(|(a, b)| (a - b).abs() < 0.0001),
             "canvas {actual:?}, expected {hex}"
         );
+    }
+    #[test]
+    fn prompt_choices_wrap_inside_a_narrow_settings_pane_instead_of_clipping() {
+        use crate::desktop::fonts::BUNDLED;
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        // The default 1080 pt workspace gives Settings about 450 pt, where the
+        // five prompt styles used to run past the section and clip "Two-line".
+        for (size, share) in [((1080.0, 720.0), 0.42), ((1200.0, 800.0), 0.24)] {
+            let root = crate::test_support::tempdir().unwrap();
+            let mut state = State::with_root(root.path().into());
+            state.workspace.layout.editor_share = share;
+            state.open_settings(&mut Tx::default());
+            state.settings_query.replace_text("prompt");
+            let mut rt = rune::Runtime::with_text(
+                state,
+                view,
+                size,
+                rune::Env {
+                    system_dark: true,
+                    scale: 1.0,
+                },
+                rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+            );
+            for _ in 0..3 {
+                rt.frame(0.0);
+                rt.settle_all();
+            }
+            let elements = rt.elements();
+            let rect = |key: &str| {
+                elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                    .unwrap_or_else(|| panic!("missing {key}"))
+            };
+            let section = rect("settings-section-Terminal").rect;
+            let right = |r: [f32; 4]| r[0] + r[2];
+            let keys = crate::prompt::PromptStyle::ALL
+                .iter()
+                .map(|style| format!("prompt-style-{}", style.key()))
+                .chain(
+                    crate::prompt::PromptSymbol::ALL
+                        .iter()
+                        .map(|symbol| format!("prompt-symbol-{}", symbol.key())),
+                );
+            for key in keys {
+                let e = rect(&key);
+                assert!(
+                    right(e.rect) <= right(section) + 0.5,
+                    "{size:?} {key} stays inside its section: {:?} in {section:?}",
+                    e.rect
+                );
+                assert!(
+                    (e.visible[2] - e.rect[2]).abs() < 0.5,
+                    "{size:?} {key} is not clipped: {:?}",
+                    e.visible
+                );
+            }
+        }
     }
     #[test]
     fn file_preferences_reset_individually_without_changing_other_choices() {
@@ -2006,7 +2069,15 @@ mod tests {
         if state.sessions.is_empty() {
             state.new_tab();
         }
-        let dir = root.path().display().to_string();
+        // Bash's `\w` shows a directory under $HOME as `~/…`; the README gate
+        // keeps TMPDIR under target/, which is inside $HOME for most checkouts.
+        let dir = match std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .and_then(|home| root.path().strip_prefix(home).ok().map(|p| p.to_owned()))
+        {
+            Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+            _ => root.path().display().to_string(),
+        };
         fn terminal(rt: &rune::Runtime<State>) -> &Session {
             rt.state.active().unwrap()
         }

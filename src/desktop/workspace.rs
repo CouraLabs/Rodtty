@@ -2629,7 +2629,8 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                                 .w_full()
                                 .shrink()
                                 .grow(1.0)
-                                .h(28.0)
+                                .px(8.0)
+                                .py(4.0)
                                 .color(a.ink())
                                 .placeholder("Find text", a.muted())
                                 .border(1.0, a.kit().c.border_base)
@@ -2655,7 +2656,8 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                                 .w_full()
                                 .shrink()
                                 .grow(1.0)
-                                .h(28.0)
+                                .px(8.0)
+                                .py(4.0)
                                 .color(a.ink())
                                 .placeholder("Replace with", a.muted())
                                 .border(1.0, a.kit().c.border_base)
@@ -2790,11 +2792,14 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                         s.workspace.diff.next_hunk(true, tx);
                     },
                 )),
-            text(&workspace.diff_label)
-                .key("diff-label")
-                .font(ui_style(10.0, 400.0))
-                .color(a.muted())
-                .wrap(),
+            // Inset like the controls above, not flush with the pane edge.
+            row().w_full().px(10.0).child(
+                text(&workspace.diff_label)
+                    .key("diff-label")
+                    .font(ui_style(10.0, 400.0))
+                    .color(a.muted())
+                    .wrap(),
+            ),
         ];
         if let Some(error) = &workspace.diff_error {
             diff_below.push(
@@ -4052,6 +4057,11 @@ mod tests {
         );
         assert!(bottom(controls) <= label[1] + 0.5);
         assert!(bottom(label) <= status[1] + 0.5);
+        let first_layout = rect(&runtime, "diff-auto");
+        assert!(
+            (label[0] - first_layout[0]).abs() < 0.5,
+            "the label's text starts under the first control: {label:?} {first_layout:?}"
+        );
         for key in ["diff-prev", "diff-next", "diff-current"] {
             assert!(
                 rect(&runtime, key)[1] >= bottom(viewport),

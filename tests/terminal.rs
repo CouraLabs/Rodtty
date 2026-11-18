@@ -726,7 +726,15 @@ fn prefs(style: PromptStyle, symbol: PromptSymbol) -> PromptPreferences {
 #[test]
 fn prompt_preferences_apply_to_a_running_shell_at_its_next_prompt() {
     let root = common::tempdir().unwrap();
-    let dir = root.path().display().to_string();
+    // Bash's `\w` shows a directory under $HOME as `~/…`; the README gate
+    // keeps TMPDIR under target/, which is inside $HOME for most checkouts.
+    let dir = match std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .and_then(|home| root.path().strip_prefix(home).ok().map(|p| p.to_owned()))
+    {
+        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        _ => root.path().display().to_string(),
+    };
     let terminal = session(root.path(), Config::default());
     wait_screen(&terminal, "default classic prompt", |s| {
         prompt_row(s) == format!("rodtty:{dir}$ ")

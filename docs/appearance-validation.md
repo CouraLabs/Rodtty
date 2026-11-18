@@ -148,3 +148,63 @@ These marks needed two vendored Rune Kit edits:
 
 - `diff/view.rs` adds the sign column.
 - `tree/view.rs` adds `TreeStyle::selected_mark`.
+
+## Desktop UX qualification (2026-11-18, macOS)
+
+Run on macOS 27.2.1 (build 26B131), Apple Silicon (aarch64), AppKit, in a
+logged-in session, against `81dd43a` plus the uncommitted fixes listed below.
+Every app run used an isolated `RODTTY_HOME`, `TMPDIR` and matching
+`GIT_CEILING_DIRECTORIES` under `target/qualification/`.
+
+**Rendered.** 138 offscreen frames at 1×, kept locally under
+`target/qualification/ux/frames` with hashes in `ux/matrix.json`. Each of
+Catppuccin Latte, Catppuccin Mocha, Solarized Light and Everforest Dark was
+captured at 1080×720 and 640×720 for 17 variants: `workspace`, `preview`,
+`tree` (file sizes, Empty folder, Git marks; compact Files overlay at 640),
+root-row hover (`…` overflow), `diff`, `real-diff`, Settings (default, prompt,
+fonts, theme), `palette`, `file-collision`, `preview-tabs` (Terminal tab
+labels, italic temporary tab), explorer menu, and three new tooling scenes:
+`terminal-search` (search highlights), `search-files` (Search Files results)
+and `markdown` (README opened as a temporary tab, rendered by default). Two
+more frames show the full root-row controls in a widened explorer. All frames
+were inspected.
+
+**Defects fixed.**
+
+- Bordered single-line fields had no inner padding, so text and caret
+  touched the top-left border. Affected fields: Settings search, specified
+  terminal folder, Search Files, Find in Terminal, and editor Find/Replace.
+  They now use 8 pt horizontal and 4–5 pt vertical padding, and their height
+  follows the UI font size.
+- The prompt-style radio row clipped "Two-line" at the default 1080 pt
+  workspace. The prompt-style and symbol choices now wrap. Regression test:
+  `prompt_choices_wrap_inside_a_narrow_settings_pane_instead_of_clipping`.
+- The diff label sat flush with the editor pane edge. It is now inset under
+  the layout controls; the assertion was added to
+  `file_actions_diff_controls_and_status_sit_below_content_with_tabs_above`.
+- Tooling only: the `preview-tabs` scene re-rooted its settings and ignored
+  the owner's appearance. It now carries `settings.json` into its fixture.
+- Tests only: both running-shell prompt tests expected an absolute directory.
+  Bash shows `~/…` when the README's target-local `TMPDIR` is under `$HOME`.
+
+**Native macOS checks** (all `passed: true`, no false fields).
+`--native-check`, `--workspace-check`, `--font-check` (581 families,
+fullscreen PTY resize, live sizes and families) and `--session-policy-check`
+(all 14 policy probes, 3 new-tab directory modes). `--trash-check` was not
+run because it needs a disposable account.
+
+**Gates.** `cargo fmt --all -- --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, and
+`cargo test --locked --all-targets -- --test-threads=1 --include-ignored`
+(265 passed, 0 failed, 0 ignored, real Vim included) all passed.
+
+**Not verified:**
+
+- live VoiceOver
+- live Finder paste by a human
+- the reduced-motion visual check
+- Windows Explorer file paste
+- Linux file-manager paste
+- Windows and Linux native runs
+- macOS host Trash (`--trash-check`)
+- in this pass, the other nine families, Solarized Dark and Everforest Light

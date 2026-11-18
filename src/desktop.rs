@@ -1368,6 +1368,11 @@ fn tabs_preview(state: &mut State) {
     let Some(shell) = state.shell.clone() else {
         return;
     };
+    // Keep the owner's appearance: the reloaded settings come from this root.
+    let _ = std::fs::copy(
+        state.root.join("settings.json"),
+        fixture.path().join("settings.json"),
+    );
     state.root = fixture.path().to_owned();
     state.directory = state.root.clone();
     let explorer_root = state.root.join("Rodtty");
@@ -1495,6 +1500,34 @@ fn file_collision_preview(state: &mut State) {
     workspace_preview(state);
     file_operations::collision_demo(state);
 }
+/// Tooling-only: Search Files results for "main" in the --cwd folder.
+fn search_files_preview(state: &mut State) {
+    tree_preview(state);
+    state.explorer_search.open = true;
+    state.explorer_search.query = rune::TextEdit::new("main");
+    let started = std::time::Instant::now();
+    while state.explorer_search.summary.is_none() && started.elapsed().as_secs() < 10 {
+        state.poll_explorer_search(&mut Tx::default());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+/// Tooling-only: README.md from the --cwd folder opened as a temporary tab.
+fn markdown_preview(state: &mut State) {
+    tree_preview(state);
+    state.workspace.worker = Some(crate::work::Worker::new(state.wake.clone()));
+    let readme = state.directory.join("README.md");
+    state.open_file_with_preview(readme, true);
+    let started = std::time::Instant::now();
+    while state.workspace.tabs.is_empty() && started.elapsed().as_secs() < 10 {
+        state.workspace_poll(&mut Tx::default());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+fn terminal_search_preview(state: &mut State) {
+    preview(state);
+    state.workspace.set_terminal_focus(true);
+    state.terminal_search.open = true;
+}
 fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
@@ -1564,6 +1597,9 @@ pub fn run() -> Result<()> {
             ("tabs-dark-editor", tabs_dark_editor_preview),
             ("settings", settings_preview),
             ("behavior", behavior_preview),
+            ("terminal-search", terminal_search_preview),
+            ("search-files", search_files_preview),
+            ("markdown", markdown_preview),
         ],
         fonts: fonts::BUNDLED,
         families: ("Geist", "Geist Mono"),
