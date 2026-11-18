@@ -1,5 +1,6 @@
 pub mod operations;
 pub mod removal;
+pub mod search;
 use anyhow::{Context, Result, bail};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -287,6 +288,13 @@ pub struct TreeListing {
     pub listed: Vec<PathBuf>,
 }
 
+/// Whether the explorer hides an entry: a dot-named one unless Hidden Files is
+/// on, and anything at or under a path Git ignores (`ignored` is empty when
+/// Respect Git Ignore is off). The tree and Search Files share this rule.
+pub fn filtered_out(name: &str, path: &Path, hidden: bool, ignored: &[PathBuf]) -> bool {
+    (!hidden && name.starts_with('.')) || ignored.iter().any(|p| path.starts_with(p))
+}
+
 pub fn list_tree(
     path: &Path,
     expanded: &[PathBuf],
@@ -304,10 +312,7 @@ pub fn list_tree(
     let mut stack: Vec<_> = entries.into_iter().rev().collect();
     while let Some(entry) = stack.pop() {
         let revealed = reveal.is_some_and(|p| p.starts_with(&entry.path));
-        if !revealed
-            && ((!hidden && entry.name.starts_with('.'))
-                || ignored.iter().any(|p| entry.path.starts_with(p)))
-        {
+        if !revealed && filtered_out(&entry.name, &entry.path, hidden, ignored) {
             continue;
         }
         if entry.directory && expanded.contains(&entry.path) {

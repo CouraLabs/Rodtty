@@ -50,6 +50,7 @@ pub(super) enum AppAction {
     ToggleFollow,
     ToggleHidden,
     ToggleIgnore,
+    SearchFiles,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -258,6 +259,12 @@ pub(super) fn register(commands: &mut Vec<Command>) {
             "Explorer: Open Parent Folder",
             "",
             AppAction::ExplorerParent,
+        ),
+        (
+            "explorer-search",
+            "Explorer: Search Files",
+            "",
+            AppAction::SearchFiles,
         ),
         (
             "explorer-refresh",
@@ -728,6 +735,7 @@ impl State {
             AppAction::ToggleIgnore => {
                 self.save_config(|c| c.explorer.respect_ignore = !c.explorer.respect_ignore);
             }
+            AppAction::SearchFiles => self.open_explorer_search(tx),
         }
     }
 }

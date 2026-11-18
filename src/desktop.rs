@@ -14,6 +14,7 @@ mod actions;
 mod appearance;
 mod autosave;
 mod clipboard;
+mod explorer_search;
 mod file_icon_catalog;
 mod file_icons;
 mod fonts;
@@ -96,6 +97,7 @@ struct State {
     settings_poll: std::time::Instant,
     last_valid_config: Config,
     terminal_search: terminal_search::TerminalSearch,
+    explorer_search: explorer_search::ExplorerSearch,
     pending: Option<Pending>,
     selection: Option<((u16, u16), (u16, u16))>,
     /// Where the current terminal press started, before it has travelled far
@@ -180,6 +182,7 @@ impl State {
             settings_error: (!config_valid).then(|| message.clone()),
             settings_poll: std::time::Instant::now(),
             terminal_search: Default::default(),
+            explorer_search: Default::default(),
             pending: None,
             selection: None,
             terminal_context_open: false,

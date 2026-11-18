@@ -76,6 +76,42 @@ pub(super) enum FocusReturn {
     Editor(Option<u64>),
 }
 
+/// Where Search Files opens a content match: in the file's source text, never
+/// a rendered view, with the match selected.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SourceLocation {
+    /// 1-based line, split as the editor splits lines.
+    pub line: usize,
+    /// 1-based column, in characters.
+    pub column: usize,
+    /// The match's length, in characters.
+    pub length: usize,
+}
+
+impl SourceLocation {
+    /// The location's byte range in `text`, clamped to the line it names so a
+    /// buffer that changed since the search still gets a valid selection.
+    pub(super) fn range(self, text: &str) -> std::ops::Range<usize> {
+        let start_of_line = text
+            .split_inclusive('\n')
+            .take(self.line.saturating_sub(1))
+            .map(str::len)
+            .sum::<usize>();
+        let line = text[start_of_line..].split('\n').next().unwrap_or("");
+        let offset = |from: usize, chars: usize| {
+            line[from..]
+                .char_indices()
+                .map(|(at, _)| from + at)
+                .chain([line.len()])
+                .nth(chars)
+                .unwrap_or(line.len())
+        };
+        let start = offset(0, self.column.saturating_sub(1));
+        let end = offset(start, self.length);
+        start_of_line + start..start_of_line + end
+    }
+}
+
 struct RestoredPanes {
     editor_visible: bool,
     terminal_focus: bool,
@@ -133,6 +169,10 @@ pub(super) struct Workspace {
     pub(super) last_follow: Option<PathBuf>,
     next_id: u64,
     opening: Vec<(PathBuf, bool)>,
+    /// A Search Files match to select once its file's tab shows.
+    pending_location: Option<(PathBuf, SourceLocation)>,
+    /// The match last revealed this way, while its selection stands.
+    pub(super) search_reveal: Option<(u64, std::ops::Range<usize>)>,
     latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
     restore_panes: Option<RestoredPanes>,
@@ -224,6 +264,8 @@ impl Default for Workspace {
             last_follow: None,
             next_id: 1,
             opening: Vec::new(),
+            pending_location: None,
+            search_reveal: None,
             latest_activation: None,
             restore_active: None,
             restore_panes: None,
@@ -842,6 +884,14 @@ impl State {
             self.message = "Finish the current file operation first.".into();
             return;
         }
+        if self
+            .workspace
+            .pending_location
+            .as_ref()
+            .is_some_and(|(pending, _)| *pending != path)
+        {
+            self.workspace.pending_location = None;
+        }
         self.workspace.latest_activation = Some(path.clone());
         if let Some(i) = self
             .workspace
@@ -864,6 +914,41 @@ impl State {
             self.message = "Opening file…".into();
         }
     }
+    /// Open `path` as [`Self::open_file_with_preview`] does, then select
+    /// `location` in its source. The tab is switched to source text even when
+    /// the file would otherwise show a rendered view (Markdown preview).
+    pub(super) fn open_file_at(&mut self, path: PathBuf, preview: bool, location: SourceLocation) {
+        self.open_file_with_preview(path.clone(), preview);
+        if self.workspace.latest_activation.as_ref() == Some(&path) {
+            self.workspace.pending_location = Some((path, location));
+        }
+    }
+
+    /// Select a pending Search Files location once its tab exists, and scroll
+    /// it into view.
+    fn apply_pending_location(&mut self, tx: &mut Tx) -> bool {
+        let Some((path, location)) = self.workspace.pending_location.clone() else {
+            return false;
+        };
+        let Some(tab) = self
+            .workspace
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.document.path == path)
+        else {
+            return false;
+        };
+        self.workspace.pending_location = None;
+        tab.mode = View::Edit;
+        let range = location.range(&tab.edit.text);
+        tab.edit.set_selection(range.start, range.end);
+        tab.edit.break_history_group();
+        let id = tab.id;
+        self.workspace.search_reveal = Some((id, range));
+        tx.scroll_center(search_match_key(id));
+        true
+    }
+
     pub(super) fn activate_editor(&mut self, index: usize) {
         self.workspace.latest_activation = self
             .workspace
@@ -1294,6 +1379,22 @@ impl State {
                     if preview && self.workspace.latest_activation.as_ref() != Some(&path) {
                         continue;
                     }
+                    // The tab is named by the opened document's resolved path.
+                    if self
+                        .workspace
+                        .pending_location
+                        .as_ref()
+                        .is_some_and(|(pending, _)| *pending == path)
+                    {
+                        self.workspace.pending_location = match &result {
+                            Ok(document) => self
+                                .workspace
+                                .pending_location
+                                .take()
+                                .map(|(_, location)| (document.path.clone(), location)),
+                            Err(_) => None,
+                        };
+                    }
                     match result {
                         Ok(document) => {
                             if let Some(i) = self
@@ -1679,10 +1780,17 @@ impl State {
                 }
             }
         }
+        changed |= self.apply_pending_location(tx);
+        changed |= self.poll_explorer_search(tx);
         changed |= self.poll_autosave(tx);
         tx.wake_after(Duration::from_millis(200));
         changed
     }
+}
+
+/// The editor highlight a Search Files match scrolls to.
+pub(super) fn search_match_key(id: u64) -> String {
+    format!("search-match-{id}")
 }
 
 /// The status row under a folder that has no rows of its own. **Empty
@@ -1699,6 +1807,7 @@ fn folder_status(error: Option<&str>, listed: bool) -> String {
 /// An action at the trailing edge of the explorer root row.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum RootControl {
+    Search,
     Refresh,
     Follow,
     Hidden,
@@ -1706,9 +1815,9 @@ pub(super) enum RootControl {
 }
 
 impl RootControl {
-    /// In row order. A later Search control takes the first place here, and
-    /// the row's width budget counts it with the rest.
-    pub(super) const ALL: [RootControl; 4] = [
+    /// In row order. The row's width budget counts every control.
+    pub(super) const ALL: [RootControl; 5] = [
+        RootControl::Search,
         RootControl::Refresh,
         RootControl::Follow,
         RootControl::Hidden,
@@ -1716,6 +1825,7 @@ impl RootControl {
     ];
     pub(super) fn key(self) -> &'static str {
         match self {
+            Self::Search => "explorer-search-files",
             Self::Refresh => "explorer-refresh",
             Self::Follow => "explorer-follow",
             Self::Hidden => "explorer-hidden",
@@ -1724,6 +1834,7 @@ impl RootControl {
     }
     fn glyph(self) -> &'static rune::Icon {
         match self {
+            Self::Search => &rune_kit::glyphs::SEARCH,
             Self::Refresh => &rune_kit::glyphs::REFRESH,
             Self::Follow => &rune_kit::glyphs::CROSSHAIR,
             Self::Hidden => &rune_kit::glyphs::EYE,
@@ -1733,6 +1844,7 @@ impl RootControl {
     /// The overflow menu's item title.
     fn title(self) -> &'static str {
         match self {
+            Self::Search => "Search Files",
             Self::Refresh => "Refresh Files",
             Self::Follow => "Follow Terminal",
             Self::Hidden => "Show Hidden Files",
@@ -1742,7 +1854,7 @@ impl RootControl {
     /// A toggle's current state; `None` for a plain action.
     fn active(self, s: &State) -> Option<bool> {
         match self {
-            Self::Refresh => None,
+            Self::Search | Self::Refresh => None,
             Self::Follow => Some(s.config.explorer.follow_terminal),
             Self::Hidden => Some(s.config.explorer.show_hidden),
             Self::Ignore => Some(s.config.explorer.respect_ignore),
@@ -1751,6 +1863,7 @@ impl RootControl {
     /// The accessible name and tooltip, naming a toggle's state.
     fn help(self, s: &State) -> String {
         let name = match self {
+            Self::Search => "Search files",
             Self::Refresh => "Refresh files",
             Self::Follow => "Follow terminal",
             Self::Hidden => "Show hidden files",
@@ -1764,6 +1877,7 @@ impl RootControl {
     }
     fn action(self) -> AppAction {
         match self {
+            Self::Search => AppAction::SearchFiles,
             Self::Refresh => AppAction::RefreshExplorer,
             Self::Follow => AppAction::ToggleFollow,
             Self::Hidden => AppAction::ToggleHidden,
@@ -2091,11 +2205,22 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
     .grow(1.0)
     .min_h(0.0)
     .on_secondary_press(|s: &mut State, press, tx| s.file_context_menu(press, tx));
-    pane = pane.child(list);
+    if s.explorer_search.open {
+        pane = pane.child(explorer_search::field(s, a));
+    }
+    // Search results take the tree's place while there is a query.
+    let searching = s.explorer_search.active();
+    pane = pane.child(if searching {
+        explorer_search::results(s, a)
+    } else {
+        list
+    });
     if workspace.operation_busy {
         pane = pane.child(text("Working on files…").font(ui_label()).color(a.muted()));
     }
-    if workspace.scan_busy {
+    if searching {
+        // The results draw their own state.
+    } else if workspace.scan_busy {
         pane = pane.child(text("Loading…").font(ui_label()).color(a.muted()));
     } else if workspace.entries.is_empty() && workspace.explorer_error.is_none() {
         pane = pane.child(text("No visible files").font(ui_label()).color(a.muted()));
@@ -2570,7 +2695,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         let language = syntax::lang_for_path(&tab.document.path.to_string_lossy());
         let highlights = syntax::highlight(language, &tab.edit.text);
         let spans = SyntaxTheme::from_kit(a.kit()).spans(&highlights, 0);
-        let field = text_input(&tab.edit, fonts::editor())
+        let mut field = text_input(&tab.edit, fonts::editor())
             .caret(a.accent(), a.selection())
             .key(format!("file-editor-{id}"))
             .label("File editor")
@@ -2601,6 +2726,18 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 }
                 true
             });
+        // A Search Files match keeps a keyed mark while it is still selected,
+        // for scrolling to and so it reads while the editor is unfocused.
+        if let Some((_, range)) = workspace
+            .search_reveal
+            .as_ref()
+            .filter(|(tab_id, range)| *tab_id == id && tab.edit.range() == (range.start, range.end))
+        {
+            field = field.text_highlight(
+                rune::TextHighlight::new(range.clone(), a.accent().alpha(0.22))
+                    .key(search_match_key(id)),
+            );
+        }
         let viewport = col()
             .key(format!("editor-scroll-{id}"))
             .w_full()
@@ -6276,6 +6413,8 @@ mod tests {
             state.config.explorer.respect_ignore = !show_all;
             state.config.explorer.show_hidden = show_all;
             host_tree_demo(&mut state);
+            // Wide enough for the root row's controls to show inline.
+            state.workspace.layout.explorer_width = 300.0;
             let runtime = runtime_for(state);
             for name in ["ignored", ".hidden"] {
                 assert_eq!(
@@ -6374,6 +6513,7 @@ mod tests {
         std::fs::remove_file(root.path().join(".deleted")).unwrap();
         let mut state = state(root.path());
         state.toggle_files();
+        state.workspace.layout.explorer_width = 300.0;
         wait(&mut state, |s| !s.workspace.scan_busy);
         let mut runtime = runtime_for(state);
         assert!(
@@ -6913,6 +7053,8 @@ mod tests {
         std::fs::write(root.path().join("notes.txt"), "notes").unwrap();
         let mut state = state(root.path());
         state.toggle_files();
+        // Five controls need a 266 pt explorer to show inline.
+        state.workspace.layout.explorer_width = 300.0;
         wait(&mut state, |s| !s.workspace.entries.is_empty());
         let mut runtime = runtime_for(state);
         settle(&mut runtime);
@@ -7013,11 +7155,12 @@ mod tests {
     #[test]
     fn narrow_explorer_folds_root_controls_into_one_menu_whose_toggles_work() {
         use super::super::tests::{press, runtime_for};
-        assert!(
-            root_controls_fit(240.0),
-            "the default width shows every control"
-        );
-        assert!(!root_controls_fit(220.0));
+        // Five controls of 30 pt with 2 pt gaps, the row's chrome and padding,
+        // and 32 pt of the root's name: 266 pt. The default 240 pt explorer
+        // folds them into the menu.
+        assert!(root_controls_fit(266.0), "every control fits from 266 pt");
+        assert!(!root_controls_fit(265.0));
+        assert!(!root_controls_fit(240.0));
         let root = crate::test_support::tempdir().unwrap();
         std::fs::write(root.path().join("notes.txt"), "notes").unwrap();
         let mut state = state(root.path());
