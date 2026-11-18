@@ -85,6 +85,9 @@ pub struct TerminalState {
     pub error: Option<String>,
 }
 
+/// A terminal tab's label while its application has set no terminal title.
+pub const FALLBACK_TAB_TITLE: &str = "Terminal";
+
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
 
 pub struct Session {
@@ -369,19 +372,16 @@ impl Session {
         change(state.parser.screen_mut())
     }
 
-    /// Current application title, or the directory fallback when the app has none.
+    /// The terminal title the running application set, or `Terminal` when it
+    /// set none. The tab's tooltip, not its label, shows the directory.
     pub fn tab_title(&self) -> String {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let events = state.parser.callbacks();
-        if !events.title.is_empty() {
-            return events.title.clone();
+        let title = &state.parser.callbacks().title;
+        if title.is_empty() {
+            FALLBACK_TAB_TITLE.into()
+        } else {
+            title.clone()
         }
-        let cwd = events.cwd.as_ref().unwrap_or(&self.initial_cwd);
-        let folder = cwd
-            .file_name()
-            .unwrap_or_else(|| cwd.as_os_str())
-            .to_string_lossy();
-        format!("›_  Term {folder}")
     }
 
     pub fn cwd(&self) -> PathBuf {

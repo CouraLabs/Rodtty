@@ -284,7 +284,7 @@ impl State {
     /// return the keyboard to the terminal.
     pub(super) fn close_terminal_search(&mut self, tx: &mut Tx) {
         self.terminal_search.close();
-        self.workspace.terminal_focus = true;
+        self.workspace.set_terminal_focus(true);
         tx.blur();
     }
 }
@@ -500,7 +500,7 @@ mod tests {
         assert!(rt.find("search-query").is_none(), "Escape closes search");
         assert!(highlighted(&rt, "current").is_empty());
         assert!(highlighted(&rt, "match").is_empty());
-        assert!(rt.state.workspace.terminal_focus);
+        assert!(rt.state.workspace.terminal_focus());
     }
 
     #[test]

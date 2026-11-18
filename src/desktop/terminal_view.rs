@@ -142,7 +142,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     })
     .on_background_press_tx(|s: &mut State, tx| {
         s.supersede_pending_preview();
-        s.workspace.terminal_focus = true;
+        s.workspace.set_terminal_focus(true);
         // The selection is the drag's to keep or drop: a pointer press reaches
         // the drag handler first, whose `Down` drops any earlier selection, and
         // this press also follows the release of a drag that just selected, so
@@ -152,7 +152,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     .on_secondary_press(clipboard::terminal_menu)
     .on_drag(move |s: &mut State, drag, tx| {
         s.supersede_pending_preview();
-        s.workspace.terminal_focus = true;
+        s.workspace.set_terminal_focus(true);
         tx.blur();
         let (rows, cols) = s.with_screen(vt100::Screen::size);
         let point = |x: f32, y: f32| {

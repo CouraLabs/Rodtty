@@ -161,11 +161,21 @@ pub enum TerminalRightClick {
     Paste,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TerminalClipboardPreferences {
     pub right_click: TerminalRightClick,
+    /// On unless the owner saved `false`: a finished, nonempty terminal
+    /// selection is copied to the clipboard.
     pub copy_on_selection: bool,
+}
+impl Default for TerminalClipboardPreferences {
+    fn default() -> Self {
+        Self {
+            right_click: TerminalRightClick::default(),
+            copy_on_selection: true,
+        }
+    }
 }
 
 impl Default for Config {
@@ -506,4 +516,44 @@ pub enum NewTerminalDirectory {
     Active,
     Explorer,
     Specified,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load(json: &str) -> Config {
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("settings.json"), json).unwrap();
+        Config::load(root.path()).unwrap()
+    }
+
+    #[test]
+    fn copy_on_selection_defaults_on_and_honors_saved_choices() {
+        let root = crate::test_support::tempdir().unwrap();
+        assert!(
+            Config::load(root.path())
+                .unwrap()
+                .terminal_clipboard
+                .copy_on_selection,
+            "no settings.json"
+        );
+        assert!(load("{}").terminal_clipboard.copy_on_selection);
+        assert!(
+            load(r#"{"terminal_clipboard":{"right_click":"paste"}}"#)
+                .terminal_clipboard
+                .copy_on_selection,
+            "the preference itself is absent"
+        );
+        assert!(
+            !load(r#"{"terminal_clipboard":{"copy_on_selection":false}}"#)
+                .terminal_clipboard
+                .copy_on_selection
+        );
+        assert!(
+            load(r#"{"terminal_clipboard":{"copy_on_selection":true}}"#)
+                .terminal_clipboard
+                .copy_on_selection
+        );
+    }
 }

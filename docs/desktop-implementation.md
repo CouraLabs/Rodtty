@@ -18,7 +18,7 @@ Host-installed Git supplies read-only Current (buffer↔HEAD), Unstaged (disk↔
 
 ## Preferences and lifetime
 
-Searchable Settings occupies a dedicated editor tab and includes Appearance, Behavior, Keyboard Shortcuts, Terminal, Editor, Files, and Bundled Commands. Individual resets (including separate autosave policy and delay), shortcut recording/conflicts/unbinding, and effective bindings in the palette/help are available. Right-click defaults to Context Menu with Paste as an alternative; copy-on-selection defaults off. Focused editor/Settings clipboard handling and terminal Ctrl+C interrupts remain intact.
+Searchable Settings occupies a dedicated editor tab and includes Appearance, Behavior, Keyboard Shortcuts, Terminal, Editor, Files, and Bundled Commands. Individual resets (including separate autosave policy and delay), shortcut recording/conflicts/unbinding, and effective bindings in the palette/help are available. Right-click defaults to Context Menu with Paste as an alternative; copy-on-selection defaults on. Focused editor/Settings clipboard handling and terminal Ctrl+C interrupts remain intact.
 
 Owner preferences save immediately at `~/.rodtty/settings.json`. Valid external edits apply live where supported; invalid edits retain the last valid configuration and explain the problem. Migration preserves originals, existing destinations, history/startup behavior, and owner-instance locks. Bundled-command/history/startup configuration retains per-new-session snapshots; appearance does not change running environments.
 

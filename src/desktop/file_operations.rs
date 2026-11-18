@@ -143,7 +143,7 @@ impl State {
             };
             self.workspace.operation_error = None;
             tx.blur();
-            self.workspace.terminal_focus = true;
+            self.workspace.set_terminal_focus(true);
             self.message = "Working on files…".into();
         }
     }

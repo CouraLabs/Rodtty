@@ -555,8 +555,11 @@ impl State {
             AppAction::ActivateTerminal(index) => {
                 if index < self.sessions.len() {
                     tx.blur();
+                    if index != self.active {
+                        self.workspace.note_session_switch();
+                    }
                     self.active = index;
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     self.workspace.layout.terminal = true;
                     self.selection = None;
                 }
@@ -564,7 +567,7 @@ impl State {
             AppAction::ToggleExplorer => self.toggle_files(),
             AppAction::ShowTerminal => {
                 self.workspace.layout.terminal = true;
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.workspace.explorer_revealed = false;
                 tx.blur();
             }
@@ -575,7 +578,7 @@ impl State {
                     // editor tab or Settings, it stays visible instead of an empty pane.
                     if self.editor_pane_contents() {
                         self.workspace.layout.editor = true;
-                        self.workspace.terminal_focus = false;
+                        self.workspace.set_terminal_focus(false);
                     } else {
                         self.workspace.layout.terminal = true;
                         self.message = "Open a file or Settings to hide the terminal".into();
@@ -587,28 +590,28 @@ impl State {
                     // Nothing to show in the pane: closing the terminal behind an
                     // empty editor would strand the workspace.
                     self.message = "Open a file or Settings to fill the editor pane".into();
-                } else if self.workspace.body_width < 880.0 && self.workspace.terminal_focus {
+                } else if self.workspace.body_width < 880.0 && self.workspace.terminal_focus() {
                     self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
+                    self.workspace.set_terminal_focus(false);
                 } else {
                     self.workspace.layout.editor = !self.workspace.layout.editor;
                 }
                 if !self.workspace.layout.editor {
                     self.workspace.layout.terminal = true;
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     tx.blur();
                 }
             }
             AppAction::FindTerminal => {
                 self.workspace.layout.terminal = true;
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.workspace.explorer_revealed = false;
                 self.terminal_search.open = true;
                 tx.focus_when_shown("search-query", true);
             }
             AppAction::FindEditor | AppAction::ReplaceEditor => {
                 self.workspace.layout.editor = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 self.workspace.find = true;
                 if let Some(tab) = self.workspace.tabs.get_mut(self.workspace.active) {
                     tab.mode = workspace::View::Edit;
@@ -628,7 +631,7 @@ impl State {
                 self.settings_open = false;
                 self.settings = false;
                 if self.workspace.tabs.is_empty() {
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                     tx.blur();
                 } else {
                     self.dispatch(AppAction::EditFile, tx);
@@ -637,7 +640,7 @@ impl State {
             AppAction::ActivateEditor(index) => self.activate_editor(index),
             AppAction::CopyTerminal => self.copy(tx),
             AppAction::PasteTerminal => {
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.workspace.layout.terminal = true;
                 tx.blur();
                 self.request_terminal_paste(tx);
@@ -651,7 +654,7 @@ impl State {
                         .iter()
                         .any(|t| t.id == id && t.mode == workspace::View::Edit)
                     {
-                        self.workspace.terminal_focus = false;
+                        self.workspace.set_terminal_focus(false);
                         self.workspace.layout.editor = true;
                         tx.focus_when_shown(format!("file-editor-{id}"), true);
                     }
@@ -665,9 +668,10 @@ impl State {
             AppAction::EditFile => {
                 if let Some(tab) = self.workspace.tabs.get_mut(self.workspace.active) {
                     tab.mode = workspace::View::Edit;
+                    let id = tab.id;
                     self.workspace.layout.editor = true;
-                    self.workspace.terminal_focus = false;
-                    tx.focus_when_shown(format!("file-editor-{}", tab.id), true);
+                    self.workspace.set_terminal_focus(false);
+                    tx.focus_when_shown(format!("file-editor-{id}"), true);
                 }
             }
             AppAction::Compare(mode) => {
@@ -675,7 +679,7 @@ impl State {
                     tab.mode = workspace::View::Diff(mode);
                 }
                 self.workspace.layout.editor = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 tx.blur();
                 self.invalidate_diff(true);
             }
@@ -695,7 +699,7 @@ impl State {
             }
             AppAction::ExplorerFocus => {
                 self.workspace.layout.explorer = true;
-                self.workspace.terminal_focus = false;
+                self.workspace.set_terminal_focus(false);
                 tx.focus_when_shown("file-list", false);
             }
             AppAction::ExplorerCollapseAll => self.collapse_tree(),

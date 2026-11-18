@@ -26,7 +26,8 @@ impl State {
             }
             self.active = active.min(self.sessions.len().saturating_sub(1));
         }
-        self.workspace.terminal_focus = self.workspace.layout.terminal_focus;
+        self.workspace
+            .set_terminal_focus(self.workspace.layout.terminal_focus);
         if self.workspace_restoration_ready() && !self.workspace.restoration_warnings.is_empty() {
             self.message = self.workspace.restoration_warnings.join("\n");
         }
@@ -253,7 +254,7 @@ fn snapshot(handle: &rune::AppHandle<State>) -> Result<serde_json::Value> {
             "editor_files":s.workspace.tabs.iter().map(|t| &t.document.path).collect::<Vec<_>>(),
             "panes":{
                 "editor_visible":s.workspace.layout.editor,
-                "terminal_focus":s.workspace.terminal_focus,
+                "terminal_focus":s.workspace.terminal_focus(),
                 "explorer_visible":s.workspace.layout.explorer,
                 "explorer_revealed":s.workspace.explorer_revealed,
                 "explorer_width":s.workspace.layout.explorer_width,
@@ -386,7 +387,7 @@ mod tests {
         state.workspace.tabs[0].edit.insert("UNSAVED_DRAFT");
         state.start_tab(missing_folder.clone());
         state.navigate(missing_folder.clone());
-        state.workspace.terminal_focus = true;
+        state.workspace.set_terminal_focus(true);
         state.persist_workspace();
         let settings_before = std::fs::read(root.join("settings.json")).ok();
         std::fs::remove_file(&last).unwrap();
@@ -399,7 +400,7 @@ mod tests {
         assert_eq!(fresh.workspace.tabs.len(), 1);
         assert_eq!(fresh.workspace.tabs[0].document.path, first);
         assert_eq!(fresh.workspace.tabs[0].edit.text, "saved contents");
-        assert!(fresh.workspace.terminal_focus);
+        assert!(fresh.workspace.terminal_focus());
         assert!(fresh.message.contains("last.txt"), "{}", fresh.message);
         assert!(
             fresh.message.contains("removed-folder"),

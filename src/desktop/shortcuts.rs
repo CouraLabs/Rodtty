@@ -36,16 +36,16 @@ impl State {
         let editor_field =
             focused.is_some_and(|f| f.starts_with("file-editor-") || f.starts_with("editor-"));
         let settings_field = focused.is_some_and(|f| f.starts_with("settings-"));
-        let terminal = terminal_visible && self.workspace.terminal_focus && focused.is_none();
+        let terminal = terminal_visible && self.workspace.terminal_focus() && focused.is_none();
         let editor =
-            editor_visible && !self.settings && (editor_field || !self.workspace.terminal_focus);
+            editor_visible && !self.settings && (editor_field || !self.workspace.terminal_focus());
         match context {
             actions::ShortcutContext::Terminal => terminal,
             actions::ShortcutContext::Editor => editor,
             actions::ShortcutContext::Settings => {
                 editor_visible
                     && self.settings
-                    && (settings_field || !self.workspace.terminal_focus)
+                    && (settings_field || !self.workspace.terminal_focus())
             }
             actions::ShortcutContext::Global => true,
         }
@@ -437,7 +437,7 @@ mod tests {
         let clipboard = rune::clipboard::memory();
         rt.use_clipboard(&clipboard);
         rt.update(|s, tx| {
-            s.workspace.terminal_focus = false;
+            s.workspace.set_terminal_focus(false);
             tx.focus_when_shown("file-editor-1", true);
         });
         rt.frame(0.0);
@@ -460,7 +460,7 @@ mod tests {
                 .text
                 .contains(copied.as_str())
         );
-        assert!(!rt.state.workspace.terminal_focus);
+        assert!(!rt.state.workspace.terminal_focus());
         rt.update(|s, tx| s.open_settings(tx));
         rt.frame(0.0);
         press(&mut rt, Key::Text("appearance".into()), Default::default());
@@ -577,7 +577,7 @@ mod tests {
             .unwrap()
             .wait_for("rodtty:", std::time::Duration::from_secs(15))
             .unwrap();
-        state.workspace.terminal_focus = true;
+        state.workspace.set_terminal_focus(true);
         state
             .config
             .shortcuts

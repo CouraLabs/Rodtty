@@ -38,7 +38,7 @@ impl State {
         // Inspecting this file's diff or using its toolbar/find controls stays
         // inside the same editor context. Raw widget blur is not a save action.
         let context =
-            (!self.settings && self.workspace.layout.editor && !self.workspace.terminal_focus)
+            (!self.settings && self.workspace.layout.editor && !self.workspace.terminal_focus())
                 .then(|| {
                     self.workspace
                         .tabs

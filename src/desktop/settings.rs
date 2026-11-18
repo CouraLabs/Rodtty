@@ -9,7 +9,7 @@ impl State {
         self.settings_open = true;
         self.settings = true;
         self.workspace.layout.editor = true;
-        self.workspace.terminal_focus = false;
+        self.workspace.set_terminal_focus(false);
         tx.focus_when_shown("settings-search", true);
     }
 
@@ -724,7 +724,11 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             "reset-copy-on-selection",
                             "Reset copy on selection",
                             |s, _| {
-                                s.save_config(|c| c.terminal_clipboard.copy_on_selection = false);
+                                s.save_config(|c| {
+                                    c.terminal_clipboard.copy_on_selection =
+                                        config::TerminalClipboardPreferences::default()
+                                            .copy_on_selection
+                                });
                             },
                         ));
                 }

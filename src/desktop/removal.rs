@@ -50,7 +50,8 @@ impl State {
                 permanent: false,
             });
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
-            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.workspace
+                .set_terminal_focus(self.workspace.layout.terminal);
             self.message = "Preparing Move to Trash… Terminal input remains available.".into();
             tx.blur();
         }
@@ -111,7 +112,8 @@ impl State {
         }) {
             self.workspace.operation_busy = true;
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
-            self.workspace.terminal_focus = self.workspace.layout.terminal;
+            self.workspace
+                .set_terminal_focus(self.workspace.layout.terminal);
             self.message = if permanent {
                 "Deleting permanently…"
             } else {

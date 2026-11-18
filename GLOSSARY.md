@@ -35,7 +35,7 @@ A view of one terminal session in the desktop application. Each tab's session ha
 _Avoid_: Editor tab, connection
 
 **Terminal title**:
-The text supplied by a running application to name its terminal session. It takes precedence over Rodtty's directory-based fallback tab label.
+The text supplied by a running application to name its terminal session. It takes precedence over the fallback tab label, **Terminal**. A terminal tab's tooltip shows the session's working directory whether or not it has a terminal title.
 _Avoid_: Window title when referring to the title of one terminal session
 
 **Prompt style**:

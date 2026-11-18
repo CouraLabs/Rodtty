@@ -77,7 +77,11 @@ pub(super) struct Workspace {
     pub autosave_preferences: config::AutosavePreferences,
     pub autosave_context: Option<u64>,
     deferred_save_conflicts: Vec<DeferredSaveConflict>,
-    pub terminal_focus: bool,
+    /// Private so every change goes through `set_terminal_focus`, which counts it.
+    terminal_focus: bool,
+    /// Counts terminal focus changes and active-session switches, so an
+    /// asynchronous terminal paste can tell that its target moved meanwhile.
+    focus_generation: u64,
     pub explorer_revealed: bool,
     pub show_empty_editor: bool,
     orphan_edit: TextEdit,
@@ -140,6 +144,23 @@ impl Workspace {
     pub(super) fn has_pending_opens(&self) -> bool {
         !self.opening.is_empty()
     }
+    /// Whether keyboard input belongs to the terminal rather than the editor.
+    pub(super) fn terminal_focus(&self) -> bool {
+        self.terminal_focus
+    }
+    pub(super) fn set_terminal_focus(&mut self, focused: bool) {
+        if self.terminal_focus != focused {
+            self.terminal_focus = focused;
+            self.focus_generation += 1;
+        }
+    }
+    /// Record that the active terminal session changed, even if focus did not.
+    pub(super) fn note_session_switch(&mut self) {
+        self.focus_generation += 1;
+    }
+    pub(super) fn focus_generation(&self) -> u64 {
+        self.focus_generation
+    }
 }
 impl Default for Workspace {
     fn default() -> Self {
@@ -148,6 +169,7 @@ impl Default for Workspace {
             autosave_context: None,
             deferred_save_conflicts: Vec::new(),
             terminal_focus: true,
+            focus_generation: 0,
             explorer_revealed: false,
             show_empty_editor: false,
             orphan_edit: TextEdit::new(""),
@@ -275,7 +297,7 @@ impl State {
             self.workspace.directory = path.parent().map(PathBuf::from);
         }
         if self.workspace.tabs.is_empty() {
-            self.workspace.terminal_focus = true;
+            self.workspace.set_terminal_focus(true);
         }
         self.rebuild_tree();
         self.invalidate_diff(true);
@@ -293,7 +315,7 @@ impl State {
         self.workspace.layout.explorer_revealed = self.workspace.explorer_revealed;
         self.workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
         self.workspace.layout.active_terminal = self.active;
-        self.workspace.layout.terminal_focus = self.workspace.terminal_focus || self.settings;
+        self.workspace.layout.terminal_focus = self.workspace.terminal_focus() || self.settings;
         if let Some(selected) = self.workspace.tree.cursor() {
             self.workspace.layout.selected_path = Some(PathBuf::from(selected));
         }
@@ -767,7 +789,7 @@ impl State {
     fn show_editor(&mut self, index: usize, focus: bool) {
         self.settings = false;
         self.workspace.explorer_revealed = false;
-        self.workspace.terminal_focus = false;
+        self.workspace.set_terminal_focus(false);
         self.workspace.active = index;
         self.workspace.layout.editor = true;
         if let Some(tab) = self.workspace.tabs.get_mut(index) {
@@ -888,7 +910,7 @@ impl State {
                 if let Some(tab) = self.workspace.tabs.get_mut(self.workspace.active) {
                     tab.edit.focused = tab.mode == View::Edit;
                 } else {
-                    self.workspace.terminal_focus = true;
+                    self.workspace.set_terminal_focus(true);
                 }
                 self.invalidate_diff(true);
             }
@@ -1252,9 +1274,11 @@ impl State {
                         self.workspace.restore_active = None;
                         if let Some(panes) = self.workspace.restore_panes.take() {
                             self.workspace.layout.editor = panes.editor_visible;
-                            self.workspace.terminal_focus = panes.terminal_focus
-                                || !panes.editor_visible
-                                || self.workspace.tabs.is_empty();
+                            self.workspace.set_terminal_focus(
+                                panes.terminal_focus
+                                    || !panes.editor_visible
+                                    || self.workspace.tabs.is_empty(),
+                            );
                             self.workspace.explorer_revealed = panes.explorer_revealed;
                             self.message = self.workspace.restoration_warnings.join("\n");
                         }
@@ -1733,7 +1757,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
         }
     })
     .on_select(|s, _, tx| {
-        s.workspace.terminal_focus = false;
+        s.workspace.set_terminal_focus(false);
         s.dispatch(AppAction::PreviewExplorerSelection, tx);
     })
     .on_open(|s, _, tx| s.dispatch(AppAction::ExplorerOpenSelection, tx))
@@ -2015,7 +2039,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                             View::Preview
                         };
                     }
-                    s.workspace.terminal_focus = false;
+                    s.workspace.set_terminal_focus(false);
                     tx.blur();
                 },
             )
@@ -2371,7 +2395,7 @@ fn explorer_minimum_width(s: &State) -> f32 {
 
 /// Actual visible panes, including a temporarily revealed compact explorer.
 pub(super) fn pane_visibility(s: &State, width: f32) -> (bool, bool, bool) {
-    let editor = editor_available(s) && (width >= 880.0 || !s.workspace.terminal_focus);
+    let editor = editor_available(s) && (width >= 880.0 || !s.workspace.terminal_focus());
     let terminal = if width < 880.0 {
         !editor
     } else {
@@ -2548,7 +2572,7 @@ pub(super) fn demo(s: &mut State, diff: bool) {
         autosave: Default::default(),
     });
     s.workspace.next_id = 2;
-    s.workspace.terminal_focus = false;
+    s.workspace.set_terminal_focus(false);
     s.workspace.layout.explorer = true;
     s.workspace.layout.editor = true;
     s.workspace.directory = Some(PathBuf::from("/workspace/rodtty"));
@@ -2616,7 +2640,7 @@ pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
         autosave: Default::default(),
     }];
     s.workspace.next_id = 2;
-    s.workspace.terminal_focus = false;
+    s.workspace.set_terminal_focus(false);
     s.workspace.layout.explorer = true;
     s.workspace.layout.editor = true;
     s.workspace.directory = Some(directory.clone());
@@ -3167,7 +3191,7 @@ mod tests {
         let mut state = state(root.path());
         open(&mut state, &file);
         state.workspace.layout.editor = true;
-        state.workspace.terminal_focus = false;
+        state.workspace.set_terminal_focus(false);
         let mut runtime = runtime_for(state);
         runtime.settle_all();
         runtime.frame(1.0);
@@ -3246,7 +3270,7 @@ mod tests {
                     assert!(runtime.find("terminal-pane").is_some());
                     assert!(runtime.find("file-editor-1").is_none());
                 }
-                _ => assert!(runtime.state.workspace.terminal_focus),
+                _ => assert!(runtime.state.workspace.terminal_focus()),
             }
             assert!(!runtime.elements().iter().any(|e| {
                 e.key

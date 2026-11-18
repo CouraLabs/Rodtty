@@ -260,9 +260,10 @@ impl State {
             self.wake.clone(),
         ) {
             Ok(session) => {
-                self.workspace.terminal_focus = true;
+                self.workspace.set_terminal_focus(true);
                 self.sessions.push(session);
                 self.active = self.sessions.len() - 1;
+                self.workspace.note_session_switch();
                 self.selection = None;
                 self.preview = None;
             }
@@ -388,6 +389,7 @@ impl State {
                         .unwrap_or_else(|| index.min(self.sessions.len().saturating_sub(1)));
                     if active == Some(id) {
                         self.selection = None;
+                        self.workspace.note_session_switch();
                     }
                 }
             }
@@ -522,6 +524,8 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
         .center_y();
     for (i, session) in state.sessions.iter().enumerate() {
         let label = session.tab_title();
+        // The label names the program; the tooltip says where it runs.
+        let location = tilde_path(&session.cwd());
         let id = tabs::session_id(session);
         let selected = i == state.active;
         list = list.child(
@@ -539,7 +543,7 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
                 .child(tabs::interactive(
                     tab_label(a, &label, selected)
                         .key(format!("tab-{i}"))
-                        .help(&label)
+                        .help(location)
                         .on_press_tx(move |s: &mut State, tx| {
                             tx.blur();
                             s.dispatch(AppAction::ActivateTerminal(i), tx);
@@ -932,12 +936,11 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
         root = root.child(recorder);
     }
     root = root.children(fonts::overlays(state, a, width));
-    root = root.children(settings::overlays(state, a, width));
-    root.on_paste(|s: &mut State, content, _| {
-        if !s.application_overlay_open() && s.workspace.terminal_focus {
-            s.paste(content);
-        }
-    })
+    // No root `on_paste`: with one, Rune would take the primary paste chord
+    // itself and hand over only text. Without it the chord reaches `on_key`,
+    // whose shortcut dispatches `PasteTerminal` to the one terminal paste
+    // handler; focused text fields still paste on their own.
+    root.children(settings::overlays(state, a, width))
 }
 
 pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
@@ -1005,7 +1008,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         if state.application_overlay_open()
-            || !state.workspace.terminal_focus
+            || !state.workspace.terminal_focus()
             || !state.workspace.layout.terminal
             || tx.focused().is_some()
         {
@@ -1071,7 +1074,7 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if tx.focused().is_some() {
         return false;
     }
-    if !state.workspace.terminal_focus
+    if !state.workspace.terminal_focus()
         && state.workspace.layout.editor
         && !state.workspace.tabs.is_empty()
     {
@@ -1236,7 +1239,7 @@ fn tabs_preview(state: &mut State) {
     state.message = "Tab strip preview · running PTYs and real file buffers".into();
     state.workspace.tabs[0].edit.insert("// Unsaved changes\n");
     state.workspace.active = 0;
-    state.workspace.terminal_focus = true;
+    state.workspace.set_terminal_focus(true);
     state.active = 0;
     state.tab_strips.preview_root = Some(fixture);
 }
@@ -1250,11 +1253,11 @@ fn tabs_dark_preview(state: &mut State) {
 }
 fn tabs_light_editor_preview(state: &mut State) {
     tabs_light_preview(state);
-    state.workspace.terminal_focus = false;
+    state.workspace.set_terminal_focus(false);
 }
 fn tabs_dark_editor_preview(state: &mut State) {
     tabs_dark_preview(state);
-    state.workspace.terminal_focus = false;
+    state.workspace.set_terminal_focus(false);
 }
 fn preview_tabs_scene(state: &mut State) {
     tabs_preview(state);
@@ -1269,7 +1272,7 @@ fn preview_tabs_scene(state: &mut State) {
         .iter()
         .position(|tab| tab.preview)
         .unwrap_or(0);
-    state.workspace.terminal_focus = false;
+    state.workspace.set_terminal_focus(false);
     state.message = "Regular dirty file and temporary preview · real file buffers".into();
 }
 fn tree_preview(state: &mut State) {
@@ -1389,7 +1392,7 @@ pub fn run() -> Result<()> {
             s.sessions.clear();
         })
         .on_ime(|s, event, _| {
-            if s.application_overlay_open() || !s.workspace.terminal_focus {
+            if s.application_overlay_open() || !s.workspace.terminal_focus() {
                 return true;
             }
             if let rune::Ime::Commit(content) = event {
@@ -1644,7 +1647,7 @@ fn native_check(
                 );
                 handle.update(|s, _| {
                     s.workspace.tabs.clear();
-                    s.workspace.terminal_focus = true;
+                    s.workspace.set_terminal_focus(true);
                 });
                 wait_app(&handle, |s| s.workspace.tabs.is_empty())?;
                 Some(serde_json::json!({"initial_native_state":info,"compositor_input":evidence}))
@@ -2896,7 +2899,8 @@ mod tests {
     }
 
     #[test]
-    fn terminal_tabs_show_application_title_verbatim_then_directory_fallback() {
+    fn terminal_tabs_show_application_title_verbatim_then_terminal_fallback_with_directory_tooltip()
+    {
         let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         let shell = std::env::current_exe()
@@ -2928,11 +2932,24 @@ mod tests {
         }
         state.sessions.push(session);
         let mut runtime = runtime_for(state);
+        let tab_help = |runtime: &rune::Runtime<State>| {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("tab-0") && !e.exiting)
+                .unwrap()
+                .help
+        };
         assert!(
             runtime
                 .elements()
                 .iter()
                 .any(|e| e.text.as_deref() == Some("Agent title"))
+        );
+        assert_eq!(
+            tab_help(&runtime).as_deref(),
+            Some(tilde_path(root.path()).as_str()),
+            "a titled tab's tooltip still names its working directory"
         );
         assert!(
             !runtime
@@ -2956,7 +2973,12 @@ mod tests {
             runtime
                 .elements()
                 .iter()
-                .any(|e| e.text.as_deref() == Some("Agent title"))
+                .any(|e| e.text.as_deref() == Some("Agent title")),
+            "the terminal title outranks the directory change"
+        );
+        assert_eq!(
+            tab_help(&runtime).as_deref(),
+            Some(tilde_path(&child).as_str())
         );
         runtime.state.sessions[0]
             .send(b"printf '\\033]2;\\007'\r".to_vec())
@@ -2980,7 +3002,16 @@ mod tests {
             runtime
                 .elements()
                 .iter()
-                .any(|e| e.text.as_deref() == Some("›_  Term new-folder"))
+                .any(|e| e.text.as_deref() == Some("Terminal"))
+        );
+        assert_eq!(
+            runtime.state.sessions[0].tab_title(),
+            "Terminal",
+            "the fallback label does not name the directory"
+        );
+        assert_eq!(
+            tab_help(&runtime).as_deref(),
+            Some(tilde_path(&child).as_str())
         );
         let full = format!(
             "Application; title 日本語 with {};;",
@@ -3001,7 +3032,7 @@ mod tests {
             .into_iter()
             .find(|e| e.key.as_deref() == Some("tab-0") && !e.exiting)
             .unwrap();
-        assert_eq!(tab.help.as_deref(), Some(full.as_str()));
+        assert_eq!(tab.help.as_deref(), Some(tilde_path(&child).as_str()));
         assert!(tab.rect[2] <= 180.0);
     }
 
@@ -3118,6 +3149,21 @@ mod tests {
         let active = state.sessions[2].state.clone();
         let closing = tabs::session_id(&state.sessions[4]);
         let mut runtime = runtime_for(state);
+        let board = rune::clipboard::memory();
+        runtime.use_clipboard(&board);
+        let paste = |runtime: &mut rune::Runtime<State>, text: &str| {
+            board.set_text(text);
+            press(
+                runtime,
+                Key::Command('v'),
+                rune::Mods {
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    shift: !cfg!(target_os = "macos"),
+                    ..Default::default()
+                },
+            );
+        };
         runtime.set_viewport((640.0, 360.0), 1.0);
         runtime.settle_all();
         runtime.frame(0.0);
@@ -3144,7 +3190,7 @@ mod tests {
             .unwrap()
             .wait_for("rodtty:", std::time::Duration::from_secs(15))
             .unwrap();
-        runtime.paste("PASTE_BEHIND_TAB_MENU");
+        paste(&mut runtime, "PASTE_BEHIND_TAB_MENU");
         runtime.frame(0.0);
         press(
             &mut runtime,
@@ -3165,7 +3211,7 @@ mod tests {
         runtime.resolve_popup(None).unwrap();
         runtime.frame(0.0);
         assert!(!runtime.state.application_overlay_open());
-        runtime.paste("PASTE_AFTER_TAB_MENU");
+        paste(&mut runtime, "PASTE_AFTER_TAB_MENU");
         runtime.frame(0.0);
         runtime
             .state

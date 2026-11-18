@@ -511,7 +511,11 @@ fn semicolon_rich_working_directories_remain_exact_through_the_pty() {
             &format!("EXACT_DIRECTORY_{ending}"),
         );
         assert_eq!(terminal.cwd(), child, "OSC 7 with {ending}");
-        assert_eq!(terminal.tab_title(), format!("›_  Term {name}"));
+        assert_eq!(
+            terminal.tab_title(),
+            "Terminal",
+            "the fallback label names no directory"
+        );
     }
 }
 
@@ -549,7 +553,7 @@ fn application_titles_are_preserved_changed_and_cleared_through_the_pty() {
     assert_eq!(terminal.tab_title(), "Second; app 日本語; title");
     run(&terminal, "printf '\\033]2;\\007'", "TITLE_CLEARED");
     assert_eq!(terminal.state.lock().unwrap().parser.callbacks().title, "");
-    assert_eq!(terminal.tab_title(), "›_  Term project; 日本語;");
+    assert_eq!(terminal.tab_title(), "Terminal");
 }
 
 fn wait_activity(session: &Session, running: bool) {
