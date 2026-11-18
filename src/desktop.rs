@@ -203,6 +203,7 @@ impl State {
             || self.palette.is_some()
             || self.workspace_menu
             || self.workspace.operation_context.is_some()
+            || self.workspace.explorer_menu
             || self.tab_strips.context_open
     }
 
@@ -411,8 +412,6 @@ fn button(
         "workspace-menu" => "Workspace menu",
         "return-terminal" => "Return to terminal",
         "new-tab" => "New terminal tab",
-        "explorer-hide" => "Hide file explorer",
-        "explorer-up" => "Open parent folder",
         "explorer-refresh" => "Refresh files",
         "settings-close" => "Close Settings tab",
         "find-close" => "Close editor search",
@@ -923,6 +922,9 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
     if state.workspace_menu {
         root = root.child(workspace_menu(state, a));
     }
+    if let Some(menu) = workspace::explorer_menu(state, a) {
+        root = root.child(menu);
+    }
     if let Some(dialog) = removal::view(state, a) {
         root = root.child(dialog);
     }
@@ -1066,6 +1068,33 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             Key::Enter => state.dispatch(items[index].2, tx),
             _ => return false,
         }
+        return true;
+    }
+    if state.workspace.explorer_menu {
+        let items = workspace::RootControl::ALL
+            .map(|control| control.key().replace("explorer-", "explorer-menu-"));
+        let index = items
+            .iter()
+            .position(|key| Some(key.as_str()) == tx.focused())
+            .unwrap_or(0);
+        match event.key {
+            Key::Escape => {
+                state.workspace.explorer_menu = false;
+                tx.focus("explorer-more", true);
+            }
+            Key::Up | Key::Down => {
+                let next = if event.key == Key::Down {
+                    (index + 1) % items.len()
+                } else {
+                    (index + items.len() - 1) % items.len()
+                };
+                tx.focus(items[next].clone(), true);
+            }
+            _ => return false,
+        }
+        return true;
+    }
+    if event.key == Key::Escape && state.dismiss_explorer_overlay(tx) {
         return true;
     }
     if state.dispatch_shortcut(event, tx) {

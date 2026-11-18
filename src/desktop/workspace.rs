@@ -67,6 +67,15 @@ pub(super) struct TreeEntry {
     root: bool,
 }
 
+/// Where keyboard focus goes back to when the compact Files overlay closes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum FocusReturn {
+    Terminal,
+    /// The editor pane: the text editor of this tab, or the pane itself
+    /// (a diff, preview or Settings) when `None`.
+    Editor(Option<u64>),
+}
+
 struct RestoredPanes {
     editor_visible: bool,
     terminal_focus: bool,
@@ -83,6 +92,10 @@ pub(super) struct Workspace {
     /// asynchronous terminal paste can tell that its target moved meanwhile.
     focus_generation: u64,
     pub explorer_revealed: bool,
+    /// The root row's overflow menu is open.
+    pub(super) explorer_menu: bool,
+    /// Captured as the compact Files overlay opens.
+    overlay_return: Option<FocusReturn>,
     pub show_empty_editor: bool,
     orphan_edit: TextEdit,
     pub layout: Layout,
@@ -102,6 +115,9 @@ pub(super) struct Workspace {
     pub(super) operation_context: Option<(f32, f32)>,
     pub(super) operation_viewport: (f32, f32),
     tree_errors: Vec<(PathBuf, String)>,
+    /// Expanded folders the current `entries` came from reading successfully;
+    /// only these can show **Empty folder**.
+    tree_listed: Vec<PathBuf>,
     tree_dirty: bool,
     explorer_error: Option<String>,
     pub(super) outside_root: Option<PathBuf>,
@@ -171,6 +187,8 @@ impl Default for Workspace {
             terminal_focus: true,
             focus_generation: 0,
             explorer_revealed: false,
+            explorer_menu: false,
+            overlay_return: None,
             show_empty_editor: false,
             orphan_edit: TextEdit::new(""),
             layout: Layout::default(),
@@ -190,6 +208,7 @@ impl Default for Workspace {
             operation_context: None,
             operation_viewport: (1080.0, 720.0),
             tree_errors: Vec::new(),
+            tree_listed: Vec::new(),
             tree_dirty: true,
             explorer_error: None,
             outside_root: None,
@@ -282,6 +301,7 @@ impl State {
         self.workspace
             .tree_errors
             .retain(|(p, _)| !p.starts_with(path));
+        self.workspace.tree_listed.retain(|p| !p.starts_with(path));
         self.workspace.tree_dirty = true;
         self.workspace.scan_token += 1;
         self.workspace.last_scan = Instant::now() - Duration::from_secs(3);
@@ -418,9 +438,74 @@ impl State {
             );
         }
     }
+    /// Files is drawn as the compact overlay above the terminal and editor.
+    pub(super) fn explorer_overlay_open(&self) -> bool {
+        let (shown, _, _) = pane_visibility(self, self.workspace.body_width);
+        shown && self.workspace.body_width < explorer_minimum_width(self)
+    }
+    /// The Files toggle: also moves keyboard focus into the compact overlay as
+    /// it opens, and back where it was as it closes.
+    pub(super) fn toggle_files_with_focus(&mut self, tx: &mut Tx) {
+        let was_overlay = self.explorer_overlay_open();
+        let return_to = if self.workspace.terminal_focus() {
+            FocusReturn::Terminal
+        } else {
+            FocusReturn::Editor(
+                self.workspace
+                    .tabs
+                    .get(self.workspace.active)
+                    .filter(|tab| !self.settings && tab.mode == View::Edit)
+                    .map(|tab| tab.id),
+            )
+        };
+        self.workspace.explorer_menu = false;
+        self.toggle_files();
+        let overlay = self.explorer_overlay_open();
+        if overlay && !was_overlay {
+            self.workspace.overlay_return = Some(return_to);
+            tx.focus_when_shown("file-list", false);
+        } else if was_overlay && !overlay {
+            self.restore_overlay_focus(tx);
+        }
+    }
+    fn restore_overlay_focus(&mut self, tx: &mut Tx) {
+        match self.workspace.overlay_return.take() {
+            Some(FocusReturn::Terminal) => {
+                self.workspace.set_terminal_focus(true);
+                tx.blur();
+            }
+            Some(FocusReturn::Editor(Some(id)))
+                if self.workspace.tabs.iter().any(|tab| tab.id == id) =>
+            {
+                self.workspace.set_terminal_focus(false);
+                if let Some(tab) = self.workspace.tabs.iter_mut().find(|tab| tab.id == id) {
+                    tab.edit.focused = true;
+                }
+                tx.focus_when_shown(format!("file-editor-{id}"), true);
+            }
+            Some(FocusReturn::Editor(_)) => {
+                self.workspace.set_terminal_focus(false);
+                tx.blur();
+            }
+            None => {
+                if self.workspace.terminal_focus() {
+                    tx.blur();
+                }
+            }
+        }
+    }
+    /// Escape over the compact overlay closes it, as the Files button does.
+    pub(super) fn dismiss_explorer_overlay(&mut self, tx: &mut Tx) -> bool {
+        if !self.explorer_overlay_open() {
+            return false;
+        }
+        self.toggle_files_with_focus(tx);
+        true
+    }
     pub(super) fn navigate(&mut self, path: PathBuf) {
         self.workspace.directory = Some(path.clone());
         self.workspace.entries.clear();
+        self.workspace.tree_listed.clear();
         self.workspace.tree.clear();
         self.workspace.tree_dirty = true;
         self.workspace.layout.expanded_folders.clear();
@@ -537,6 +622,7 @@ impl State {
         w.entries.clear();
         w.tree.clear();
         w.tree_errors.clear();
+        w.tree_listed.clear();
         w.tree_dirty = true;
         w.scan_token += 1;
         w.last_scan = Instant::now() - Duration::from_secs(3);
@@ -642,7 +728,13 @@ impl State {
         );
         let root_expanded = Self::WORKSPACE_ROOT_EXPANDED;
         workspace.tree.set_expanded(&root_key, root_expanded);
-        for entry in &workspace.entries {
+        // First the whole parent-child structure: a parent precedes its
+        // children (a stable sort by depth keeps each folder's sibling order),
+        // so no entry is dropped for arriving before its folder and every
+        // folder knows its real children before any status row is decided.
+        let mut entries: Vec<&Entry> = workspace.entries.iter().collect();
+        entries.sort_by_key(|entry| entry.path.components().count());
+        for entry in entries {
             let id = entry.path.to_string_lossy().into_owned();
             // A nested entry stays under its own folder; only the root's direct
             // children hang from the synthetic root row.
@@ -670,20 +762,19 @@ impl State {
                 .tree
                 .set_expanded(&id, workspace.layout.expanded_folders.contains(&entry.path));
         }
-        // An unloaded folder needs a disclosure affordance before its children arrive.
+        // Then one status row per childless folder. It also gives an unloaded
+        // folder its disclosure affordance before its children arrive.
         for entry in &workspace.entries {
             let id = entry.path.to_string_lossy();
             if entry.directory && !workspace.tree.has_children(&id) {
-                let error = workspace.tree_errors.iter().find(|(p, _)| p == &entry.path);
-                let label = error
-                    .map(|(_, e)| format!("Could not load: {e}"))
-                    .unwrap_or_else(|| {
-                        if workspace.layout.expanded_folders.contains(&entry.path) {
-                            "Empty folder".into()
-                        } else {
-                            "Loading…".into()
-                        }
-                    });
+                let label = folder_status(
+                    workspace
+                        .tree_errors
+                        .iter()
+                        .find(|(p, _)| p == &entry.path)
+                        .map(|(_, e)| e.as_str()),
+                    workspace.tree_listed.contains(&entry.path),
+                );
                 workspace.tree.insert(
                     Some(&id),
                     format!("{id}/::folder-state"),
@@ -787,6 +878,14 @@ impl State {
     }
 
     fn show_editor(&mut self, index: usize, focus: bool) {
+        // Opening a file from the compact overlay closes it and hands the
+        // keyboard to the editor; the overlay's saved focus no longer applies.
+        let from_overlay = self.explorer_overlay_open();
+        let focus = focus || from_overlay;
+        if from_overlay {
+            self.workspace.overlay_return = None;
+            self.workspace.explorer_menu = false;
+        }
         self.settings = false;
         self.workspace.explorer_revealed = false;
         self.workspace.set_terminal_focus(false);
@@ -1355,11 +1454,13 @@ impl State {
                                 Ok(listing) => {
                                     self.workspace.tree_dirty |= self.workspace.entries
                                         != listing.entries
-                                        || self.workspace.tree_errors != listing.errors;
+                                        || self.workspace.tree_errors != listing.errors
+                                        || self.workspace.tree_listed != listing.listed;
                                     let path = listing.root;
                                     self.workspace.directory = Some(path);
                                     self.workspace.entries = listing.entries;
                                     self.workspace.tree_errors = listing.errors;
+                                    self.workspace.tree_listed = listing.listed;
                                     self.workspace.explorer_error = None;
                                 }
                                 Err(error) => self.workspace.explorer_error = Some(error),
@@ -1584,106 +1685,287 @@ impl State {
     }
 }
 
-/// A thin vertical rule between groups of related toolbar actions.
-fn pipe(a: &Appearance) -> El {
-    el().w(1.0).h(16.0).fill(a.kit().c.border_base).mx(2.0)
+/// The status row under a folder that has no rows of its own. **Empty
+/// folder** needs a successful listing of that folder that found nothing
+/// visible; until then it is loading, and a failed listing says why.
+fn folder_status(error: Option<&str>, listed: bool) -> String {
+    match error {
+        Some(error) => format!("Could not load: {error}"),
+        None if listed => "Empty folder".into(),
+        None => "Loading…".into(),
+    }
 }
 
-fn explorer(s: &State, a: &Appearance) -> El {
+/// An action at the trailing edge of the explorer root row.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum RootControl {
+    Refresh,
+    Follow,
+    Hidden,
+    Ignore,
+}
+
+impl RootControl {
+    /// In row order. A later Search control takes the first place here, and
+    /// the row's width budget counts it with the rest.
+    pub(super) const ALL: [RootControl; 4] = [
+        RootControl::Refresh,
+        RootControl::Follow,
+        RootControl::Hidden,
+        RootControl::Ignore,
+    ];
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Refresh => "explorer-refresh",
+            Self::Follow => "explorer-follow",
+            Self::Hidden => "explorer-hidden",
+            Self::Ignore => "explorer-ignore",
+        }
+    }
+    fn glyph(self) -> &'static rune::Icon {
+        match self {
+            Self::Refresh => &rune_kit::glyphs::REFRESH,
+            Self::Follow => &rune_kit::glyphs::CROSSHAIR,
+            Self::Hidden => &rune_kit::glyphs::EYE,
+            Self::Ignore => &rune_kit::glyphs::FILTER,
+        }
+    }
+    /// The overflow menu's item title.
+    fn title(self) -> &'static str {
+        match self {
+            Self::Refresh => "Refresh Files",
+            Self::Follow => "Follow Terminal",
+            Self::Hidden => "Show Hidden Files",
+            Self::Ignore => "Respect Git Ignore Rules",
+        }
+    }
+    /// A toggle's current state; `None` for a plain action.
+    fn active(self, s: &State) -> Option<bool> {
+        match self {
+            Self::Refresh => None,
+            Self::Follow => Some(s.config.explorer.follow_terminal),
+            Self::Hidden => Some(s.config.explorer.show_hidden),
+            Self::Ignore => Some(s.config.explorer.respect_ignore),
+        }
+    }
+    /// The accessible name and tooltip, naming a toggle's state.
+    fn help(self, s: &State) -> String {
+        let name = match self {
+            Self::Refresh => "Refresh files",
+            Self::Follow => "Follow terminal",
+            Self::Hidden => "Show hidden files",
+            Self::Ignore => "Respect Git ignore rules",
+        };
+        match self.active(s) {
+            Some(true) => format!("{name}: on"),
+            Some(false) => format!("{name}: off"),
+            None => name.into(),
+        }
+    }
+    fn action(self) -> AppAction {
+        match self {
+            Self::Refresh => AppAction::RefreshExplorer,
+            Self::Follow => AppAction::ToggleFollow,
+            Self::Hidden => AppAction::ToggleHidden,
+            Self::Ignore => AppAction::ToggleIgnore,
+        }
+    }
+}
+
+/// The explorer's horizontal padding, on each side.
+const EXPLORER_PADDING: f32 = 10.0;
+/// A root-row control's hit target: the header's icon button width.
+const ROOT_CONTROL_WIDTH: f32 = 30.0;
+const ROOT_CONTROL_GAP: f32 = 2.0;
+/// The tree row's own chrome before its label and after its trailing content:
+/// end padding (6 each side), chevron (16), icon (16) and the gaps between (4 each).
+const TREE_ROW_CHROME: f32 = 6.0 + 16.0 + 4.0 + 16.0 + 4.0 + 4.0 + 6.0;
+/// The least of the root's name the row keeps beside its controls.
+const ROOT_NAME_MINIMUM: f32 = 32.0;
+
+/// Whether every root-row control fits at full hit-target size in an explorer
+/// this wide, leaving the root's name some room. Otherwise one overflow
+/// button stands in for them.
+pub(super) fn root_controls_fit(explorer_width: f32) -> bool {
+    let count = RootControl::ALL.len() as f32;
+    let controls = count * ROOT_CONTROL_WIDTH + (count - 1.0) * ROOT_CONTROL_GAP;
+    explorer_width - 2.0 * EXPLORER_PADDING - TREE_ROW_CHROME - controls >= ROOT_NAME_MINIMUM
+}
+
+/// A file size as the explorer shows it: decimal units (1 KB = 1,000 bytes),
+/// one decimal place below 10 units, whole numbers above.
+pub(super) fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    // Round before choosing the unit so 999,950 bytes reads "1.0 MB", never "1000 KB".
+    let rounded = |value: f64| {
+        if value < 10.0 {
+            (value * 10.0).round() / 10.0
+        } else {
+            value.round()
+        }
+    };
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while rounded(value) >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let shown = rounded(value);
+    if shown < 10.0 {
+        format!("{shown:.1} {}", UNITS[unit])
+    } else {
+        format!("{shown:.0} {}", UNITS[unit])
+    }
+}
+
+/// Exact bytes with thousands separators, for the size's tooltip.
+pub(super) fn exact_bytes(bytes: u64) -> String {
+    let digits = bytes.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    format!("{grouped} {}", if bytes == 1 { "byte" } else { "bytes" })
+}
+
+/// The root row's trailing controls: each toggle shows whether it is on, or
+/// one overflow button when the explorer is too narrow for them all.
+fn root_controls(s: &State, a: &Appearance, width: f32, row_height: f32) -> El {
+    let mut controls = row()
+        .key("explorer-root-controls")
+        .gap(ROOT_CONTROL_GAP)
+        .center_y();
+    let button = |key: &'static str, glyph, help: String, action: AppAction| {
+        icon_button(a, key, glyph, help, move |s, tx| s.dispatch(action, tx))
+            .min_h(row_height)
+            .fill(Color::TRANSPARENT)
+    };
+    if root_controls_fit(width) {
+        for control in RootControl::ALL {
+            let mut button = button(
+                control.key(),
+                control.glyph(),
+                control.help(s),
+                control.action(),
+            );
+            if control.active(s) == Some(true) {
+                button = button.fill(a.accent().alpha(0.18));
+            }
+            controls = controls.child(button);
+        }
+    } else {
+        controls = controls.child(
+            icon_button(
+                a,
+                "explorer-more",
+                &rune_kit::glyphs::ELLIPSIS,
+                "More explorer actions",
+                |s, tx| {
+                    s.workspace.explorer_menu = !s.workspace.explorer_menu;
+                    if s.workspace.explorer_menu {
+                        tx.focus_when_shown(
+                            RootControl::ALL[0]
+                                .key()
+                                .replace("explorer-", "explorer-menu-"),
+                            true,
+                        );
+                    }
+                },
+            )
+            .min_h(row_height)
+            .fill(if s.workspace.explorer_menu {
+                a.hover_bg()
+            } else {
+                Color::TRANSPARENT
+            }),
+        );
+    }
+    controls
+}
+
+/// The overflow button's menu: each root-row action, with each toggle's state.
+pub(super) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
+    if !s.workspace.explorer_menu {
+        return None;
+    }
+    let close = |s: &mut State, tx: &mut Tx| {
+        s.workspace.explorer_menu = false;
+        tx.focus("explorer-more", true);
+    };
+    let mut menu = col()
+        .key("explorer-menu")
+        .w(240.0)
+        .px(6.0)
+        .py(6.0)
+        .gap(3.0)
+        .radius(8.0)
+        .fill(a.panel())
+        .border(1.0, a.hover_bg())
+        .shadow(6.0, 20.0, a.scrim())
+        .modal_tx(true, close)
+        .anchored("explorer-more", rune::Side::Bottom, rune::Align::End, 4.0);
+    for control in RootControl::ALL {
+        let help = control.help(s);
+        let action = control.action();
+        let mut item = row()
+            .key(control.key().replace("explorer-", "explorer-menu-"))
+            .role("menuitem")
+            .label(help.clone())
+            .help(help)
+            .focusable(true)
+            .focus_ring(2.0, 1.0, a.accent())
+            .w_full()
+            .min_h(29.0_f32.max(ui_label().size * 1.5 + 8.0))
+            .px(10.0)
+            .gap(8.0)
+            .center_y()
+            .radius(5.0)
+            .hover(a.hover_bg())
+            .on_press_tx(move |s: &mut State, tx| {
+                s.workspace.explorer_menu = false;
+                tx.focus("explorer-more", false);
+                s.dispatch(action, tx);
+            })
+            .child(rune::icon(control.glyph(), 16.0).color(a.ink()))
+            .child(
+                text(control.title())
+                    .font(ui_label())
+                    .color(a.ink())
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .truncate(),
+            );
+        if let Some(on) = control.active(s) {
+            item = item.child(
+                text(if on { "On" } else { "Off" })
+                    .key("state")
+                    .font(ui_label())
+                    .color(if on { a.accent() } else { a.muted() }),
+            );
+        }
+        menu = menu.child(item);
+    }
+    Some(menu)
+}
+
+fn explorer(s: &State, a: &Appearance, width: f32) -> El {
     let workspace = &s.workspace;
     let mut pane = col()
         .key("explorer")
-        .w(workspace.layout.explorer_width)
+        .w(width)
         .min_w(160.0)
         .h_full()
         .min_h(0.0)
         .fill(a.panel())
-        .px(10.0)
-        .gap(6.0)
-        .child(
-            row()
-                .h(29.0)
-                .center_y()
-                .gap(4.0)
-                // Navigation actions, then filter toggles; a pipe separates the two groups.
-                .child(icon_button(
-                    a,
-                    "explorer-up",
-                    &rune_kit::glyphs::ARROW_UP,
-                    "Open parent folder",
-                    |s, tx| s.dispatch(AppAction::ExplorerParent, tx),
-                ))
-                .child(icon_button(
-                    a,
-                    "explorer-refresh",
-                    &rune_kit::glyphs::REFRESH,
-                    "Refresh files",
-                    |s, tx| s.dispatch(AppAction::RefreshExplorer, tx),
-                ))
-                .child(pipe(a))
-                .child(
-                    icon_button(
-                        a,
-                        "explorer-follow",
-                        &rune_kit::glyphs::CROSSHAIR,
-                        if workspace.layout.follow {
-                            "Follow terminal: on"
-                        } else {
-                            "Follow terminal: off"
-                        },
-                        |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
-                    )
-                    .fill(if workspace.layout.follow {
-                        a.accent().alpha(0.18)
-                    } else {
-                        Color::TRANSPARENT
-                    }),
-                )
-                .child(
-                    icon_button(
-                        a,
-                        "explorer-hidden",
-                        &rune_kit::glyphs::EYE,
-                        if workspace.layout.hidden {
-                            "Show hidden files: on"
-                        } else {
-                            "Show hidden files: off"
-                        },
-                        |s, tx| s.dispatch(AppAction::ToggleHidden, tx),
-                    )
-                    .fill(if workspace.layout.hidden {
-                        a.accent().alpha(0.18)
-                    } else {
-                        Color::TRANSPARENT
-                    }),
-                )
-                .child(
-                    icon_button(
-                        a,
-                        "explorer-ignore",
-                        &rune_kit::glyphs::FILTER,
-                        if s.config.explorer.respect_ignore {
-                            "Respect Git ignore rules: on"
-                        } else {
-                            "Respect Git ignore rules: off"
-                        },
-                        |s, tx| s.dispatch(AppAction::ToggleIgnore, tx),
-                    )
-                    .fill(if s.config.explorer.respect_ignore {
-                        a.accent().alpha(0.18)
-                    } else {
-                        Color::TRANSPARENT
-                    }),
-                )
-                .child(el().grow(1.0))
-                .child(icon_button(
-                    a,
-                    "explorer-hide",
-                    &rune_kit::glyphs::CLOSE,
-                    "Hide file explorer",
-                    |s, tx| s.dispatch(AppAction::ToggleExplorer, tx),
-                )),
-        );
+        .px(EXPLORER_PADDING)
+        .pt(6.0)
+        .gap(6.0);
     if let Some(cwd) = &workspace.outside_root {
         pane = pane
             .child(
@@ -1730,6 +2012,15 @@ fn explorer(s: &State, a: &Appearance) -> El {
         .radius(6.0);
     tree_style.row_height = 28.0_f32.max(ui_label().size * 1.5 + 6.0);
     tree_style.selected = a.hover_bg();
+    // The root row's controls rest hidden and appear while the row is hovered
+    // or holds keyboard focus (the row's hover track lights for both). A
+    // selected row draws a fill instead of a hover track, so there they show.
+    let controls = root_controls(s, a, width, tree_style.row_height);
+    let label_font = ui_label();
+    let badge_font = a.kit().ty.text_xsmall_medium;
+    let muted = a.muted();
+    let row_space = width - 2.0 * EXPLORER_PADDING - TREE_ROW_CHROME;
+    let indent = tree_style.indent;
     let list = Tree::new(
         |s: &State| &s.workspace.tree,
         |s: &mut State| &mut s.workspace.tree,
@@ -1738,10 +2029,20 @@ fn explorer(s: &State, a: &Appearance) -> El {
     .name("Host files")
     .style(tree_style)
     .row(move |node, row| {
-        let mut item = TreeItem::new(&node.label).badge(&node.badge);
+        let mut item = TreeItem::new(&node.label);
+        if !node.badge.is_empty() {
+            item = item.badge(&node.badge);
+        }
         if node.root {
-            // The workspace folder's own row: drawn open, rooted at the folder's name.
-            item = item.icon(file_icons::resolve(&workspace_root_path, true, true, dark));
+            // The workspace folder's own row: drawn open, rooted at the folder's
+            // name, which truncates before the controls at its trailing edge.
+            item = item
+                .icon(file_icons::resolve(&workspace_root_path, true, true, dark))
+                .trailing(if row.selected {
+                    controls.clone()
+                } else {
+                    controls.clone().group_opacity(0.0, 1.0)
+                });
         } else if let Some(entry) = &node.entry {
             item = item.icon(file_icons::resolve(
                 &entry.path,
@@ -1749,6 +2050,29 @@ fn explorer(s: &State, a: &Appearance) -> El {
                 row.expanded == Some(true),
                 dark,
             ));
+            if let Some(bytes) = entry.size.filter(|_| !entry.directory && !entry.missing) {
+                // The name has priority: the size shows only while the whole
+                // name still fits beside it, so it disappears before the name
+                // would truncate.
+                let size = human_size(bytes);
+                let badge = if node.badge.is_empty() {
+                    0.0
+                } else {
+                    rune::text::measure(&node.badge, &[], badge_font, None).0 + 4.0
+                };
+                let room = row_space - row.depth as f32 * indent - badge;
+                let name = rune::text::measure(&node.label, &[], label_font, None).0;
+                let size_width = rune::text::measure(&size, &[], label_font, None).0;
+                if name + 4.0 + size_width <= room {
+                    item = item.trailing(
+                        text(size)
+                            .key("size")
+                            .font(label_font)
+                            .color(muted)
+                            .help(exact_bytes(bytes)),
+                    );
+                }
+            }
         }
         if node.entry.as_ref().is_some_and(|entry| entry.missing) {
             item.label_color(danger)
@@ -2418,21 +2742,23 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
         .min_h(0.0)
         .on_layout(|s: &mut State, r| s.workspace.body_width = r[2]);
     if explorer_visible {
-        body = body.child(explorer(s, a)).child(
-            el().key("explorer-divider")
-                .w(5.0)
-                .h_full()
-                .center()
-                .child(el().w(1.0).h_full().fill(a.hover_bg()))
-                .hover(a.accent().alpha(0.3))
-                .on_drag(|s: &mut State, d, _| {
-                    if d.phase == Phase::Down {
-                        s.workspace.drag_width = s.workspace.layout.explorer_width;
-                    }
-                    s.workspace.layout.explorer_width = (s.workspace.drag_width + d.dx)
-                        .clamp(160.0, (s.workspace.body_width * 0.35).max(160.0));
-                }),
-        );
+        body = body
+            .child(explorer(s, a, workspace.layout.explorer_width))
+            .child(
+                el().key("explorer-divider")
+                    .w(5.0)
+                    .h_full()
+                    .center()
+                    .child(el().w(1.0).h_full().fill(a.hover_bg()))
+                    .hover(a.accent().alpha(0.3))
+                    .on_drag(|s: &mut State, d, _| {
+                        if d.phase == Phase::Down {
+                            s.workspace.drag_width = s.workspace.layout.explorer_width;
+                        }
+                        s.workspace.layout.explorer_width = (s.workspace.drag_width + d.dx)
+                            .clamp(160.0, (s.workspace.body_width * 0.35).max(160.0));
+                    }),
+            );
     }
     let mut main = row().grow(1.0).min_w(0.0).h_full().min_h(0.0);
     if terminal {
@@ -2485,13 +2811,20 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
             1.0
         }));
     }
-    if explorer_shown && !explorer_visible {
-        // Compact reveal: the explorer draws in flow beside the panes rather than
-        // over them, so the terminal keeps its content visible and resizes for
-        // the space it actually has.
-        main = main.child(explorer(s, a).min_w(160.0).border(1.0, a.hover_bg()));
-    }
     body = body.child(main);
+    if explorer_shown && !explorer_visible {
+        // Compact reveal: Files floats over the right of the workspace, above the
+        // terminal and editor, so their layout (and the PTY's rows and columns)
+        // stays exactly as it was while the overlay comes and goes.
+        let overlay_width = workspace.layout.explorer_width.min(width - 48.0).max(160.0);
+        body = body.child(
+            explorer(s, a, overlay_width)
+                .key("explorer")
+                .pin(None, Some(0.0), Some(0.0), Some(0.0))
+                .border(1.0, a.hover_bg())
+                .shadow(6.0, 20.0, a.scrim()),
+        );
+    }
     body
 }
 
@@ -2582,21 +2915,25 @@ pub(super) fn demo(s: &mut State, diff: bool) {
             name: "src".into(),
             directory: true,
             missing: false,
+            size: None,
         },
         Entry {
             path: PathBuf::from("/workspace/rodtty/Cargo.toml"),
             name: "Cargo.toml".into(),
             directory: false,
             missing: false,
+            size: Some(1_284),
         },
         Entry {
             path,
             name: "main.rs".into(),
             directory: false,
             missing: false,
+            size: Some(18_432),
         },
     ];
     s.workspace.layout.expanded_folders = vec![PathBuf::from("/workspace/rodtty/src")];
+    s.workspace.tree_listed = s.workspace.layout.expanded_folders.clone();
     s.rebuild_tree();
     if diff {
         s.workspace.diff = DiffState::new(vec![rune_kit::diff::FileDiff::from_texts(
@@ -2682,9 +3019,11 @@ pub(super) fn icons_demo(s: &mut State) {
             .into_owned(),
         directory,
         missing: false,
+        size: None,
     })
     .collect();
     s.workspace.layout.expanded_folders = vec![root.join("alpine"), root.join("src")];
+    s.workspace.tree_listed = s.workspace.layout.expanded_folders.clone();
     s.workspace.tabs.clear();
     for (index, name) in [
         "main.rs",
@@ -2762,6 +3101,7 @@ pub(super) fn host_tree_demo(s: &mut State) {
             s.workspace.directory = Some(listing.root.clone());
             s.workspace.entries = listing.entries;
             s.workspace.tree_errors = listing.errors;
+            s.workspace.tree_listed = listing.listed;
             s.workspace.repo = repo;
             s.rebuild_tree();
             s.workspace
@@ -4899,7 +5239,8 @@ mod tests {
         runtime.set_viewport((640.0, 360.0), 1.0);
         runtime.settle_all();
         runtime.frame(0.0);
-        for key in ["files", "explorer-hide", "toggle-editor"] {
+        // Files opens the compact overlay and Files again dismisses it.
+        for key in ["files", "files", "toggle-editor"] {
             let (x, y) = runtime.find(key).unwrap();
             runtime.pointer_down(x, y);
             runtime.pointer_up(x, y);
@@ -6539,5 +6880,694 @@ mod tests {
         assert_eq!(retained.edit.text, "symlink target");
         runtime.update(|s, _| s.persist_workspace());
         assert_eq!(Layout::load(root.path()).unwrap().files, vec![real]);
+    }
+
+    /// The status row under `folder`, if the tree has one.
+    fn folder_state(state: &State, folder: &std::path::Path) -> Option<String> {
+        state
+            .workspace
+            .tree
+            .get(&format!("{}/::folder-state", folder.display()))
+            .map(|node| node.label.clone())
+    }
+
+    /// Presented opacity of `key`, ancestors and hover-group reveals included.
+    fn opacity(runtime: &rune::Runtime<State>, key: &str) -> f32 {
+        runtime
+            .presented(key)
+            .unwrap_or_else(|| panic!("missing {key}"))
+            .1
+    }
+
+    fn settle(runtime: &mut rune::Runtime<State>) {
+        runtime.settle_all();
+        runtime.frame(1.0);
+        runtime.settle_all();
+        runtime.frame(1.0);
+    }
+
+    #[test]
+    fn root_row_keeps_commands_drops_close_and_parent_and_reveals_controls_on_hover_or_focus() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("notes.txt"), "notes").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| !s.workspace.entries.is_empty());
+        let mut runtime = runtime_for(state);
+        settle(&mut runtime);
+        assert!(runtime.find("explorer-hide").is_none());
+        assert!(runtime.find("explorer-up").is_none());
+        assert!(runtime.find("files").is_some(), "the header keeps Files");
+        let mut commands = Vec::new();
+        super::super::actions::register(&mut commands);
+        for action in [AppAction::ExplorerParent, AppAction::ExplorerTerminalRoot] {
+            assert!(commands.iter().any(|c| c.action == action));
+        }
+        // The controls sit at the root row's trailing edge, after its name.
+        let rect = |key: &str| {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .rect
+        };
+        let root_key = root.path().to_string_lossy().into_owned();
+        let row = rect(&root_key);
+        let name = runtime
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.text.as_deref() == root.path().file_name().and_then(|n| n.to_str())
+                    && e.path.contains(&root_key)
+            })
+            .unwrap()
+            .rect;
+        let mut previous = name[0] + name[2];
+        for control in RootControl::ALL {
+            let r = rect(control.key());
+            assert!(r[0] >= previous - 0.5, "{control:?} follows the name");
+            assert!(
+                r[2] >= 29.0 && r[3] >= 27.0,
+                "{control:?} keeps its hit target: {r:?}"
+            );
+            assert!(
+                (r[1] - row[1]).abs() < 2.0,
+                "{control:?} is in the root row"
+            );
+            previous = r[0] + r[2];
+        }
+        assert!(
+            row[0] + row[2] - previous < 8.0,
+            "controls end at the row's edge"
+        );
+        // The cursor starts on no row, so the controls rest hidden.
+        runtime.update(|s, _| s.workspace.tree.clear_selection());
+        settle(&mut runtime);
+        runtime.pointer_move(1100.0, 650.0);
+        settle(&mut runtime);
+        for control in RootControl::ALL {
+            assert!(
+                opacity(&runtime, control.key()) < 0.01,
+                "{control:?} rests hidden"
+            );
+        }
+        runtime.pointer_move(name[0] + 4.0, name[1] + name[3] * 0.5);
+        settle(&mut runtime);
+        for control in RootControl::ALL {
+            assert!(
+                opacity(&runtime, control.key()) > 0.99,
+                "{control:?} shows on hover"
+            );
+        }
+        runtime.pointer_leave();
+        settle(&mut runtime);
+        assert!(opacity(&runtime, "explorer-follow") < 0.01);
+        // Keyboard focus inside the row reveals them too.
+        runtime.set_full_keyboard_access(true);
+        runtime.update(|_, tx| tx.focus("explorer-follow", true));
+        settle(&mut runtime);
+        assert!(opacity(&runtime, "explorer-follow") > 0.99);
+        assert!(opacity(&runtime, "explorer-refresh") > 0.99);
+        // Toggles name and show their state.
+        click(&mut runtime, "explorer-hidden");
+        assert!(runtime.state.config.explorer.show_hidden);
+        settle(&mut runtime);
+        let hidden = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("explorer-hidden"))
+            .unwrap();
+        assert_eq!(hidden.label.as_deref(), Some("Show hidden files: on"));
+        assert!(hidden.fill.a > 0.0, "an active toggle is filled");
+        let follow = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("explorer-follow"))
+            .unwrap();
+        assert_eq!(follow.label.as_deref(), Some("Follow terminal: off"));
+        assert_eq!(follow.fill.a, 0.0);
+    }
+
+    #[test]
+    fn narrow_explorer_folds_root_controls_into_one_menu_whose_toggles_work() {
+        use super::super::tests::{press, runtime_for};
+        assert!(
+            root_controls_fit(240.0),
+            "the default width shows every control"
+        );
+        assert!(!root_controls_fit(220.0));
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("notes.txt"), "notes").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        state.workspace.layout.explorer_width = 180.0;
+        wait(&mut state, |s| !s.workspace.entries.is_empty());
+        let mut runtime = runtime_for(state);
+        settle(&mut runtime);
+        for control in RootControl::ALL {
+            assert!(
+                runtime.find(control.key()).is_none(),
+                "{control:?} folds away"
+            );
+        }
+        let more = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("explorer-more"))
+            .unwrap();
+        assert!(
+            more.rect[2] >= 29.0,
+            "the overflow button keeps its hit target"
+        );
+        click(&mut runtime, "explorer-more");
+        settle(&mut runtime);
+        let label = |runtime: &rune::Runtime<State>, key: &str| {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                .and_then(|e| e.label)
+        };
+        assert_eq!(
+            label(&runtime, "explorer-menu-hidden").as_deref(),
+            Some("Show hidden files: off")
+        );
+        assert_eq!(
+            label(&runtime, "explorer-menu-ignore").as_deref(),
+            Some("Respect Git ignore rules: on")
+        );
+        assert_eq!(
+            label(&runtime, "explorer-menu-refresh").as_deref(),
+            Some("Refresh files")
+        );
+        assert!(runtime.state.application_overlay_open());
+        click(&mut runtime, "explorer-menu-hidden");
+        assert!(runtime.state.config.explorer.show_hidden);
+        assert!(!runtime.state.workspace.explorer_menu);
+        settle(&mut runtime);
+        assert!(runtime.find("explorer-menu").is_none());
+        click(&mut runtime, "explorer-more");
+        settle(&mut runtime);
+        assert_eq!(
+            label(&runtime, "explorer-menu-hidden").as_deref(),
+            Some("Show hidden files: on")
+        );
+        assert!(runtime.elements().iter().any(|e| {
+            e.text.as_deref() == Some("On") && e.path.contains("explorer-menu-hidden")
+        }));
+        click(&mut runtime, "explorer-menu-follow");
+        assert!(runtime.state.config.explorer.follow_terminal);
+        click(&mut runtime, "explorer-more");
+        settle(&mut runtime);
+        press(&mut runtime, Key::Escape, Default::default());
+        settle(&mut runtime);
+        assert!(!runtime.state.workspace.explorer_menu);
+        assert!(runtime.find("explorer-menu").is_none());
+    }
+
+    #[test]
+    fn file_sizes_are_human_readable_with_exact_bytes_and_yield_to_the_filename() {
+        use super::super::tests::runtime_for;
+        for (bytes, shown) in [
+            (0, "0 B"),
+            (999, "999 B"),
+            (1_000, "1.0 KB"),
+            (4_200, "4.2 KB"),
+            (12_345, "12 KB"),
+            (999_499, "999 KB"),
+            (999_950, "1.0 MB"),
+            (1_300_000, "1.3 MB"),
+            (5_000_000_000, "5.0 GB"),
+        ] {
+            assert_eq!(human_size(bytes), shown, "{bytes}");
+        }
+        assert_eq!(exact_bytes(12_345), "12,345 bytes");
+        assert_eq!(exact_bytes(1_234_567), "1,234,567 bytes");
+        assert_eq!(exact_bytes(1), "1 byte");
+        assert_eq!(exact_bytes(0), "0 bytes");
+        let root = crate::test_support::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(root.path())
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        };
+        git(&["init", "-b", "main"]);
+        std::fs::create_dir(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("notes.txt"), vec![b'x'; 12_345]).unwrap();
+        std::fs::write(root.path().join("empty.txt"), b"").unwrap();
+        let long = "a-long-descriptive-file-name-for-rows.txt";
+        std::fs::write(root.path().join(long), vec![b'y'; 2_048]).unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        state.workspace.layout.explorer_width = 420.0;
+        wait(&mut state, |s| {
+            s.workspace.entries.len() == 4 && s.workspace.repo.is_some()
+        });
+        let entry = |state: &State, name: &str| {
+            state
+                .workspace
+                .entries
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap()
+                .size
+        };
+        assert_eq!(entry(&state, "notes.txt"), Some(12_345));
+        assert_eq!(entry(&state, "empty.txt"), Some(0));
+        assert_eq!(entry(&state, "src"), None, "folders have no size");
+        state.rebuild_tree();
+        let mut runtime = runtime_for(state);
+        settle(&mut runtime);
+        let sizes = |runtime: &rune::Runtime<State>| {
+            runtime
+                .elements()
+                .into_iter()
+                .filter(|e| e.key.as_deref() == Some("size") && !e.exiting)
+                .map(|e| (e.path, e.text.unwrap_or_default(), e.text_color))
+                .collect::<Vec<_>>()
+        };
+        let shown = sizes(&runtime);
+        assert_eq!(shown.len(), 3, "one size per regular file: {shown:?}");
+        let src = root.path().join("src").to_string_lossy().into_owned();
+        assert!(
+            shown
+                .iter()
+                .all(|(path, _, _)| !path.contains(&format!("{src}/")))
+        );
+        let notes = shown
+            .iter()
+            .find(|(path, _, _)| path.contains("notes.txt"))
+            .unwrap();
+        assert_eq!(notes.1, "12 KB");
+        let name_color = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("label") && e.path.contains("notes.txt"))
+            .unwrap()
+            .text_color;
+        assert!(
+            notes.2.is_some() && notes.2 != name_color,
+            "sizes are muted"
+        );
+        assert!(shown.iter().any(|(_, text, _)| text == "0 B"));
+        let (x, y) = runtime
+            .find(&format!("{}/size", root.path().join("notes.txt").display()))
+            .unwrap();
+        runtime.pointer_move(x, y);
+        for _ in 0..30 {
+            runtime.frame(0.1);
+        }
+        assert_eq!(
+            runtime.help_tooltip().map(|(text, _)| text),
+            Some("12,345 bytes"),
+            "the tooltip gives exact bytes"
+        );
+        runtime.pointer_leave();
+        // Git status badges stay beside the size.
+        assert!(runtime.elements().iter().any(|e| {
+            e.key.as_deref() == Some("badge")
+                && e.text.as_deref() == Some("??")
+                && e.path.contains("notes.txt")
+        }));
+        // Narrow: the long name keeps the row, the size goes first.
+        runtime.update(|s, _| s.workspace.layout.explorer_width = 180.0);
+        settle(&mut runtime);
+        let shown = sizes(&runtime);
+        assert!(
+            !shown.iter().any(|(path, _, _)| path.contains(long)),
+            "the size hides before the filename truncates: {shown:?}"
+        );
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("label")
+                    && e.path.contains(long)
+                    && e.rect[2] > 40.0),
+            "the filename keeps its room"
+        );
+    }
+
+    #[test]
+    fn empty_folder_shows_only_after_a_successful_listing_finds_no_visible_children() {
+        assert_eq!(folder_status(None, false), "Loading…");
+        assert_eq!(folder_status(None, true), "Empty folder");
+        assert_eq!(
+            folder_status(Some("denied"), true),
+            "Could not load: denied"
+        );
+        let root = crate::test_support::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        let full = root.path().join("full");
+        let dots = root.path().join("dots");
+        let missing = root.path().join("vanishing");
+        for folder in [&empty, &full, &dots, &missing] {
+            std::fs::create_dir(folder).unwrap();
+        }
+        std::fs::write(full.join("a.txt"), "a").unwrap();
+        std::fs::write(dots.join(".only-hidden"), "hidden").unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| s.workspace.entries.len() == 4);
+        // Expanded, but not yet read: every one is loading, none is empty.
+        state.workspace.layout.expanded_folders =
+            vec![empty.clone(), full.clone(), dots.clone(), missing.clone()];
+        state.rebuild_tree();
+        for folder in [&empty, &full, &dots, &missing] {
+            assert_eq!(folder_state(&state, folder).as_deref(), Some("Loading…"));
+        }
+        // The folder disappears before the listing reads it: the listing fails.
+        std::fs::remove_dir(&missing).unwrap();
+        let entries = state.workspace.entries.clone();
+        let mut listing = crate::files::list_tree(
+            root.path(),
+            &state.workspace.layout.expanded_folders,
+            false,
+            &[],
+            None,
+        )
+        .unwrap();
+        // Keep the vanished folder's row so its failure has a place to show.
+        listing
+            .entries
+            .extend(entries.into_iter().filter(|e| e.path == missing));
+        listing
+            .errors
+            .push((missing.clone(), "No such file or directory".into()));
+        state.workspace.entries = listing.entries;
+        state.workspace.tree_errors = listing.errors;
+        state.workspace.tree_listed = listing.listed;
+        state.rebuild_tree();
+        assert_eq!(
+            folder_state(&state, &empty).as_deref(),
+            Some("Empty folder")
+        );
+        assert_eq!(
+            folder_state(&state, &dots).as_deref(),
+            Some("Empty folder"),
+            "hidden-only folders are empty while hidden files are filtered"
+        );
+        assert_eq!(folder_state(&state, &full), None);
+        assert!(
+            state
+                .workspace
+                .tree
+                .contains(&full.join("a.txt").to_string_lossy())
+        );
+        assert_eq!(
+            folder_state(&state, &missing).as_deref(),
+            Some("Could not load: No such file or directory"),
+            "a failed listing is never called empty"
+        );
+        // With hidden files shown, the folder has a real child.
+        state.dispatch(AppAction::ToggleHidden, &mut Tx::default());
+        wait(&mut state, |s| {
+            s.workspace.entries.iter().any(|e| e.name == ".only-hidden")
+        });
+        assert_eq!(folder_state(&state, &dots), None);
+        assert_eq!(
+            folder_state(&state, &empty).as_deref(),
+            Some("Empty folder")
+        );
+    }
+
+    #[test]
+    fn real_worker_failure_and_unread_folders_never_read_empty() {
+        let root = crate::test_support::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let mut state = state(root.path());
+        state.toggle_files();
+        wait(&mut state, |s| s.workspace.entries.len() == 1);
+        assert_eq!(folder_state(&state, &empty).as_deref(), Some("Loading…"));
+        state
+            .workspace
+            .tree
+            .set_expanded(&empty.to_string_lossy(), true);
+        // Expanding marks it for the next listing; until then it is loading.
+        state.workspace_poll(&mut Tx::default());
+        assert!(state.workspace.layout.expanded_folders.contains(&empty));
+        state.rebuild_tree();
+        assert_eq!(folder_state(&state, &empty).as_deref(), Some("Loading…"));
+        wait(&mut state, |s| s.workspace.tree_listed.contains(&empty));
+        assert_eq!(
+            folder_state(&state, &empty).as_deref(),
+            Some("Empty folder")
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = root.path().join("locked");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // Privileged runs can read any folder; the failure needs a real denial.
+            if std::fs::read_dir(&locked).is_err() {
+                state.workspace.layout.expanded_folders.push(locked.clone());
+                state.workspace.scan_token += 1;
+                state.workspace.last_scan = Instant::now() - Duration::from_secs(3);
+                wait(&mut state, |s| {
+                    s.workspace.tree_errors.iter().any(|(p, _)| p == &locked)
+                });
+                let status = folder_state(&state, &locked).unwrap();
+                assert!(status.starts_with("Could not load: "), "{status}");
+                assert!(!state.workspace.tree_listed.contains(&locked));
+            }
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn restored_expanded_folders_load_before_reading_empty_and_keep_their_children() {
+        let fixture = crate::test_support::tempdir().unwrap();
+        let profile = fixture.path().join("profile");
+        let files = fixture.path().join("files");
+        let empty = files.join("empty");
+        let full = files.join("full");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&full).unwrap();
+        std::fs::write(full.join("kept.txt"), "kept").unwrap();
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        let mut before = State::with_root(profile.clone());
+        before.shell = shell.clone();
+        before.directory = files.clone();
+        before.restore_startup();
+        before.navigate(files.clone());
+        before.workspace.layout.explorer = true;
+        wait(&mut before, |s| s.workspace.entries.len() == 2);
+        before.workspace.layout.expanded_folders = vec![empty.clone(), full.clone()];
+        before.persist_workspace();
+        drop(before);
+        let mut fresh = State::with_root(profile);
+        fresh.shell = shell;
+        fresh.directory = files.clone();
+        fresh.restore_startup();
+        assert_eq!(fresh.workspace.directory.as_deref(), Some(files.as_path()));
+        assert_eq!(
+            fresh.workspace.layout.expanded_folders,
+            vec![empty.clone(), full.clone()]
+        );
+        // A tree rebuilt from entries that predate reading the restored
+        // folders (the root alone) shows them loading, never empty.
+        let root_only = crate::files::list_tree(&files, &[], false, &[], None).unwrap();
+        fresh.workspace.entries = root_only.entries;
+        fresh.workspace.tree_listed = root_only.listed;
+        fresh.rebuild_tree();
+        assert_eq!(folder_state(&fresh, &empty).as_deref(), Some("Loading…"));
+        assert_eq!(folder_state(&fresh, &full).as_deref(), Some("Loading…"));
+        // Every rebuild on the way to the real listing keeps the invariant.
+        let start = Instant::now();
+        while !fresh.workspace.tree_listed.contains(&full) {
+            assert!(
+                start.elapsed() < Duration::from_secs(8),
+                "listing timed out"
+            );
+            fresh.workspace_poll(&mut Tx::default());
+            assert_ne!(folder_state(&fresh, &full).as_deref(), Some("Empty folder"));
+            if folder_state(&fresh, &empty).as_deref() == Some("Empty folder") {
+                assert!(fresh.workspace.tree_listed.contains(&empty));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            folder_state(&fresh, &empty).as_deref(),
+            Some("Empty folder")
+        );
+        assert_eq!(folder_state(&fresh, &full), None);
+        assert!(
+            fresh
+                .workspace
+                .tree
+                .contains(&full.join("kept.txt").to_string_lossy())
+        );
+        assert!(fresh.workspace.tree.is_expanded(&full.to_string_lossy()));
+    }
+
+    #[test]
+    fn compact_files_overlay_keeps_the_pty_and_prompt_and_returns_focus() {
+        use super::super::tests::{press, runtime_for};
+        let fixture = crate::test_support::tempdir().unwrap();
+        let path = fixture.path().join("notes.txt");
+        std::fs::write(&path, "overlay notes").unwrap();
+        let mut state = State::with_root(fixture.path().join("profile"));
+        state.directory = fixture.path().to_owned();
+        state.workspace_setup();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.new_tab();
+        state
+            .active()
+            .unwrap()
+            .wait_for("rodtty:", Duration::from_secs(15))
+            .unwrap();
+        state.navigate(fixture.path().to_owned());
+        let mut runtime = runtime_for(state);
+        runtime.set_viewport((640.0, 360.0), 1.0);
+        settle(&mut runtime);
+        // A prompt line long enough to wrap, typed but not run.
+        let long = format!("echo OVERLAY_{}_END", "0123456789".repeat(12));
+        press(&mut runtime, Key::Text(long.clone()), Default::default());
+        let flat = |runtime: &rune::Runtime<State>| {
+            runtime
+                .state
+                .active()
+                .unwrap()
+                .screen()
+                .contents()
+                .replace('\n', "")
+        };
+        let start = Instant::now();
+        while !flat(&runtime).contains(&long) {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "{}",
+                flat(&runtime)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        settle(&mut runtime);
+        let size = |runtime: &rune::Runtime<State>| runtime.state.active().unwrap().screen().size();
+        let terminal_rect = |runtime: &rune::Runtime<State>| {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("terminal") && !e.exiting)
+                .unwrap()
+                .rect
+        };
+        let focused = |runtime: &rune::Runtime<State>, key: &str| {
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some(key) && e.focused)
+        };
+        let before = size(&runtime);
+        let rect = terminal_rect(&runtime);
+        let screen = flat(&runtime);
+        assert!(runtime.find("explorer").is_none());
+        for dismiss in ["escape", "files"] {
+            click(&mut runtime, "files");
+            settle(&mut runtime);
+            assert!(runtime.state.explorer_overlay_open());
+            let explorer = runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("explorer") && !e.exiting)
+                .unwrap()
+                .rect;
+            assert!(
+                (explorer[0] + explorer[2] - 640.0).abs() < 2.0,
+                "the overlay is anchored right: {explorer:?}"
+            );
+            assert_eq!(
+                terminal_rect(&runtime),
+                rect,
+                "the terminal does not reflow"
+            );
+            assert_eq!(size(&runtime), before, "the PTY keeps its rows and columns");
+            assert_eq!(flat(&runtime), screen, "the prompt line is intact");
+            assert!(
+                focused(&runtime, "file-list"),
+                "the overlay takes the keyboard"
+            );
+            if dismiss == "escape" {
+                press(&mut runtime, Key::Escape, Default::default());
+            } else {
+                click(&mut runtime, "files");
+            }
+            settle(&mut runtime);
+            assert!(
+                !runtime.state.explorer_overlay_open(),
+                "{dismiss} dismisses"
+            );
+            assert!(runtime.find("explorer").is_none());
+            assert!(runtime.state.workspace.terminal_focus());
+            assert!(!runtime.elements().iter().any(|e| e.focused));
+            assert_eq!(size(&runtime), before);
+            assert_eq!(terminal_rect(&runtime), rect);
+            assert_eq!(flat(&runtime), screen);
+        }
+        // Typing reaches the terminal again, at the end of the same line.
+        press(&mut runtime, Key::Text("Z".into()), Default::default());
+        let start = Instant::now();
+        while !flat(&runtime).contains(&format!("{long}Z")) {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "{}",
+                flat(&runtime)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Opening a file from the overlay dismisses it and focuses the editor.
+        click(&mut runtime, "files");
+        settle(&mut runtime);
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.entries.iter().any(|e| e.path == path)
+        });
+        settle(&mut runtime);
+        click(&mut runtime, path.to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        settle(&mut runtime);
+        assert!(!runtime.state.explorer_overlay_open());
+        assert!(runtime.find("explorer").is_none());
+        assert!(!runtime.state.workspace.terminal_focus());
+        let id = runtime.state.workspace.tabs[0].id;
+        assert!(runtime.state.workspace.tabs[0].edit.focused);
+        assert!(focused(&runtime, &format!("file-editor-{id}")));
+        // From the editor, the overlay returns focus to the editor.
+        for dismiss in ["escape", "files"] {
+            click(&mut runtime, "files");
+            settle(&mut runtime);
+            assert!(runtime.state.explorer_overlay_open());
+            assert!(focused(&runtime, "file-list"));
+            if dismiss == "escape" {
+                press(&mut runtime, Key::Escape, Default::default());
+            } else {
+                click(&mut runtime, "files");
+            }
+            settle(&mut runtime);
+            assert!(!runtime.state.explorer_overlay_open());
+            assert!(!runtime.state.workspace.terminal_focus());
+            assert!(
+                focused(&runtime, &format!("file-editor-{id}")),
+                "{dismiss} returns to the editor"
+            );
+        }
+        assert_eq!(runtime.state.workspace.tabs[0].edit.text, "overlay notes");
     }
 }

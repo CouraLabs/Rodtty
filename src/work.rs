@@ -358,6 +358,7 @@ impl Worker {
                                             .into_owned(),
                                         directory: false,
                                         missing: true,
+                                        size: None,
                                     });
                                 }
                             }

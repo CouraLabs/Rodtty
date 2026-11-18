@@ -242,6 +242,8 @@ pub struct Entry {
     pub name: String,
     pub directory: bool,
     pub missing: bool,
+    /// Bytes on disk for a regular file; `None` for folders and missing files.
+    pub size: Option<u64>,
 }
 
 pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)> {
@@ -254,8 +256,11 @@ pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)
             continue;
         }
         let path = entry.path();
+        // Follows symlinks, as `is_dir` did, so a linked file shows its target's size.
+        let metadata = fs::metadata(&path).ok();
         entries.push(Entry {
-            directory: path.is_dir(),
+            directory: metadata.as_ref().is_some_and(fs::Metadata::is_dir),
+            size: metadata.filter(fs::Metadata::is_file).map(|m| m.len()),
             path,
             name,
             missing: false,
@@ -277,6 +282,9 @@ pub struct TreeListing {
     pub root: PathBuf,
     pub entries: Vec<Entry>,
     pub errors: Vec<(PathBuf, String)>,
+    /// Expanded folders this listing read successfully. A folder here with no
+    /// entries under it is truly empty (after filters); one absent is unread.
+    pub listed: Vec<PathBuf>,
 }
 
 pub fn list_tree(
@@ -291,6 +299,7 @@ pub fn list_tree(
         root,
         entries: Vec::new(),
         errors: Vec::new(),
+        listed: Vec::new(),
     };
     let mut stack: Vec<_> = entries.into_iter().rev().collect();
     while let Some(entry) = stack.pop() {
@@ -303,13 +312,16 @@ pub fn list_tree(
         }
         if entry.directory && expanded.contains(&entry.path) {
             match list_directory(&entry.path, true) {
-                Ok((_, children)) => stack.extend(children.into_iter().rev().map(|mut child| {
-                    // Preserve a symlink folder's position under the chosen root.
-                    if let Some(name) = child.path.file_name() {
-                        child.path = entry.path.join(name);
-                    }
-                    child
-                })),
+                Ok((_, children)) => {
+                    listing.listed.push(entry.path.clone());
+                    stack.extend(children.into_iter().rev().map(|mut child| {
+                        // Preserve a symlink folder's position under the chosen root.
+                        if let Some(name) = child.path.file_name() {
+                            child.path = entry.path.join(name);
+                        }
+                        child
+                    }))
+                }
                 Err(error) => listing
                     .errors
                     .push((entry.path.clone(), format!("{error:#}"))),

@@ -564,7 +564,7 @@ impl State {
                     self.selection = None;
                 }
             }
-            AppAction::ToggleExplorer => self.toggle_files(),
+            AppAction::ToggleExplorer => self.toggle_files_with_focus(tx),
             AppAction::ShowTerminal => {
                 self.workspace.layout.terminal = true;
                 self.workspace.set_terminal_focus(true);
