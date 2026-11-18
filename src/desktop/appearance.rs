@@ -1,5 +1,6 @@
 //! One resolved appearance for chrome, editing, diff inspection, and terminal rendering.
 //! Families supply data; callers consume semantic roles rather than palette names.
+use super::motion::Motion;
 use super::terminal_palette::{TerminalPalette, over};
 use crate::config::{Appearance as Mode, ThemeFamily};
 use rune::{Color, HelpLook};
@@ -30,6 +31,7 @@ pub(super) struct Appearance {
     pub notes: &'static str,
     kit: Kit,
     terminal: TerminalPalette,
+    motion: Motion,
 }
 impl Appearance {
     pub fn resolve(family: ThemeFamily, mode: Mode, system_dark: bool) -> Self {
@@ -237,7 +239,19 @@ impl Appearance {
             },
             kit: super::fonts::kit(kit),
             terminal,
+            motion: Motion::default(),
         }
+    }
+    /// This appearance under the view's motion preference: Rodtty's own
+    /// transitions and the Kit controls' overlay and control springs follow it.
+    pub fn with_reduced_motion(mut self, reduced: bool) -> Self {
+        self.motion = Motion::new(reduced);
+        self.kit.motion.overlay = self.motion.spring();
+        self.kit.motion.control = self.motion.spring();
+        self
+    }
+    pub fn motion(&self) -> Motion {
+        self.motion
     }
     pub fn kit(&self) -> &Kit {
         &self.kit
@@ -289,6 +303,10 @@ impl Appearance {
     }
     pub fn hover_bg(&self) -> Color {
         self.kit.c.layer_02
+    }
+    /// The overlay a held button draws over its fill: press feedback.
+    pub fn pressed(&self) -> Color {
+        self.kit.c.pressed
     }
     pub fn selection(&self) -> Color {
         self.kit.selection()

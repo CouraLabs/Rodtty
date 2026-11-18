@@ -17,6 +17,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The editor highlight a Search Files match scrolls to.
+pub(super) fn search_match_key(id: u64) -> String {
+    format!("search-match-{id}")
+}
+
 /// How long typing must pause before a search starts.
 pub(super) const DEBOUNCE: Duration = Duration::from_millis(200);
 pub(super) const QUERY_KEY: &str = "explorer-search-query";
@@ -136,6 +141,46 @@ fn hit_key(index: usize) -> String {
 }
 
 impl State {
+    /// Open `path` as [`Self::open_file_with_preview`] does, then select
+    /// `location` in its source. The tab is switched to source text even when
+    /// the file would otherwise show a rendered view (Markdown preview).
+    pub(super) fn open_file_at(
+        &mut self,
+        path: PathBuf,
+        preview: bool,
+        location: workspace::SourceLocation,
+    ) {
+        self.open_file_with_preview(path.clone(), preview);
+        if self.workspace.latest_activation.as_ref() == Some(&path) {
+            self.workspace.pending_location = Some((path, location));
+        }
+    }
+
+    /// Select a pending Search Files location once its tab exists, and scroll
+    /// it into view.
+    pub(super) fn apply_pending_location(&mut self, tx: &mut Tx) -> bool {
+        let Some((path, location)) = self.workspace.pending_location.clone() else {
+            return false;
+        };
+        let Some(tab) = self
+            .workspace
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.document.path == path)
+        else {
+            return false;
+        };
+        self.workspace.pending_location = None;
+        tab.mode = workspace::View::Edit;
+        let range = location.range(&tab.edit.text);
+        tab.edit.set_selection(range.start, range.end);
+        tab.edit.break_history_group();
+        let id = tab.id;
+        self.workspace.search_reveal = Some((id, range));
+        tx.scroll_center(search_match_key(id));
+        true
+    }
+
     /// Show the explorer if needed and focus its Search Files field.
     pub(super) fn open_explorer_search(&mut self, tx: &mut Tx) {
         self.workspace.explorer_menu = false;
@@ -772,7 +817,7 @@ mod tests {
             .unwrap()
             .rect;
         let (_, y) = runtime
-            .find(&workspace::search_match_key(id))
+            .find(&search_match_key(id))
             .expect("the match is marked");
         assert!(
             y > viewport[1] && y < viewport[1] + viewport[3],

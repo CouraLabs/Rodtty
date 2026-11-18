@@ -264,7 +264,8 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             .radius(8.0)
             .fill(a.panel())
             .border(1.0, a.hover_bg())
-            .shadow(6.0, 20.0, a.scrim());
+            .shadow(6.0, 20.0, a.scrim())
+            .enters(a, Entrance::Menu(motion::FROM_TOP_LEADING));
         for (key, title, action) in [
             (
                 "context-open-file",
@@ -295,18 +296,22 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             );
         }
         return Some(
-            el().absolute(0.0, 0.0).w_full().h_full().child(
-                menu.absolute(
-                    x.clamp(8.0, (s.workspace.operation_viewport.0 - 228.0).max(8.0)),
-                    y.clamp(
-                        8.0,
-                        (s.workspace.operation_viewport.1
-                            - (ui_label().size * 1.5 + 8.0).max(29.0) * 7.0
-                            - 28.0)
-                            .max(8.0),
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .enters(a, Entrance::Holder)
+                .child(
+                    menu.absolute(
+                        x.clamp(8.0, (s.workspace.operation_viewport.0 - 228.0).max(8.0)),
+                        y.clamp(
+                            8.0,
+                            (s.workspace.operation_viewport.1
+                                - (ui_label().size * 1.5 + 8.0).max(29.0) * 7.0
+                                - 28.0)
+                                .max(8.0),
+                        ),
                     ),
                 ),
-            ),
         );
     }
     let Some(Pending::Operation(prompt)) = &s.pending else {
@@ -391,16 +396,14 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 }));
         }
     }
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
+    Some(motion::modal(
+        a,
+        el().center()
             .px(16.0)
             .py(16.0)
             .child(content.child(buttons)),
-    )
+        Entrance::Dialog,
+    ))
 }
 
 /// Labelled renderer scene, using a temporary sample rather than any owner file.

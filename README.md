@@ -196,4 +196,4 @@ Settings offers searchable installed UI and verified monospace terminal family s
 
 Bundled Geist and Geist Mono are distributed under the [SIL Open Font License](assets/fonts/Geist-OFL.txt). The retained IBM Plex Mono asset has its own [font license](assets/fonts/IBMPlexMono-LICENSE.txt). Application code is MIT licensed.
 
-Explorer and editor-tab artwork comes from [vscode-icons](https://github.com/vscode-icons/vscode-icons). Its artwork uses CC BY-SA 4.0, with branded icons retaining their respective copyright licenses; see the [artwork attribution and notices](assets/vscode-icons/NOTICE.md). The upstream source-code MIT license does not cover all artwork.
+Explorer and editor-tab artwork comes from [vscode-icons](https://github.com/vscode-icons/vscode-icons). Its artwork uses CC BY-SA 4.0, with branded icons retaining their respective copyright licenses; see the [artwork attribution and notices](assets/icons/NOTICE.md). The upstream source-code MIT license does not cover all artwork.

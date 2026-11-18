@@ -416,14 +416,12 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
     if let Some(fields) = fields {
         content = content.child(fields);
     }
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
+    Some(motion::modal(
+        a,
+        el().center()
             .px(16.0)
             .py(16.0)
             .child(content.child(buttons)),
-    )
+        Entrance::Dialog,
+    ))
 }

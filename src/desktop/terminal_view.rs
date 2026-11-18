@@ -210,6 +210,55 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     })
 }
 
+impl State {
+    /// Notes new output in every session since the last poll, and reports
+    /// whether there was any. Output moves the cells a selection or search
+    /// highlight was drawn over, so those are dropped rather than left over
+    /// the wrong text.
+    pub(super) fn observe_terminal_output(&mut self) -> bool {
+        let generations: Vec<_> = self
+            .sessions
+            .iter()
+            .map(|session| {
+                session
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .generation
+            })
+            .collect();
+        let changed = generations != self.generations;
+        // New output in the shown session moves the cells search matches were
+        // found in; drop them rather than highlight the wrong text.
+        if generations.get(self.active) != self.generations.get(self.active) {
+            self.terminal_search.clear();
+        }
+        self.generations = generations;
+        if changed {
+            // New output moves the cells a highlight was drawn over. Keep it only
+            // while a gesture is still extending it, where the drag re-derives the
+            // range on its next move anyway.
+            if self.drag_origin.is_none() {
+                self.selection = None;
+            }
+        }
+        changed
+    }
+
+    /// Copies the terminal selection's text, when it covers any.
+    pub(super) fn copy(&self, tx: &mut Tx) {
+        if let Some((a, b)) = self.selection {
+            let (a, b) = if a <= b { (a, b) } else { (b, a) };
+            if a != b {
+                let text = self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1));
+                if !text.is_empty() {
+                    tx.copy(text);
+                }
+            }
+        }
+    }
+}
+
 /// How far the pointer travels before a terminal press becomes a selection, in
 /// points. Below this it is a click: a trackpad's contact wobble and a slow
 /// click both stay under it, so neither highlights a cell the owner never

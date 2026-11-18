@@ -280,6 +280,16 @@ impl State {
         self.selection = None;
     }
 
+    /// Find in Terminal: show the terminal with the search bar open and the
+    /// keyboard in its field.
+    pub(super) fn open_terminal_search(&mut self, tx: &mut Tx) {
+        self.workspace.layout.terminal = true;
+        self.workspace.set_terminal_focus(true);
+        self.workspace.explorer_revealed = false;
+        self.terminal_search.open = true;
+        tx.focus_when_shown("search-query", true);
+    }
+
     /// Escape or the close button: hide the bar, drop the highlight, and
     /// return the keyboard to the terminal.
     pub(super) fn close_terminal_search(&mut self, tx: &mut Tx) {

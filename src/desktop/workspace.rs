@@ -170,10 +170,10 @@ pub(super) struct Workspace {
     next_id: u64,
     opening: Vec<(PathBuf, bool)>,
     /// A Search Files match to select once its file's tab shows.
-    pending_location: Option<(PathBuf, SourceLocation)>,
+    pub(super) pending_location: Option<(PathBuf, SourceLocation)>,
     /// The match last revealed this way, while its selection stands.
     pub(super) search_reveal: Option<(u64, std::ops::Range<usize>)>,
-    latest_activation: Option<PathBuf>,
+    pub(super) latest_activation: Option<PathBuf>,
     restore_active: Option<PathBuf>,
     restore_panes: Option<RestoredPanes>,
     pub(super) restoration_warnings: Vec<String>,
@@ -913,40 +913,6 @@ impl State {
             self.workspace.opening.push((path, preview));
             self.message = "Opening file…".into();
         }
-    }
-    /// Open `path` as [`Self::open_file_with_preview`] does, then select
-    /// `location` in its source. The tab is switched to source text even when
-    /// the file would otherwise show a rendered view (Markdown preview).
-    pub(super) fn open_file_at(&mut self, path: PathBuf, preview: bool, location: SourceLocation) {
-        self.open_file_with_preview(path.clone(), preview);
-        if self.workspace.latest_activation.as_ref() == Some(&path) {
-            self.workspace.pending_location = Some((path, location));
-        }
-    }
-
-    /// Select a pending Search Files location once its tab exists, and scroll
-    /// it into view.
-    fn apply_pending_location(&mut self, tx: &mut Tx) -> bool {
-        let Some((path, location)) = self.workspace.pending_location.clone() else {
-            return false;
-        };
-        let Some(tab) = self
-            .workspace
-            .tabs
-            .iter_mut()
-            .find(|tab| tab.document.path == path)
-        else {
-            return false;
-        };
-        self.workspace.pending_location = None;
-        tab.mode = View::Edit;
-        let range = location.range(&tab.edit.text);
-        tab.edit.set_selection(range.start, range.end);
-        tab.edit.break_history_group();
-        let id = tab.id;
-        self.workspace.search_reveal = Some((id, range));
-        tx.scroll_center(search_match_key(id));
-        true
     }
 
     pub(super) fn activate_editor(&mut self, index: usize) {
@@ -1797,11 +1763,6 @@ impl State {
     }
 }
 
-/// The editor highlight a Search Files match scrolls to.
-pub(super) fn search_match_key(id: u64) -> String {
-    format!("search-match-{id}")
-}
-
 /// The status row under a folder that has no rows of its own. **Empty
 /// folder** needs a successful listing of that folder that found nothing
 /// visible; until then it is loading, and a failed listing says why.
@@ -2039,6 +2000,7 @@ pub(super) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
         .fill(a.panel())
         .border(1.0, a.hover_bg())
         .shadow(6.0, 20.0, a.scrim())
+        .enters(a, Entrance::Menu(motion::FROM_TOP_TRAILING))
         .modal_tx(true, close)
         .anchored("explorer-more", rune::Side::Bottom, rune::Align::End, 4.0);
     for control in RootControl::ALL {
@@ -2352,7 +2314,10 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     a.panel()
                 })
                 .hover(a.hover_bg())
-                .children((i == workspace.active && !s.settings).then(|| super::tab_indicator(a)))
+                .children(
+                    (i == workspace.active && !s.settings)
+                        .then(|| super::tab_indicator(a, "indicator-editor-tabs")),
+                )
                 .child(super::tabs::interactive(
                     el().key({
                         let key = format!("editor-tab-{id}");
@@ -2438,7 +2403,10 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .radius(6.0)
                 .fill(if s.settings { a.hover_bg() } else { a.panel() })
                 .hover(a.hover_bg())
-                .children(s.settings.then(|| super::tab_indicator(a)))
+                .children(
+                    s.settings
+                        .then(|| super::tab_indicator(a, "indicator-editor-tabs")),
+                )
                 .child(super::tabs::interactive(
                     el().key({
                         super::pressable("settings-tab");
@@ -2763,7 +2731,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         {
             field = field.text_highlight(
                 rune::TextHighlight::new(range.clone(), a.accent().alpha(0.22))
-                    .key(search_match_key(id)),
+                    .key(explorer_search::search_match_key(id)),
             );
         }
         let viewport = col()
@@ -3001,13 +2969,20 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
         // Compact reveal: Files floats over the right of the workspace, above the
         // terminal and editor, so their layout (and the PTY's rows and columns)
         // stays exactly as it was while the overlay comes and goes.
+        // The overlay slides in and out on its own transition, while what it
+        // shows lands at once as the inline explorer's contents do.
         let overlay_width = workspace.layout.explorer_width.min(width - 48.0).max(160.0);
         body = body.child(
-            explorer(s, a, overlay_width)
-                .key("explorer")
+            el().key("explorer-overlay")
                 .pin(None, Some(0.0), Some(0.0), Some(0.0))
-                .border(1.0, a.hover_bg())
-                .shadow(6.0, 20.0, a.scrim()),
+                .enters_animated(a, Entrance::Drawer(16.0, 0.0))
+                .child(
+                    explorer(s, a, overlay_width)
+                        .key("explorer")
+                        .instant_changes()
+                        .border(1.0, a.hover_bg())
+                        .shadow(6.0, 20.0, a.scrim()),
+                ),
         );
     }
     body
@@ -3052,36 +3027,33 @@ pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
                 }));
         }
     }
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
-            .child(
-                col()
-                    .key("file-dialog")
-                    .role("alertdialog")
-                    .label(title)
-                    .description(format!("{} {message}", tab.document.path.display()))
-                    .modal(false, |s: &mut State| s.cancel_file_action())
-                    .w(470.0)
-                    .px(24.0)
-                    .py(24.0)
-                    .gap(16.0)
-                    .radius(10.0)
-                    .fill(a.panel())
-                    .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
-                    .child(
-                        text(tab.document.path.to_string_lossy())
-                            .font(ui_label())
-                            .color(a.muted())
-                            .wrap_anywhere(),
-                    )
-                    .child(text(message).font(ui_label()).color(a.muted()).wrap())
-                    .child(buttons),
-            ),
-    )
+    Some(motion::modal(
+        a,
+        el().center().child(
+            col()
+                .key("file-dialog")
+                .role("alertdialog")
+                .label(title)
+                .description(format!("{} {message}", tab.document.path.display()))
+                .modal(false, |s: &mut State| s.cancel_file_action())
+                .w(470.0)
+                .px(24.0)
+                .py(24.0)
+                .gap(16.0)
+                .radius(10.0)
+                .fill(a.panel())
+                .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
+                .child(
+                    text(tab.document.path.to_string_lossy())
+                        .font(ui_label())
+                        .color(a.muted())
+                        .wrap_anywhere(),
+                )
+                .child(text(message).font(ui_label()).color(a.muted()).wrap())
+                .child(buttons),
+        ),
+        Entrance::Dialog,
+    ))
 }
 
 pub(super) fn demo(s: &mut State, diff: bool) {
@@ -3440,7 +3412,7 @@ mod tests {
             static EXPECTED: rune::Icon = rune::Icon {
                 name: $name,
                 view: 32.0,
-                body: include_str!(concat!("../../assets/vscode-icons/icons/", $name)),
+                body: include_str!(concat!("../../assets/icons/icons/", $name)),
             };
             &EXPECTED
         }};

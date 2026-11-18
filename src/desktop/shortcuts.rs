@@ -311,15 +311,11 @@ pub(super) fn recorder(s: &State, a: &Appearance) -> Option<El> {
                 .disabled(binding.is_none() || !conflicts.is_empty()),
             ),
     );
-    Some(
-        el().absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(a.scrim())
-            .center()
-            .px(12.0)
-            .child(panel),
-    )
+    Some(motion::modal(
+        a,
+        el().center().px(12.0).child(panel),
+        Entrance::Dialog,
+    ))
 }
 
 #[cfg(test)]

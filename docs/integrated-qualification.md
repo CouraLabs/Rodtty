@@ -102,7 +102,7 @@ Wayland winit minimization is unknown (`null`); the independent compositor ackno
 
 ## Provenance and remaining limits
 
-Theme source blob/tree distinctions, Ayu v7.3.2, explicit light adaptations, full notices, Geist/OFL, retained IBM Plex license, and vscode-icons artwork attribution are preserved. The [icon notice](../assets/vscode-icons/NOTICE.md) distinguishes CC BY-SA artwork/brand rights from MIT association code and notes the adaptive generic derivative. Offline mappings/artwork remain bundled; the importer is development-only.
+Theme source blob/tree distinctions, Ayu v7.3.2, explicit light adaptations, full notices, Geist/OFL, retained IBM Plex license, and vscode-icons artwork attribution are preserved. The [icon notice](../assets/icons/NOTICE.md) distinguishes CC BY-SA artwork/brand rights from MIT association code and notes the adaptive generic derivative. Offline mappings/artwork remain bundled; the importer is development-only.
 
 All four owned [Rune](../vendor/rune/UPSTREAM.md), [Rune Kit](../vendor/rune-kit/RODTTY-PATCH.md), [VTE](../vendor/vte/UPSTREAM.md), and [Trash](../vendor/trash/RODTTY-PATCH.md) patches reverse-apply cleanly to their owned source. [Pinned-original verification](evidence/t23/provenance.json) independently applies each patch to the actual cached Git revision/crate archive and reproduces the owned touched files, with the documented Rune Kit unchanged test-block CRLF→LF import normalization. Their pins, reproducible delta files, upstream notices, and Cargo patches remain intact. Raw copied upstream trees were not treated as new authored code.
 

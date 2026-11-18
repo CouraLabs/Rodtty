@@ -609,13 +609,7 @@ impl State {
                     tx.blur();
                 }
             }
-            AppAction::FindTerminal => {
-                self.workspace.layout.terminal = true;
-                self.workspace.set_terminal_focus(true);
-                self.workspace.explorer_revealed = false;
-                self.terminal_search.open = true;
-                tx.focus_when_shown("search-query", true);
-            }
+            AppAction::FindTerminal => self.open_terminal_search(tx),
             AppAction::FindEditor | AppAction::ReplaceEditor => {
                 self.workspace.layout.editor = true;
                 self.workspace.set_terminal_focus(false);

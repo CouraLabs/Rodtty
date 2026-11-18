@@ -21,6 +21,8 @@ mod file_icon_catalog;
 mod file_icons;
 mod fonts;
 mod frame;
+mod motion;
+use motion::{Enters, Entrance};
 mod palette;
 mod tabs;
 mod terminal_palette;
@@ -361,18 +363,6 @@ impl State {
         };
     }
 
-    fn copy(&self, tx: &mut Tx) {
-        if let Some((a, b)) = self.selection {
-            let (a, b) = if a <= b { (a, b) } else { (b, a) };
-            if a != b {
-                let text = self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1));
-                if !text.is_empty() {
-                    tx.copy(text);
-                }
-            }
-        }
-    }
-
     fn confirm(&mut self, tx: &mut Tx) {
         match self.pending.take() {
             Some(Pending::Quit) => {
@@ -549,6 +539,7 @@ fn button_with(
         .radius(5.0)
         .fill(a.panel())
         .hover(a.hover_bg())
+        .press(a.pressed())
         .on_press_tx(move |state: &mut State, tx| {
             tx.blur();
             action(state, tx);
@@ -586,6 +577,7 @@ fn icon_button(
         .radius(5.0)
         .fill(a.panel())
         .hover(a.hover_bg())
+        .press(a.pressed())
         .on_press_tx(move |state: &mut State, tx| {
             tx.blur();
             action(state, tx);
@@ -661,7 +653,7 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
                 .fill(if selected { a.hover_bg() } else { a.panel() })
                 .hover(a.hover_bg())
                 .no_window_drag()
-                .children(selected.then(|| tab_indicator(a)))
+                .children(selected.then(|| tab_indicator(a, "indicator-terminal-tabs")))
                 // The pill only draws; the label below carries the activation,
                 // because interactive()'s drag and middle handlers make the label
                 // its own press target and would otherwise swallow the press.
@@ -739,11 +731,17 @@ fn terminal_tab(a: &Appearance, i: usize, count: usize, label: &str, selected: b
 
 /// The active tab's accent bar along its pill's lower edge: the tab's
 /// selection mark beyond its fill, at 3:1 or more against the tab fills.
-fn tab_indicator(a: &Appearance) -> El {
-    el().pin(Some(8.0), None, Some(8.0), Some(0.0))
+/// One bar per tab strip (`strip`): when the active tab changes, Rune's
+/// shared-element motion slides it from the old tab to the new one.
+fn tab_indicator(a: &Appearance, strip: &'static str) -> El {
+    el().key(strip)
+        .pin(Some(8.0), None, Some(8.0), Some(0.0))
         .h(2.0)
         .radius(1.0)
         .fill(a.accent())
+        .matched(strip)
+        .motion(a.motion().spring())
+        .enters_animated(a, Entrance::Fade)
 }
 
 /// A tab's label: the text, tinted for whether the tab is the active one and
@@ -773,13 +771,13 @@ fn workspace_menu(state: &State, a: &Appearance) -> El {
     let mut menu = col()
         .key("workspace-menu-popover")
         .w(276.0)
-        .self_start()
         .px(6.0)
         .py(6.0)
         .gap(3.0)
         .radius(10.0)
         .fill(a.panel())
         .border(1.0, a.hover_bg())
+        .enters(a, Entrance::Menu(motion::FROM_TOP_TRAILING))
         .modal_tx(true, |s: &mut State, tx| {
             s.workspace_menu = false;
             tx.focus("workspace-menu", true);
@@ -793,10 +791,36 @@ fn workspace_menu(state: &State, a: &Appearance) -> El {
                 .px(12.0),
         );
     }
-    el().absolute(0.0, header_height())
-        .w_full()
-        .h_full()
-        .child(row().w_full().px(8.0).child(el().grow(1.0)).child(menu))
+    menu.pin(None, Some(header_height()), Some(8.0), None)
+}
+
+/// The footer's status: the latest action's message, or the palette hint.
+/// Each new message is its own element, so it enters as action feedback.
+fn footer_message(state: &State, a: &Appearance) -> El {
+    let message = if state.message.is_empty() {
+        format!("{}  Actions", state.shortcut_label("command-palette"))
+    } else {
+        state.message.clone()
+    };
+    let generation = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        message.hash(&mut hasher);
+        hasher.finish()
+    };
+    el().key(format!("footer-feedback-{generation:x}"))
+        .min_w(0.0)
+        .shrink()
+        .enters(a, Entrance::Feedback)
+        .child(
+            text(message)
+                .key("footer-message")
+                .font(ui_label())
+                .color(a.muted())
+                .truncate()
+                .min_w(0.0)
+                .shrink(),
+        )
 }
 
 fn view(state: &State, cx: &mut Cx<State>) -> El {
@@ -809,7 +833,8 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
         state.config.theme_family,
         state.config.appearance,
         cx.system_dark(),
-    );
+    )
+    .with_reduced_motion(cx.is_reduced_motion());
     cx.foreground(a.ink());
     cx.focus_ring(2.0, 1.0, a.accent());
     cx.help_look(a.tooltip());
@@ -972,19 +997,7 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                             .min_w(0.0)
                             .grow(1.0),
                     )
-                    .child(
-                        text(if state.message.is_empty() {
-                            format!("{}  Actions", state.shortcut_label("command-palette"))
-                        } else {
-                            state.message.clone()
-                        })
-                        .key("footer-message")
-                        .font(ui_label())
-                        .color(a.muted())
-                        .truncate()
-                        .min_w(0.0)
-                        .shrink(),
-                    ),
+                    .child(footer_message(state, a)),
             ),
     );
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
@@ -1000,84 +1013,78 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 "End session",
             ),
         };
-        root = root.child(
-            el().absolute(0.0, 0.0)
-                .w_full()
-                .h_full()
-                .fill(a.scrim())
-                .center()
-                .child(
-                    col()
-                        .key("confirmation")
-                        .role("alertdialog")
-                        .label(title)
-                        .description(message)
-                        .modal(false, |s: &mut State| s.pending = None)
-                        .w(410.0)
-                        .px(24.0)
-                        .py(24.0)
-                        .gap(16.0)
-                        .radius(10.0)
-                        .fill(a.panel())
-                        .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
-                        .child(text(message).font(ui_label()).color(a.muted()).wrap())
-                        .child(
-                            row()
-                                .gap(8.0)
-                                .child(button(a, "cancel", "Cancel", |s, _| s.pending = None))
-                                .child(button(a, "confirm", confirm, |s, tx| s.confirm(tx))),
-                        ),
-                ),
-        );
+        root = root.child(motion::modal(
+            a,
+            el().center().child(
+                col()
+                    .key("confirmation")
+                    .role("alertdialog")
+                    .label(title)
+                    .description(message)
+                    .modal(false, |s: &mut State| s.pending = None)
+                    .w(410.0)
+                    .px(24.0)
+                    .py(24.0)
+                    .gap(16.0)
+                    .radius(10.0)
+                    .fill(a.panel())
+                    .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
+                    .child(text(message).font(ui_label()).color(a.muted()).wrap())
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .child(button(a, "cancel", "Cancel", |s, _| s.pending = None))
+                            .child(button(a, "confirm", confirm, |s, tx| s.confirm(tx))),
+                    ),
+            ),
+            Entrance::Dialog,
+        ));
     }
     if matches!(state.pending, Some(Pending::Window)) {
-        root = root.child(
-            el().absolute(0.0, 0.0)
-                .w_full()
-                .h_full()
-                .fill(a.scrim())
-                .center()
-                .child(
-                    col()
-                        .key("window-close-choice")
-                        .label("Close Rodtty window?")
-                        .description("Keep terminal sessions running or quit Rodtty and end them.")
-                        .modal(false, |s: &mut State| s.pending = None)
-                        .w(410.0)
-                        .px(24.0)
-                        .py(24.0)
-                        .gap(16.0)
-                        .radius(10.0)
-                        .fill(a.panel())
-                        .child(
-                            text("Close Rodtty window?")
-                                .font(ui_style(17.0, 600.0))
-                                .color(a.ink()),
-                        )
-                        .child(
-                            text("Keep terminal sessions running or quit Rodtty and end them.")
-                                .font(ui_label())
-                                .color(a.muted())
-                                .wrap(),
-                        )
-                        .child(button(
-                            a,
-                            "keep-sessions",
-                            "Keep sessions running",
-                            |s, tx| {
-                                s.pending = None;
-                                s.request_action(workspace::Action::KeepWindow, tx);
-                            },
-                        ))
-                        .child(button(a, "quit-sessions", "Quit Rodtty", |s, tx| {
+        root = root.child(motion::modal(
+            a,
+            el().center().child(
+                col()
+                    .key("window-close-choice")
+                    .label("Close Rodtty window?")
+                    .description("Keep terminal sessions running or quit Rodtty and end them.")
+                    .modal(false, |s: &mut State| s.pending = None)
+                    .w(410.0)
+                    .px(24.0)
+                    .py(24.0)
+                    .gap(16.0)
+                    .radius(10.0)
+                    .fill(a.panel())
+                    .child(
+                        text("Close Rodtty window?")
+                            .font(ui_style(17.0, 600.0))
+                            .color(a.ink()),
+                    )
+                    .child(
+                        text("Keep terminal sessions running or quit Rodtty and end them.")
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap(),
+                    )
+                    .child(button(
+                        a,
+                        "keep-sessions",
+                        "Keep sessions running",
+                        |s, tx| {
                             s.pending = None;
-                            s.request_action(workspace::Action::Quit, tx);
-                        }))
-                        .child(button(a, "window-close-cancel", "Cancel", |s, _| {
-                            s.pending = None
-                        })),
-                ),
-        );
+                            s.request_action(workspace::Action::KeepWindow, tx);
+                        },
+                    ))
+                    .child(button(a, "quit-sessions", "Quit Rodtty", |s, tx| {
+                        s.pending = None;
+                        s.request_action(workspace::Action::Quit, tx);
+                    }))
+                    .child(button(a, "window-close-cancel", "Cancel", |s, _| {
+                        s.pending = None
+                    })),
+            ),
+            Entrance::Dialog,
+        ));
     }
     if let Some(dialog) = workspace::file_dialog(state, a) {
         root = root.child(dialog);
@@ -1323,32 +1330,7 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     let frame_changed = state.window_maximized != maximized;
     state.window_maximized = maximized;
     let geometry_changed = state.capture_window_geometry();
-    let generations: Vec<_> = state
-        .sessions
-        .iter()
-        .map(|session| {
-            session
-                .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .generation
-        })
-        .collect();
-    let changed = generations != state.generations;
-    // New output in the shown session moves the cells search matches were
-    // found in; drop them rather than highlight the wrong text.
-    if generations.get(state.active) != state.generations.get(state.active) {
-        state.terminal_search.clear();
-    }
-    state.generations = generations;
-    if changed {
-        // New output moves the cells a highlight was drawn over. Keep it only
-        // while a gesture is still extending it, where the drag re-derives the
-        // range on its next move anyway.
-        if state.drag_origin.is_none() {
-            state.selection = None;
-        }
-    }
+    let changed = state.observe_terminal_output();
     let fonts_changed = state.font_catalog.poll();
     let settings_changed = state.poll_settings();
     let (sans, mono) = state.font_families();
