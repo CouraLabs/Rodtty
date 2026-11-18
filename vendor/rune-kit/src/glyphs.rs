@@ -163,6 +163,110 @@ pub static FILE_IMAGE: Icon = Icon {
         r#"<circle cx="6.5" cy="7.5" r="1" fill="currentColor"/><path d="M3.5 12.5L6.5 9.5L8 11L9.5 9.5L12.5 12.5" stroke="currentColor" stroke-linejoin="round"/>"#
     ),
 };
+/// A gear, for an app's settings.
+pub static GEAR: Icon = Icon {
+    name: "kit-gear",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="2.25" stroke="currentColor"/><path d="M8 1.75V3.25M8 12.75V14.25M1.75 8H3.25M12.75 8H14.25M3.58 3.58L4.64 4.64M11.36 11.36L12.42 12.42M12.42 3.58L11.36 4.64M4.64 11.36L3.58 12.42" stroke="currentColor" stroke-linecap="round"/>"#,
+};
+/// A panel with a sidebar column, for showing and hiding an explorer.
+pub static SIDEBAR: Icon = Icon {
+    name: "kit-sidebar",
+    view: 16.0,
+    body: r#"<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" stroke="currentColor"/><path d="M6 2.75V13.25" stroke="currentColor"/>"#,
+};
+/// A terminal prompt, for a terminal pane.
+pub static TERMINAL: Icon = Icon {
+    name: "kit-terminal",
+    view: 16.0,
+    body: concat!(
+        r#"<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" stroke="currentColor"/>"#,
+        r#"<path d="M4.5 6L6.5 8L4.5 10M8.5 10H11.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#
+    ),
+};
+/// A page with a pencil, for an editor pane.
+pub static PANE_EDIT: Icon = Icon {
+    name: "kit-pane-edit",
+    view: 16.0,
+    body: concat!(
+        r#"<path d="M9 2.5H4.5A1.5 1.5 0 0 0 3 4V13A1.5 1.5 0 0 0 4.5 14.5H11A1.5 1.5 0 0 0 12.5 13V8.5" stroke="currentColor" stroke-linecap="round"/>"#,
+        r#"<path d="M11.5 2.5L13.5 4.5L9 9H7V7L11.5 2.5Z" stroke="currentColor" stroke-linejoin="round"/>"#
+    ),
+};
+/// Three dots in a row, for a menu.
+pub static ELLIPSIS: Icon = Icon {
+    name: "kit-ellipsis",
+    view: 16.0,
+    body: r#"<circle cx="3.5" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor"/>"#,
+};
+/// A plus, for adding an item.
+pub static PLUS: Icon = Icon {
+    name: "kit-plus",
+    view: 16.0,
+    body: r#"<path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" stroke-linecap="round"/>"#,
+};
+/// An up arrow, for opening the parent folder.
+pub static ARROW_UP: Icon = Icon {
+    name: "kit-arrow-up",
+    view: 16.0,
+    body: r#"<path d="M8 12.5V3.5M4.5 7L8 3.5L11.5 7" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+/// A down arrow, for jumping to the next change.
+pub static ARROW_DOWN: Icon = Icon {
+    name: "kit-arrow-down",
+    view: 16.0,
+    body: r#"<path d="M8 3.5V12.5M4.5 9L8 12.5L11.5 9" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+/// A circular refresh arrow.
+pub static REFRESH: Icon = Icon {
+    name: "kit-refresh",
+    view: 16.0,
+    body: r#"<path d="M13.2 8A5.2 5.2 0 1 1 8 2.8C10 2.8 11.7 3.9 12.6 5.5M13.2 2.6V5.6H10.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+/// A location crosshair, for following the terminal's folder.
+pub static CROSSHAIR: Icon = Icon {
+    name: "kit-crosshair",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="2" stroke="currentColor"/><path d="M8 1.5V3.5M8 12.5V14.5M1.5 8H3.5M12.5 8H14.5" stroke="currentColor" stroke-linecap="round"/>"#,
+};
+/// An eye, for showing hidden files.
+pub static EYE_FILES: Icon = Icon { name: "kit-eye-files", view: 16.0, body: EYE.body };
+/// A slash, for Git ignore rules.
+pub static FILTER: Icon = Icon {
+    name: "kit-filter",
+    view: 16.0,
+    body: r#"<path d="M2.5 3.5H13.5L9.5 8.2V12.5L6.5 13.5V8.2L2.5 3.5Z" stroke="currentColor" stroke-linejoin="round"/>"#,
+};
+/// A soft-back/return arrow, for going back to the terminal.
+pub static ARROW_LEFT: Icon = Icon {
+    name: "kit-arrow-left",
+    view: 16.0,
+    body: r#"<path d="M13.5 8H2.5M7 3.5L2.5 8L7 12.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+/// A pencil, for the editor's Edit mode.
+pub static PENCIL: Icon = Icon {
+    name: "kit-pencil",
+    view: 16.0,
+    body: r#"<path d="M2.5 13.5L3.2 10.5L11 2.7A1.4 1.4 0 0 1 13 2.7L13.3 3A1.4 1.4 0 0 1 13.3 5L5.5 12.8L2.5 13.5Z" stroke="currentColor" stroke-linejoin="round"/>"#,
+};
+/// A floppy disk, for saving.
+pub static SAVE: Icon = Icon {
+    name: "kit-save",
+    view: 16.0,
+    body: r#"<path d="M2.5 2.5H11.5L13.5 4.5V13.5H2.5V2.5Z" stroke="currentColor" stroke-linejoin="round"/><path d="M5 2.5V6H10.5V2.5M5 13.5V10H11V13.5" stroke="currentColor" stroke-linejoin="round"/>"#,
+};
+/// A Git-style compare (split arrows), for diff modes.
+pub static COMPARE: Icon = Icon {
+    name: "kit-compare",
+    view: 16.0,
+    body: r#"<path d="M5 2.5V13.5M11 2.5V13.5M2.5 5H5M11 9H13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+/// Rendered text, for a markdown preview.
+pub static PREVIEW_TEXT: Icon = Icon {
+    name: "kit-preview-text",
+    view: 16.0,
+    body: r#"<path d="M3 3.5H13M3 6.5H10M3 9.5H13M3 12.5H8" stroke="currentColor" stroke-linecap="round"/>"#,
+};
 
 pub const DEFAULT: Glyphs = Glyphs {
     check: &CHECK,
@@ -181,4 +285,10 @@ pub const DEFAULT: Glyphs = Glyphs {
     eye_off: &EYE_OFF,
     circle_x: &CIRCLE_X,
     dash: &DASH,
+    gear: &GEAR,
+    sidebar: &SIDEBAR,
+    terminal: &TERMINAL,
+    pane_edit: &PANE_EDIT,
+    ellipsis: &ELLIPSIS,
+    plus: &PLUS,
 };

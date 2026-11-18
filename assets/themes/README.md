@@ -1,6 +1,6 @@
 # Appearance palette sources
 
-Rodtty offers exactly nine families and eighteen appearances. Family and
+Rodtty offers exactly twelve families and twenty-four appearances. Family and
 Light / Dark / System are independent preferences. Defaults remain Catppuccin
 and System. System follows live host changes; explicit Light/Dark stays fixed.
 The searchable Settings dropdown shows every family without cycling through them.
@@ -16,6 +16,9 @@ The searchable Settings dropdown shows every family without cycling through them
 | Night Owl | Light Owl | Night Owl | [official editor themes](https://github.com/sdras/night-owl-vscode-theme), [MIT notice](nightowl-LICENSE.txt) |
 | Ayu | Light | Dark | [ayu-colors v7.3.2](https://github.com/ayu-theme/ayu-colors/tree/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c), [MIT notice](ayu-v7.3.2-LICENSE.txt) |
 | Solarized | Light | Dark | [Xresources and Vim roles](https://github.com/altercation/solarized), [MIT notice](solarized-LICENSE.txt) |
+| Rosé Pine | Dawn | Moon | [palette](https://github.com/rose-pine/palette), [MIT notice](rosepine-NOTICE.txt) |
+| Kanagawa | Lotus | Wave | [Neovim theme palettes](https://github.com/rebelot/kanagawa.nvim), [MIT notice](kanagawa-NOTICE.txt) |
+| Everforest | Light | Dark Green | [Vim/Neovim palette](https://github.com/sainnhe/everforest), [MIT+ notice](everforest-NOTICE.txt) |
 
 [sources.json](sources.json) records exact verified Git blob SHA values, original
 repository/path, retrieved tree IDs and immutable Git blob API URLs. Tree IDs

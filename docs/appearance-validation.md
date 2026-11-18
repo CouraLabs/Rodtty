@@ -2,7 +2,7 @@
 
 This is the historical T05 report. The later [integrated qualification](integrated-qualification.md#visual-evidence) records the final 18-appearance wide/minimum real-Git matrix, source freshness, and current gates.
 
-The nine families and eighteen appearances use the shared workspace resolver.
+The twelve families and twenty-four appearances use the shared workspace resolver.
 [Palette sources and adaptations](../assets/themes/README.md) lists exact RGB
 sources, immutable blob pins, full notices, and the deliberately adapted light
 palettes. One Dark Pro Light is visibly labelled as a Rodtty adaptation.

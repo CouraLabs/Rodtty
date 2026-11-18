@@ -343,7 +343,7 @@ mod tests {
     }
     #[test]
     fn owner_searches_records_and_resets_a_live_persisted_shortcut() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
         assert!(rt.find("record-toggle-explorer").is_some());
@@ -365,7 +365,7 @@ mod tests {
     }
     #[test]
     fn conflicting_recording_preserves_defaults_and_palette_uses_current_binding() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
         click(&mut rt, "record-toggle-explorer");
@@ -396,7 +396,7 @@ mod tests {
     }
     #[test]
     fn owner_records_and_uses_a_mouse_shortcut() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
         click(&mut rt, "record-toggle-explorer");
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn shared_terminal_editor_chords_follow_visible_focus_and_text_fields_keep_copy_paste() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         workspace::demo(&mut state, false);
         state
@@ -472,7 +472,7 @@ mod tests {
     }
     #[test]
     fn runtime_retains_real_pty_interrupt_and_fullscreen_keys_with_custom_binding() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         state.directory = root.path().into();
         state.shell = std::env::current_exe()
@@ -485,7 +485,7 @@ mod tests {
         session
             .wait_for("rodtty:", std::time::Duration::from_secs(15))
             .unwrap();
-        session.send(b"stty raw -echo; printf '\\033[?1h'; head -c 10 | od -An -tx1; stty sane; printf '\\033[?1l\\nKEYS_DONE\\n'\r".to_vec()).unwrap();
+        session.send(b"stty raw -echo; printf '\\033[?1h'; head -c 10 | od -An -tx1 | tr -s ' '; stty sane; printf '\\033[?1l\\nKEYS_DONE\\n'\r".to_vec()).unwrap();
         let started = std::time::Instant::now();
         while !session
             .state
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn invalid_external_binding_retains_last_live_binding_and_explains_error() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
         click(&mut rt, "record-toggle-explorer");
@@ -562,7 +562,7 @@ mod tests {
     }
     #[test]
     fn clicking_a_visible_editor_overrides_stale_terminal_pane_focus_for_close_chords() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         workspace::demo(&mut state, false);
         state.directory = root.path().into();
@@ -599,7 +599,7 @@ mod tests {
     }
     #[test]
     fn assigned_mouse_binding_takes_precedence_over_a_tab_middle_click() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
         click(&mut rt, "record-toggle-explorer");

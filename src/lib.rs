@@ -8,3 +8,6 @@ pub mod work;
 
 #[cfg(feature = "desktop")]
 pub mod desktop;
+
+#[cfg(test)]
+mod test_support;

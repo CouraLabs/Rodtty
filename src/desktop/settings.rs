@@ -74,27 +74,40 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .px(12.0)
+        .px(16.0)
         .py(12.0)
-        .gap(10.0)
+        .gap(12.0)
         .child(text("Settings").font(ui_style(18.0, 600.0)).color(a.ink()))
         .child(
-            text_input(&s.settings_query, ui_label())
-                .caret(a.accent(), a.selection())
-                .key("settings-search")
-                .label("Search settings")
+            row()
+                .key("settings-toolbar")
                 .w_full()
-                .h(30.0)
-                .color(a.ink())
-                .placeholder("Search settings", a.muted())
-                .on_edit(|s: &mut State| &mut s.settings_query),
-        )
-        .child(button(
-            a,
-            "open-settings-json",
-            "Open Settings JSON",
-            |s, tx| s.dispatch(AppAction::OpenSettingsJson, tx),
-        ));
+                .gap(8.0)
+                .center_y()
+                .child(
+                    text_input(&s.settings_query, ui_label())
+                        .caret(a.accent(), a.selection())
+                        .key("settings-search")
+                        .label("Search settings")
+                        .single_line()
+                        .w_full()
+                        .min_w(0.0)
+                        .grow(1.0)
+                        .h(30.0)
+                        .color(a.ink())
+                        .placeholder("Search settings", a.muted())
+                        // A thin border marks the field's bounds against the page.
+                        .border(1.0, a.kit().c.border_base)
+                        .radius(6.0)
+                        .on_edit(|s: &mut State| &mut s.settings_query),
+                )
+                .child(
+                    button(a, "open-settings-json", "Open Settings JSON", |s, tx| {
+                        s.dispatch(AppAction::OpenSettingsJson, tx)
+                    })
+                    .shrink(),
+                ),
+        );
     if let Some(error) = &s.settings_error {
         page = page.child(
             text(error)
@@ -196,7 +209,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         let mut group = col()
             .key(format!("settings-section-{section}"))
             .w_full()
-            .gap(6.0)
+            .gap(8.0)
+            .px(14.0)
+            .py(12.0)
+            .radius(8.0)
+            .fill(a.panel())
+            .border(1.0, a.kit().c.border_base)
             .child(text(section).font(ui_style(13.0, 600.0)).color(a.accent()));
         let target = match section {
             "Appearance" => Some("ui"),
@@ -552,6 +570,8 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                             .caret(a.accent(), a.selection()).key("specified-directory")
                             .label("Specified terminal folder").single_line().w_full().h(30.0).color(a.ink())
                             .placeholder("Absolute folder path", a.muted())
+                            .border(1.0, a.kit().c.border_base)
+                            .radius(6.0)
                             .on_edit(|s: &mut State| &mut s.behavior_directory)
                             .on_input_change(|s: &mut State, _| {
                                 let path = PathBuf::from(&s.behavior_directory.text);
@@ -894,7 +914,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
     page.child(list)
 }
 
-const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Light Dark System palette";
+const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Rosé Pine Dawn Moon Kanagawa Lotus Wave Everforest Light Dark System palette";
 
 fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     use crate::config::ThemeFamily;
@@ -910,6 +930,9 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
                 ThemeFamily::NightOwl => "Light Owl / Night Owl",
                 ThemeFamily::Catppuccin => "Latte / Mocha",
                 ThemeFamily::TokyoNight => "Light / Night",
+                ThemeFamily::RosePine => "Dawn / Moon",
+                ThemeFamily::Kanagawa => "Lotus / Wave",
+                ThemeFamily::Everforest => "Light / Dark Green",
                 _ => "Light / Dark",
             }
             .into(),
@@ -928,7 +951,7 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     )
     .label("Theme family")
     .current(Some(s.config.theme_family.label()))
-    .search_placeholder("Search nine theme families")
+    .search_placeholder("Search theme families")
     .width(280.0)
     .max_height(256.0)
     .on_choose(|s, label, _| {
@@ -1003,6 +1026,12 @@ mod tests {
         runtime.frame(0.0);
         runtime
     }
+    fn open_settings(runtime: &mut rune::Runtime<State>) {
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+    }
     fn click(runtime: &mut rune::Runtime<State>, key: &str) {
         let (x, y) = runtime
             .find(key)
@@ -1026,7 +1055,7 @@ mod tests {
     }
     #[test]
     fn file_preferences_reset_individually_without_changing_other_choices() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut config = Config::default();
         config.explorer.confirm_deletion = false;
         config.explorer.follow_terminal = true;
@@ -1034,7 +1063,7 @@ mod tests {
         config.explorer.respect_ignore = false;
         config.save(root.path()).unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         for (query, control, expected) in [
             (
                 "Trash",
@@ -1081,9 +1110,9 @@ mod tests {
     #[test]
     fn behavior_settings_save_and_reset_terminal_close_and_directory_choices() {
         use crate::config::{NewTerminalDirectory, TerminalClosePolicy};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("terminal tab close"));
         rt.frame(0.0);
         click(&mut rt, "terminal-close-always");
@@ -1168,9 +1197,9 @@ mod tests {
 
     #[test]
     fn behavior_settings_search_apply_live_persist_and_reset_window_policy() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("window close"));
         rt.frame(0.0);
         click(&mut rt, "window-close-ask");
@@ -1195,9 +1224,9 @@ mod tests {
 
     #[test]
     fn owner_selects_dracula_family_and_keeps_both_appearances_on_reopen() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("theme"));
         runtime.frame(0.0);
         click(&mut runtime, "theme-family-trigger");
@@ -1215,10 +1244,10 @@ mod tests {
     }
 
     #[test]
-    fn all_nine_families_apply_both_previews_live_system_json_and_independent_resets() {
-        let root = tempfile::tempdir().unwrap();
+    fn all_families_apply_both_previews_live_system_json_and_independent_resets() {
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         rt.frame(0.0);
         // Independently specified upstream canvas values, not derived from the resolver.
@@ -1288,8 +1317,32 @@ mod tests {
                 "Solarized Light",
                 "Solarized Dark",
             ),
+            (
+                "Rosé Pine",
+                "rose_pine",
+                "#faf4ed",
+                "#191724",
+                "Rosé Pine Dawn",
+                "Rosé Pine",
+            ),
+            (
+                "Kanagawa",
+                "kanagawa",
+                "#f2ecbc",
+                "#1f1f28",
+                "Kanagawa Lotus",
+                "Kanagawa",
+            ),
+            (
+                "Everforest",
+                "everforest",
+                "#fdf0d5",
+                "#2f383e",
+                "Everforest Light",
+                "Everforest",
+            ),
         ];
-        assert_eq!(crate::config::ThemeFamily::ALL.len(), 9);
+        assert_eq!(crate::config::ThemeFamily::ALL.len(), 12);
         for (label, json_name, light, dark, light_name, dark_name) in families {
             click(&mut rt, "theme-family-trigger");
             rt.paste(label);
@@ -1361,7 +1414,7 @@ mod tests {
 
     #[test]
     fn every_family_recolors_rendered_ansi_without_rewriting_program_rgb_or_terminal_selection() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         rt.update(|s, _| {
             let mut parser = vt100::Parser::new(8, 30, 0);
@@ -1438,13 +1491,13 @@ mod tests {
 
     #[test]
     fn ayu_light_settings_labels_remain_readable_on_the_light_canvas() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let config: Config =
             serde_json::from_value(serde_json::json!({"theme_family":"ayu","appearance":"light"}))
                 .unwrap();
         config.save(root.path()).unwrap();
         let mut rt = runtime(root.path());
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
@@ -1478,7 +1531,7 @@ mod tests {
 
     #[test]
     fn editor_and_read_only_diff_draw_the_selected_familys_keyword_palette() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         for (family, light, dark) in [
             ("catppuccin", "#8839ef", "#cba6f7"),
@@ -1518,13 +1571,13 @@ mod tests {
 
     #[test]
     fn narrow_settings_theme_dropdown_is_searchable_and_selectable() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         rt.set_viewport((680.0, 800.0), 1.0);
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
         }
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("theme"));
         for _ in 0..45 {
             rt.frame(1.0 / 60.0);
@@ -1545,9 +1598,9 @@ mod tests {
 
     #[test]
     fn owner_changes_and_resets_independent_live_font_sizes() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("font size"));
         runtime.frame(0.0);
         let before = runtime
@@ -1587,7 +1640,7 @@ mod tests {
     }
     #[test]
     fn system_tracks_live_host_changes_while_explicit_appearance_stays_fixed() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         assert_canvas(&runtime, "#1e1e2e");
         runtime.set_system_dark(false);
@@ -1595,7 +1648,7 @@ mod tests {
             runtime.frame(1.0 / 60.0);
         }
         assert_canvas(&runtime, "#eff1f5");
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-dark");
         runtime.set_system_dark(true);
         runtime.frame(0.0);
@@ -1627,7 +1680,7 @@ mod tests {
     }
     #[test]
     fn switching_appearance_recolors_ansi_but_preserves_extended_output_and_selection() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         runtime.update(|s, _| {
             let mut parser = vt100::Parser::new(8, 30, 0);
@@ -1662,7 +1715,7 @@ mod tests {
         assert_eq!(cell_background(&runtime, 0), rgb("#f38ba8"));
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
         assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-light");
         assert_eq!(cell_background(&runtime, 0), rgb("#d20f39"));
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
@@ -1676,9 +1729,9 @@ mod tests {
     }
     #[test]
     fn owner_selects_persists_and_resets_autosave_preferences() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("autosave"));
         runtime.frame(0.0);
         click(&mut runtime, "autosave-after-delay");
@@ -1718,9 +1771,9 @@ mod tests {
 
     #[test]
     fn owner_changes_appearance_live_and_reopens_with_saved_choice() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = self::runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "appearance-light");
         assert_canvas(&runtime, "#eff1f5");
         click(&mut runtime, "appearance-dark");
@@ -1739,9 +1792,9 @@ mod tests {
     }
     #[test]
     fn owner_searches_resets_and_edits_actual_json_beside_the_terminal() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         assert!(runtime.find("editor-pane").is_some());
         assert!(runtime.find("terminal-pane").is_some());
         assert!(runtime.find("settings-tab").is_some());
@@ -1782,9 +1835,11 @@ mod tests {
             runtime.frame(0.0);
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(
-            runtime.state.workspace.tabs[0].document.path,
-            root.path().join("settings.json")
+        assert!(
+            runtime.state.workspace.tabs[0]
+                .document
+                .path
+                .ends_with("settings.json")
         );
         assert!(runtime.find("file-editor-1").is_some());
         assert!(runtime.find("terminal-pane").is_some());
@@ -1794,7 +1849,7 @@ mod tests {
             key: Key::Command('a'),
             mods: rune::Mods {
                 cmd: true,
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 ..Default::default()
             },
         });
@@ -1822,10 +1877,10 @@ mod tests {
     }
     #[test]
     fn external_json_updates_preferences_but_invalid_edits_keep_the_last_valid_choices() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         Config::default().save(root.path()).unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         let path = root.path().join("settings.json");
         std::fs::write(
             &path,
@@ -1880,10 +1935,10 @@ mod tests {
     }
     #[test]
     fn a_ui_edit_preserves_unrelated_external_changes_before_the_next_poll() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         Config::default().save(root.path()).unwrap();
         let mut runtime = runtime(root.path());
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("scrollback"));
         runtime.frame(1.0 / 60.0);
         std::fs::write(

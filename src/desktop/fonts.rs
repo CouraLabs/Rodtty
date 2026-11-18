@@ -181,6 +181,10 @@ mod tests {
             rt.frame(1.0 / 60.0);
         }
     }
+    fn open_settings(rt: &mut Runtime<State>) {
+        rt.update(|s, tx| s.dispatch(AppAction::Settings, tx));
+        frame(rt);
+    }
     fn click(rt: &mut Runtime<State>, key: &str) {
         let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
         rt.pointer_down(x, y);
@@ -190,7 +194,7 @@ mod tests {
     #[test]
     fn owner_searches_and_selects_ui_and_monospace_terminal_families() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         state.open_settings(&mut Tx::default());
         state.settings_query.replace_text("font family");
@@ -258,7 +262,7 @@ mod tests {
     }
     #[test]
     fn file_operation_dialogs_and_tree_menus_cover_open_font_dropdowns() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let file = root.path().join("notes.txt");
         std::fs::write(&file, "notes").unwrap();
         let mut state = State::with_root(root.path().into());
@@ -352,7 +356,7 @@ mod tests {
             families.iter().filter(|f| f.monospace).count(),
             installed_mono
         );
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         workspace_preview(&mut state);
         state.save_config(|c| c.fonts.editor_size = 22.0);
@@ -402,7 +406,7 @@ mod tests {
     #[test]
     fn disappeared_saved_families_show_the_bundled_fallback_without_rewriting_preferences() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut config = Config::default();
         config.fonts.ui_family = "Rodtty Vanished UI 1229".into();
         config.fonts.terminal_family = "Rodtty Vanished Mono 1229".into();
@@ -444,7 +448,7 @@ mod tests {
     #[test]
     fn terminal_unicode_cursor_and_selection_follow_live_sizes_and_display_scale() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         let mut parser = vt100::Parser::new(24, 80, 100);
         parser.process("Wi日本語🌿e\u{301}Z".as_bytes());
@@ -465,7 +469,7 @@ mod tests {
         // rounds to 8 device pixels; wide/combining glyphs keep VT cell indices.
         assert_eq!(rect(&rt, "terminal-cell-0-11")[0] - grid[0], 88.0);
         assert_eq!(rect(&rt, "terminal-caret")[0] - grid[0], 96.0);
-        click(&mut rt, "settings");
+        open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("font size"));
         frame(&mut rt);
         for _ in 0..6 {
@@ -485,8 +489,8 @@ mod tests {
                     key: Key::Command('c'),
                     mods: rune::Mods {
                         cmd: true,
-                        ctrl: true,
-                        shift: true,
+                        ctrl: !cfg!(target_os = "macos"),
+                        shift: !cfg!(target_os = "macos"),
                         ..Default::default()
                     },
                 },
@@ -508,7 +512,7 @@ mod tests {
     fn external_font_preferences_apply_with_bundled_fallback_and_keep_unsaved_editor_work() {
         use std::time::{Duration, Instant};
         let _families = rune::text::with_families("Geist", "Geist Mono");
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         workspace_preview(&mut state);
         let text = state.workspace.tabs[0].edit.text.clone();
@@ -574,7 +578,7 @@ mod tests {
     }
     #[test]
     fn git_diff_code_follows_the_live_editor_size() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         diff_preview(&mut state);
         let mut rt = Runtime::with_text(

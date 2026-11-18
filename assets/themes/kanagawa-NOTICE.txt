@@ -1,0 +1,16 @@
+Kanagawa palettes used by Rodtty's Appearances.
+
+Primary source: https://github.com/rebelot/kanagawa.nvim (retrieved upstream
+values, see sources.json for the pinned records)
+
+Kanagawa license declaration (upstream): distributed under the MIT License.
+Rodtty uses the Wave and Lotus palettes' literal RGB values for UI surfaces,
+terminal ANSI slots and editor syntax roles, with small-text contrast adapted
+toward the family ink as documented in README.md.
+
+Upstream MIT permission statement:
+https://github.com/rebelot/kanagawa.nvim/blob/main/LICENSE
+
+The theme names "Kanagawa Wave" and "Kanagawa Lotus" belong to their creator;
+Rodtty only adapts the literal color values, with attribution kept in Settings
+next to each appearance.

@@ -16,6 +16,9 @@ pub enum ThemeFamily {
     NightOwl,
     Ayu,
     Solarized,
+    RosePine,
+    Kanagawa,
+    Everforest,
 }
 impl ThemeFamily {
     pub const ALL: &[Self] = &[
@@ -28,6 +31,9 @@ impl ThemeFamily {
         Self::NightOwl,
         Self::Ayu,
         Self::Solarized,
+        Self::RosePine,
+        Self::Kanagawa,
+        Self::Everforest,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -40,6 +46,9 @@ impl ThemeFamily {
             Self::NightOwl => "Night Owl",
             Self::Ayu => "Ayu",
             Self::Solarized => "Solarized",
+            Self::RosePine => "Rosé Pine",
+            Self::Kanagawa => "Kanagawa",
+            Self::Everforest => "Everforest",
         }
     }
     pub fn key(self) -> &'static str {
@@ -53,6 +62,9 @@ impl ThemeFamily {
             Self::NightOwl => "nightowl",
             Self::Ayu => "ayu",
             Self::Solarized => "solarized",
+            Self::RosePine => "rosepine",
+            Self::Kanagawa => "kanagawa",
+            Self::Everforest => "everforest",
         }
     }
 }

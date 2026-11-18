@@ -4,9 +4,11 @@ use rodtty::{
 };
 use std::{fs, path::Path, process::Command};
 
+mod common;
+
 #[test]
 fn utf8_bom_and_mixed_endings_survive_edits() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let path = root.path().join("café.txt");
     fs::write(&path, b"\xef\xbb\xbfone\r\ntwo\nthree\r\n").unwrap();
     let mut document = Document::open(&path).unwrap();
@@ -20,7 +22,7 @@ fn utf8_bom_and_mixed_endings_survive_edits() {
 
 #[test]
 fn external_changes_and_deletion_require_explicit_overwrite() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let path = root.path().join("file.txt");
     fs::write(&path, "original\n").unwrap();
     let mut document = Document::open(&path).unwrap();
@@ -43,7 +45,7 @@ fn external_changes_and_deletion_require_explicit_overwrite() {
 
 #[test]
 fn unchanged_buffer_does_not_bypass_external_conflict() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let path = root.path().join("file");
     fs::write(&path, "original").unwrap();
     let mut document = Document::open(&path).unwrap();
@@ -64,7 +66,7 @@ fn rejects_binary_invalid_utf8_and_large_files() {
 
 #[test]
 fn explorer_sorts_directories_first_and_can_show_hidden_files() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     fs::create_dir(root.path().join("z-directory")).unwrap();
     fs::write(root.path().join("alpha.txt"), "a").unwrap();
     fs::write(root.path().join(".hidden"), "h").unwrap();
@@ -80,7 +82,7 @@ fn explorer_sorts_directories_first_and_can_show_hidden_files() {
 #[test]
 fn save_preserves_executable_mode_and_symlink_target() {
     use std::os::unix::fs::{PermissionsExt, symlink};
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let path = root.path().join("script.sh");
     let link = root.path().join("link.sh");
     fs::write(&path, "echo original\n").unwrap();
@@ -119,7 +121,7 @@ fn git_command(path: &Path, args: &[&str]) {
     );
 }
 fn repo() -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     git_command(root.path(), &["init", "-b", "main"]);
     root
 }
@@ -204,7 +206,7 @@ fn linked_worktree_is_resolved_from_the_opened_file() {
     let root = repo();
     fs::write(root.path().join("tracked.txt"), "original\n").unwrap();
     commit(root.path());
-    let other = tempfile::tempdir().unwrap();
+    let other = common::tempdir().unwrap();
     let worktree = other.path().join("linked");
     git_command(
         root.path(),
@@ -225,7 +227,7 @@ fn linked_worktree_is_resolved_from_the_opened_file() {
 
 #[test]
 fn layout_restores_saved_files_and_pane_configuration() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let mut layout = rodtty::work::Layout::default();
     layout.files.push(root.path().join("file.txt"));
     layout.explorer = true;

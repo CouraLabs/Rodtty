@@ -3,6 +3,8 @@ use rodtty::files::operations::{
 };
 use std::{fs, path::Path};
 
+mod common;
+
 fn copy(source: &Path, target: &Path) -> OperationRequest {
     OperationRequest {
         operation: FileOperation::Copy {
@@ -21,7 +23,7 @@ fn collision(request: OperationRequest) -> Collision {
 #[cfg(unix)]
 #[test]
 fn replacing_a_destination_link_replaces_the_link_without_touching_its_referent() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("link.txt");
     fs::write(&source, "source contents").unwrap();
@@ -41,7 +43,7 @@ fn replacing_a_destination_link_replaces_the_link_without_touching_its_referent(
 
 #[test]
 fn a_changed_destination_requires_a_new_decision_and_cancel_preserves_its_new_contents() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
     fs::write(&source, "new source").unwrap();
@@ -75,7 +77,7 @@ fn a_changed_destination_requires_a_new_decision_and_cancel_preserves_its_new_co
 
 #[test]
 fn copying_a_folder_keeps_both_or_replaces_the_whole_target_instead_of_merging() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("project.v2");
     fs::create_dir_all(source.join("nested")).unwrap();
@@ -119,7 +121,7 @@ fn copying_a_folder_keeps_both_or_replaces_the_whole_target_instead_of_merging()
 #[cfg(unix)]
 #[test]
 fn folder_copies_preserve_relative_dangling_and_cyclic_links_without_traversal() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("copy");
     fs::create_dir(&source).unwrap();
@@ -153,7 +155,7 @@ fn folder_copies_preserve_relative_dangling_and_cyclic_links_without_traversal()
 #[cfg(unix)]
 #[test]
 fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("target");
     fs::create_dir(&source).unwrap();
@@ -240,7 +242,7 @@ fn a_copy_failure_keeps_the_existing_destination_and_cleans_prepared_items() {
 #[test]
 fn replacing_a_read_only_folder_cleans_its_backup_without_changing_published_permissions() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("target");
     let referent = root.path().join("referent");
@@ -313,7 +315,7 @@ fn replacing_a_read_only_folder_cleans_its_backup_without_changing_published_per
 
 #[test]
 fn replacing_an_ancestor_of_the_source_is_rejected_without_removing_the_source() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let target = root.path().join("parent");
     let source = target.join("source.txt");
     fs::create_dir(&target).unwrap();
@@ -332,7 +334,7 @@ fn replacing_an_ancestor_of_the_source_is_rejected_without_removing_the_source()
 #[test]
 fn a_read_only_source_folder_can_be_copied_with_its_permissions_preserved() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("copy");
     fs::create_dir_all(source.join("nested/deeper")).unwrap();
@@ -375,7 +377,7 @@ fn a_read_only_source_folder_can_be_copied_with_its_permissions_preserved() {
 
 #[test]
 fn copying_a_read_only_file_preserves_contents_and_permissions_without_changing_the_source() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("copy.txt");
     fs::write(&source, "read-only source").unwrap();
@@ -411,7 +413,7 @@ fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_u
         sync::Arc,
         time::{Duration, Instant},
     };
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("copy");
     fs::create_dir(&source).unwrap();
@@ -469,7 +471,7 @@ fn background_folder_copy_and_terminal_input_both_complete_without_sharing_the_u
 
 #[test]
 fn moving_a_folder_keeps_disk_bytes_and_removes_only_the_source() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("original");
     let target = root.path().join("renamed");
     fs::create_dir(&source).unwrap();
@@ -492,7 +494,7 @@ fn moving_a_folder_keeps_disk_bytes_and_removes_only_the_source() {
 
 #[test]
 fn renaming_an_item_to_its_existing_name_is_a_successful_noop() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("notes.txt");
     fs::write(&source, "notes").unwrap();
     assert!(matches!(OperationRequest {
@@ -506,7 +508,7 @@ fn renaming_an_item_to_its_existing_name_is_a_successful_noop() {
 #[test]
 fn renaming_a_readonly_folder_preserves_its_permissions() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source");
     let target = root.path().join("target");
     fs::create_dir(&source).unwrap();
@@ -534,7 +536,7 @@ fn renaming_a_readonly_folder_preserves_its_permissions() {
 
 #[test]
 fn moving_requires_current_collision_versions_and_cancel_does_not_remove_the_source() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
     fs::write(&source, "source version one").unwrap();
@@ -594,7 +596,7 @@ fn moving_requires_current_collision_versions_and_cancel_does_not_remove_the_sou
 #[test]
 fn moving_across_filesystems_uses_safe_publication_without_following_symlink_loops() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     // Deliberately use a different host filesystem for this small operation
     // fixture; Session/PTY profiles continue using the suite's target TMPDIR.
     let destination = tempfile::Builder::new()
@@ -650,7 +652,7 @@ fn moving_across_filesystems_uses_safe_publication_without_following_symlink_loo
 #[cfg(unix)]
 #[test]
 fn moving_a_selected_link_keeps_its_referent_and_moves_only_the_link() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let referent = root.path().join("referent.txt");
     let source = root.path().join("source-link");
     let target = root.path().join("target-link");
@@ -675,7 +677,7 @@ fn moving_a_selected_link_keeps_its_referent_and_moves_only_the_link() {
 
 #[test]
 fn case_changing_rename_keeps_bytes_and_uses_the_requested_directory_spelling() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("notes.txt");
     let target = root.path().join("NOTES.txt");
     fs::write(&source, "case change").unwrap();
@@ -701,7 +703,7 @@ fn case_changing_rename_keeps_bytes_and_uses_the_requested_directory_spelling() 
 #[cfg(unix)]
 #[test]
 fn distinct_case_differing_hardlinks_still_require_a_collision_decision() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let source = root.path().join("notes.txt");
     let target = root.path().join("NOTES.txt");
     fs::write(&source, "shared inode").unwrap();
@@ -730,7 +732,7 @@ fn distinct_case_differing_hardlinks_still_require_a_collision_decision() {
 #[test]
 fn save_as_preserves_unsaved_text_outside_removal_and_requires_fresh_collision_consent() {
     use rodtty::files::Document;
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let folder = root.path().join("remove-me");
     fs::create_dir(&folder).unwrap();
     let source = folder.join("notes.txt");
@@ -774,7 +776,7 @@ fn save_as_preserves_unsaved_text_outside_removal_and_requires_fresh_collision_c
 #[test]
 fn save_as_rejects_aliases_inside_removal_and_destinations_open_in_other_editors() {
     use rodtty::files::Document;
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let removing = root.path().join("work");
     fs::create_dir(&removing).unwrap();
     let source = removing.join("notes.txt");

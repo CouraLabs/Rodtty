@@ -104,7 +104,7 @@ pub(super) fn native_check(
         "external copy verification failed"
     );
     handle.update(|s,_| {
-        s.active().unwrap().send(b"stty raw -echo; printf '\\033[?1h'; head -c 16 | od -An -tx1; stty sane; printf '\\033[?1l\\nCLIPBOARD_PASTE_DONE\\n'\r".to_vec()).unwrap();
+        s.active().unwrap().send(b"stty raw -echo; printf '\\033[?1h'; head -c 16 | od -An -tx1 | tr -s ' '; stty sane; printf '\\033[?1l\\nCLIPBOARD_PASTE_DONE\\n'\r".to_vec()).unwrap();
     });
     wait_app(handle, |s| s.with_screen(vt100::Screen::application_cursor))?;
     handle.update(|s, tx| s.dispatch(AppAction::PasteTerminal, tx));
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn terminal_right_click_offers_shared_copy_and_blocks_input_until_dismissed() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         let mut parser = vt100::Parser::new(28, 100, 0);
         parser.process("Olá 世界 e\u{301} 🦀".as_bytes());
@@ -171,7 +171,7 @@ mod tests {
     }
     #[test]
     fn clipboard_preferences_persist_reset_and_copy_only_completed_selections() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         let mut parser = vt100::Parser::new(28, 100, 0);
         parser.process("Olá 世界".as_bytes());
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn terminal_clipboard_actions_reach_real_pty_and_overlay_keeps_input_out() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         state.directory = root.path().into();
         state.shell = std::env::current_exe()
@@ -271,7 +271,7 @@ mod tests {
             .wait_for("rodtty:", std::time::Duration::from_secs(15))
             .unwrap();
         let identity = state.active().unwrap().id();
-        state.active().unwrap().send(b"stty raw -echo; printf '\\033[?1hREADY'; head -c 16 | od -An -tx1; stty sane; printf '\\033[?1l\\nPASTE_DONE\\n'\r".to_vec()).unwrap();
+        state.active().unwrap().send(b"stty raw -echo; printf '\\033[?1hREADY'; head -c 16 | od -An -tx1 | tr -s ' '; stty sane; printf '\\033[?1l\\nPASTE_DONE\\n'\r".to_vec()).unwrap();
         state
             .active()
             .unwrap()
@@ -406,5 +406,114 @@ mod tests {
             .unwrap()
             .wait_for("INTERRUPT_OK", std::time::Duration::from_secs(5))
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod selection_threshold_tests {
+    use super::super::SELECTION_THRESHOLD;
+    use super::super::tests::runtime_for;
+    use super::*;
+
+    fn grid_origin(rt: &rune::Runtime<State>) -> (f32, f32) {
+        rt.find("terminal").expect("terminal grid")
+    }
+
+    /// A press that never travels is a click: it must not highlight a cell.
+    #[test]
+    fn a_click_selects_nothing() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"hello world\r\n");
+        state.preview = Some(parser.screen().clone());
+        let mut rt = runtime_for(state);
+        let (x, y) = grid_origin(&rt);
+        rt.pointer_down(x + 20.0, y + 10.0);
+        rt.pointer_up(x + 20.0, y + 10.0);
+        rt.frame(0.0);
+        assert!(
+            rt.state.selection.is_none(),
+            "a click leaves no selection: {:?}",
+            rt.state.selection
+        );
+    }
+
+    /// Contact wobble under the threshold is still a click.
+    #[test]
+    fn a_press_that_barely_drifts_selects_nothing() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"hello world\r\n");
+        state.preview = Some(parser.screen().clone());
+        let mut rt = runtime_for(state);
+        let (x, y) = grid_origin(&rt);
+        let start = (x + 20.0, y + 10.0);
+        rt.pointer_down(start.0, start.1);
+        // Less than the threshold, in both axes, over several move events.
+        for step in 1..=3 {
+            let d = step as f32;
+            rt.pointer_move(start.0 + d, start.1);
+            rt.frame(0.0);
+        }
+        rt.pointer_up(start.0 + 3.0, start.1);
+        rt.frame(0.0);
+        assert!(
+            rt.state.selection.is_none(),
+            "drift under {SELECTION_THRESHOLD} pt is a click: {:?}",
+            rt.state.selection
+        );
+    }
+
+    /// Past the threshold the drag selects, and the range spans the travel.
+    #[test]
+    fn a_real_drag_selects_and_keeps_the_range() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"hello world\r\n");
+        state.preview = Some(parser.screen().clone());
+        let mut rt = runtime_for(state);
+        let (x, y) = grid_origin(&rt);
+        let start = (x + 20.0, y + 10.0);
+        rt.pointer_down(start.0, start.1);
+        // Well past the threshold: several cells of travel.
+        rt.pointer_move(start.0 + 40.0, start.1);
+        rt.frame(0.0);
+        assert!(
+            rt.state.selection.is_some(),
+            "a drag past {SELECTION_THRESHOLD} pt selects"
+        );
+        let (a, b) = rt.state.selection.unwrap();
+        assert_ne!(a, b, "the range covers the travel, not a single cell");
+        rt.pointer_up(start.0 + 40.0, start.1);
+        rt.frame(0.0);
+        assert_eq!(
+            rt.state.selection,
+            Some((a, b)),
+            "releasing the drag keeps the selection it made"
+        );
+    }
+
+    /// A press on the grid drops a selection the owner left behind.
+    #[test]
+    fn a_press_on_the_grid_clears_a_previous_selection() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"hello world\r\n");
+        state.preview = Some(parser.screen().clone());
+        state.selection = Some(((0, 0), (0, 5)));
+        let mut rt = runtime_for(state);
+        let (x, y) = grid_origin(&rt);
+        rt.pointer_down(x + 40.0, y + 30.0);
+        rt.pointer_up(x + 40.0, y + 30.0);
+        rt.frame(0.0);
+        assert!(
+            rt.state.selection.is_none(),
+            "the old highlight is gone: {:?}",
+            rt.state.selection
+        );
     }
 }

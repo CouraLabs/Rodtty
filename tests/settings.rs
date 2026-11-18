@@ -1,8 +1,10 @@
 use rodtty::{config::Config, work::Layout};
 
+mod common;
+
 #[test]
 fn preferences_migrate_once_and_workspace_writes_leave_owner_json_untouched() {
-    let root = tempfile::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(
         root.path().join("config.toml"),
         "history = false\nscrollback = 2000\ndisabled = ['cat']\n",
@@ -34,8 +36,8 @@ fn preferences_migrate_once_and_workspace_writes_leave_owner_json_untouched() {
 
 #[test]
 fn existing_destinations_win_and_unknown_preferences_survive_preference_saves() {
-    let legacy = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let legacy = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     std::fs::write(legacy.path().join("config.toml"), "history = false\n").unwrap();
     std::fs::write(
         legacy.path().join("startup.sh"),
@@ -75,8 +77,8 @@ fn existing_destinations_win_and_unknown_preferences_survive_preference_saves() 
 #[test]
 fn migration_launch_reopens_the_old_host_and_new_hosts_also_hold_the_old_lock() {
     use rodtty::instance::Instance;
-    let legacy = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let legacy = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let old_host = Instance::acquire(legacy.path()).unwrap().unwrap();
     assert!(
         Instance::acquire_owner(root.path(), legacy.path())

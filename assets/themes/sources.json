@@ -329,5 +329,45 @@
     "revision": "b0a0ad47792ef7e9e70f272798dcd7fce357bd0c",
     "source_path": "license",
     "source_url": "https://github.com/ayu-theme/ayu-colors/blob/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c/license"
+  },
+  {
+    "cache": "everforest-LICENSE",
+    "repository": "sainnhe/everforest",
+    "source_path": "LICENSE",
+    "git_blob_sha": "546ed63436d1f30a9b06115f1b6b0e94a352ae22",
+    "git_tree_sha": "85a86eb62409e3ec88713bff3d1b9d7374e112e4",
+    "source_url": "https://github.com/sainnhe/everforest/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/sainnhe/everforest/git/blobs/546ed63436d1f30a9b06115f1b6b0e94a352ae22"
+  },
+  {
+    "cache": "kanagawa-LICENSE",
+    "repository": "rebelot/kanagawa.nvim",
+    "source_path": "LICENSE",
+    "git_blob_sha": "fe87b961cefdbe16a88c80302d2c8f927cadc5d1",
+    "git_tree_sha": "bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3",
+    "source_url": "https://github.com/rebelot/kanagawa.nvim/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rebelot/kanagawa.nvim/git/blobs/fe87b961cefdbe16a88c80302d2c8f927cadc5d1"
+  },
+  {
+    "cache": "rosepine-LICENSE",
+    "repository": "rose-pine/palette",
+    "source_path": "LICENSE",
+    "git_blob_sha": "3162bd90b273c38d733126cb9d31a033dfd47105",
+    "git_tree_sha": "92af52b465ab6e47437aca223c9b8d3009a2023b",
+    "source_url": "https://github.com/rose-pine/palette/blob/HEAD/LICENSE",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/palette/git/blobs/3162bd90b273c38d733126cb9d31a033dfd47105"
+  },
+  {
+    "cache": "rosepine-palette.json",
+    "repository": "rose-pine/palette",
+    "source_path": "palette.json",
+    "git_blob_sha": "4d98f3b9677fd2fd3da1d2398409f39c4552d41a",
+    "git_tree_sha": "92af52b465ab6e47437aca223c9b8d3009a2023b",
+    "source_url": "https://github.com/rose-pine/palette/blob/HEAD/palette.json",
+    "verified_exact_blob": true,
+    "immutable_blob_url": "https://api.github.com/repos/rose-pine/palette/git/blobs/4d98f3b9677fd2fd3da1d2398409f39c4552d41a"
   }
 ]

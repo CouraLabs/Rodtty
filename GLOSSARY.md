@@ -57,3 +57,23 @@ The owner's selection of available bundled utilities. Each terminal session keep
 **Git diff mode**:
 The editor's read-only view for comparing current file contents with committed or staged versions and inspecting saved or unsaved changes.
 _Avoid_: Git client when referring only to change inspection
+
+**Window chrome**:
+The parts of the desktop window the owner uses to move, resize and close it: whichever of Rodtty's header band or the operating system's own frame supplies them on this platform.
+_Avoid_: Titlebar when the meaning covers the whole frame
+
+**Header band**:
+The row across the top of Rodtty's window that holds the terminal tabs and the pane and application actions. Dragging it moves the window.
+_Avoid_: Titlebar, toolbar, tab bar
+
+**Terminal tab pill**:
+A terminal tab's rounded, filled shape in the header band, holding its title, its close action, and its own press.
+_Avoid_: Tab button, tab chip
+
+**Terminal selection**:
+The range of terminal cells the owner has highlighted by dragging. It is transient: a click, new terminal output, a tab change, or a keystroke ends it.
+_Avoid_: Highlight, terminal copy region
+
+**Window placement**:
+Where Rodtty's window sits on the desktop and how large it is, recorded so reopening Rodtty returns the window there. It survives only while the display it was recorded on remains connected and unchanged.
+_Avoid_: Window state, window position when the size is included

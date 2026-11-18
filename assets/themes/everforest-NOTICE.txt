@@ -1,0 +1,17 @@
+Everforest palette used by Rodtty's Appearances.
+
+Primary source: https://github.com/sainnhe/everforest (retrieved upstream
+values, see sources.json for the pinned records)
+
+Everforest license declaration (upstream): MIT + third-party licenses
+("MIT + Third-party" per its LICENSE file, covering Vim color scheme ports).
+Rodtty uses the light and dark palettes' literal RGB values for UI surfaces,
+terminal ANSI slots and editor syntax roles, with small-text contrast adapted
+toward the family ink as documented in README.md.
+
+Upstream permission statement:
+https://github.com/sainnhe/everforest/blob/master/LICENSE.md
+
+The palette name "Everforest" belongs to its creator; Rodtty only adapts the
+literal color values, with attribution kept in Settings next to each
+appearance.

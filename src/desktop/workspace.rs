@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     files::{Document, Entry, SaveFailure, TextFile},
     git::{Comparison, Repository},
-    work::{Event, Job, Layout, Worker},
+    work::{Event, Job, Layout, WindowGeometry, Worker},
 };
 use rune_kit::{
     Tree, TreeItem, TreeModel, TreeStyle,
@@ -33,6 +33,8 @@ struct DeferredSaveConflict {
 pub(super) enum View {
     Edit,
     Diff(Comparison),
+    /// Rendered markdown, offered for `.md` files.
+    Preview,
 }
 pub(super) struct Tab {
     pub id: u64,
@@ -60,6 +62,9 @@ pub(super) struct TreeEntry {
     entry: Option<Entry>,
     label: String,
     badge: String,
+    /// The synthetic workspace-root row: a folder that exists in the tree but
+    /// not in `entries`, labelled with the current folder's own name.
+    root: bool,
 }
 
 struct RestoredPanes {
@@ -100,7 +105,6 @@ pub(super) struct Workspace {
     revealed_directory: Option<PathBuf>,
     explorer_preferences: crate::config::ExplorerPreferences,
     pub directory: Option<PathBuf>,
-    pub address: TextEdit,
     pub repo: Option<Repository>,
     pub git_error: Option<String>,
     scan_token: u64,
@@ -171,7 +175,6 @@ impl Default for Workspace {
             revealed_directory: None,
             explorer_preferences: crate::config::ExplorerPreferences::default(),
             directory: None,
-            address: TextEdit::new(""),
             repo: None,
             git_error: None,
             scan_token: 0,
@@ -207,6 +210,7 @@ impl Default for Workspace {
 }
 
 impl State {
+    pub(super) const WORKSPACE_ROOT_EXPANDED: bool = true;
     pub(super) fn file_io_pending(&self) -> bool {
         !self.workspace.opening.is_empty() || self.workspace.tabs.iter().any(|t| t.saving)
     }
@@ -325,13 +329,6 @@ impl State {
                 }
                 self.workspace.restore_active = layout.active_file.clone();
                 self.workspace.directory = layout.explorer_directory.clone();
-                self.workspace.address.replace_text(
-                    layout
-                        .explorer_directory
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                );
                 // Migrate the former workspace-owned switches once, preserving an
                 // explicit owner preference if the new explorer section exists.
                 let has_preferences = self
@@ -362,9 +359,6 @@ impl State {
                         self.workspace.directory.as_ref().unwrap().display()
                     ));
                     self.workspace.directory = Some(self.directory.clone());
-                    self.workspace
-                        .address
-                        .replace_text(self.directory.to_string_lossy());
                     self.workspace.layout.expanded_folders.clear();
                 }
                 for path in paths {
@@ -404,7 +398,6 @@ impl State {
     }
     pub(super) fn navigate(&mut self, path: PathBuf) {
         self.workspace.directory = Some(path.clone());
-        self.workspace.address.replace_text(path.to_string_lossy());
         self.workspace.entries.clear();
         self.workspace.tree.clear();
         self.workspace.tree_dirty = true;
@@ -518,9 +511,6 @@ impl State {
         for path in &mut w.layout.files {
             remap(path, source, target);
         }
-        if let Some(root) = &w.directory {
-            w.address.replace_text(root.to_string_lossy());
-        }
         // Old rows must not reintroduce old expansion keys before the next scan.
         w.entries.clear();
         w.tree.clear();
@@ -566,6 +556,13 @@ impl State {
 
     pub(super) fn collapse_tree(&mut self) {
         self.workspace.tree.collapse_all();
+        // Collapse-all would otherwise close the synthetic root row the tree
+        // shows its contents through; the workspace root stays open by design.
+        if let Some(root) = self.workspace.directory.as_ref() {
+            self.workspace
+                .tree
+                .set_expanded(&root.to_string_lossy(), Self::WORKSPACE_ROOT_EXPANDED);
+        }
         self.workspace.tree_dirty = true;
         self.workspace.layout.expanded_folders.clear();
         self.workspace.scan_token += 1;
@@ -603,18 +600,42 @@ impl State {
         let Some(root) = workspace.directory.as_ref() else {
             return;
         };
+        // The tree reads as a rooted folder: the first row is the workspace folder
+        // itself, named as the host folder is, with every other row under it.
+        let root_key = root.to_string_lossy().into_owned();
+        let root_label = root
+            .file_name()
+            .unwrap_or(root.as_os_str())
+            .to_string_lossy()
+            .into_owned();
+        workspace.tree.insert(
+            None,
+            &root_key,
+            TreeEntry {
+                entry: None,
+                label: root_label,
+                badge: String::new(),
+                root: true,
+            },
+        );
+        let root_expanded = Self::WORKSPACE_ROOT_EXPANDED;
+        workspace.tree.set_expanded(&root_key, root_expanded);
         for entry in &workspace.entries {
             let id = entry.path.to_string_lossy().into_owned();
+            // A nested entry stays under its own folder; only the root's direct
+            // children hang from the synthetic root row.
             let parent = entry
                 .path
                 .parent()
                 .filter(|p| *p != root)
-                .map(|p| p.to_string_lossy().into_owned());
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|| root_expanded.then(|| root_key.clone()));
             workspace.tree.insert(
                 parent.as_deref(),
                 &id,
                 TreeEntry {
                     entry: Some(entry.clone()),
+                    root: false,
                     label: entry.name.clone(),
                     badge: workspace
                         .repo
@@ -646,6 +667,7 @@ impl State {
                     format!("{id}/::folder-state"),
                     TreeEntry {
                         entry: None,
+                        root: false,
                         label,
                         badge: String::new(),
                     },
@@ -755,6 +777,52 @@ impl State {
         }
         self.invalidate_diff(true);
     }
+    /// Notes the window's place on the desktop, for the next launch to reopen
+    /// it there. The host reports geometry on the UI thread only, and a drag or
+    /// resize moves the window far faster than the layout needs saving: this
+    /// reads once a second and records a value only when it differs from the
+    /// last save, so a settled window writes once instead of every frame.
+    ///
+    /// Returns true when the saved geometry changed, so the caller repaints.
+    pub(super) fn capture_window_geometry(&mut self) -> bool {
+        const INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+        if self.window_saved.is_some()
+            && self
+                .window_geometry_poll
+                .is_some_and(|at| at.elapsed() < INTERVAL)
+        {
+            return false;
+        }
+        self.window_geometry_poll = Some(std::time::Instant::now());
+        // A maximized or full-screen frame is not where the owner wants the
+        // window: restoring to it would leave no smaller frame to return to.
+        // Keep the last normal frame instead.
+        if self.window_maximized {
+            return false;
+        }
+        let Some(placement) = self.window.as_ref().and_then(|w| w.placement()) else {
+            return false;
+        };
+        if placement.minimized || placement.full_screen {
+            return false;
+        }
+        let (x, y) = placement.restore.map_or(placement.position, |(p, _)| p);
+        let size = placement.restore.map_or(placement.content_size, |(_, s)| s);
+        let next = WindowGeometry {
+            x,
+            y,
+            width: size.0,
+            height: size.1,
+            display: placement.display,
+        };
+        if self.window_saved == Some(next) || self.workspace.layout.window == Some(next) {
+            return false;
+        }
+        self.window_saved = Some(next);
+        self.workspace.layout.window = Some(next);
+        true
+    }
+
     pub(super) fn persist_workspace(&mut self) {
         // Never publish a partial list while saved files are still loading.
         if self.shutdown_saved || !self.workspace_restoration_ready() {
@@ -1265,9 +1333,6 @@ impl State {
                                         != listing.entries
                                         || self.workspace.tree_errors != listing.errors;
                                     let path = listing.root;
-                                    if !self.workspace.address.focused {
-                                        self.workspace.address.replace_text(path.to_string_lossy());
-                                    }
                                     self.workspace.directory = Some(path);
                                     self.workspace.entries = listing.entries;
                                     self.workspace.tree_errors = listing.errors;
@@ -1495,6 +1560,11 @@ impl State {
     }
 }
 
+/// A thin vertical rule between groups of related toolbar actions.
+fn pipe(a: &Appearance) -> El {
+    el().w(1.0).h(16.0).fill(a.kit().c.border_base).mx(2.0)
+}
+
 fn explorer(s: &State, a: &Appearance) -> El {
     let workspace = &s.workspace;
     let mut pane = col()
@@ -1508,71 +1578,86 @@ fn explorer(s: &State, a: &Appearance) -> El {
         .gap(6.0)
         .child(
             row()
-                .h(35.0)
+                .h(29.0)
                 .center_y()
-                .child(text("FILES").font(ui_label()).color(a.accent()))
-                .child(el().grow(1.0))
-                .child(button(a, "explorer-hide", "×", |s, tx| {
-                    s.dispatch(AppAction::ToggleExplorer, tx)
-                })),
-        )
-        .child(
-            text_input(&workspace.address, ui_label())
-                .caret(a.accent(), a.selection())
-                .key("explorer-address")
-                .label("Explorer folder path")
-                .single_line()
-                .w_full()
-                .h(30.0)
-                .color(a.ink())
-                .on_edit(|s: &mut State| &mut s.workspace.address)
-                .on_submit(|s: &mut State, tx| {
-                    s.dispatch(AppAction::ExplorerSetRoot, tx);
-                    tx.blur();
-                }),
-        )
-        .child(
-            row()
                 .gap(4.0)
-                .child(button(a, "explorer-up", "↑", |s, tx| {
-                    s.dispatch(AppAction::ExplorerParent, tx)
-                }))
-                .child(button(a, "explorer-refresh", "↻", |s, tx| {
-                    s.dispatch(AppAction::RefreshExplorer, tx)
-                }))
-                .child(button(
+                // Navigation actions, then filter toggles; a pipe separates the two groups.
+                .child(icon_button(
                     a,
-                    "explorer-follow",
-                    if workspace.layout.follow {
-                        "Follow ✓"
-                    } else {
-                        "Follow"
-                    },
-                    |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
-                )),
-        )
-        .child(
-            row()
-                .gap(4.0)
-                .child(button(
-                    a,
-                    "explorer-hidden",
-                    if workspace.layout.hidden {
-                        "Hidden ✓"
-                    } else {
-                        "Hidden"
-                    },
-                    |s, tx| s.dispatch(AppAction::ToggleHidden, tx),
+                    "explorer-up",
+                    &rune_kit::glyphs::ARROW_UP,
+                    "Open parent folder",
+                    |s, tx| s.dispatch(AppAction::ExplorerParent, tx),
                 ))
-                .child(button(
+                .child(icon_button(
                     a,
-                    "explorer-ignore",
-                    if s.config.explorer.respect_ignore {
-                        "Ignore ✓"
+                    "explorer-refresh",
+                    &rune_kit::glyphs::REFRESH,
+                    "Refresh files",
+                    |s, tx| s.dispatch(AppAction::RefreshExplorer, tx),
+                ))
+                .child(pipe(a))
+                .child(
+                    icon_button(
+                        a,
+                        "explorer-follow",
+                        &rune_kit::glyphs::CROSSHAIR,
+                        if workspace.layout.follow {
+                            "Follow terminal: on"
+                        } else {
+                            "Follow terminal: off"
+                        },
+                        |s, tx| s.dispatch(AppAction::ToggleFollow, tx),
+                    )
+                    .fill(if workspace.layout.follow {
+                        a.accent().alpha(0.18)
                     } else {
-                        "Ignore"
-                    },
-                    |s, tx| s.dispatch(AppAction::ToggleIgnore, tx),
+                        Color::TRANSPARENT
+                    }),
+                )
+                .child(
+                    icon_button(
+                        a,
+                        "explorer-hidden",
+                        &rune_kit::glyphs::EYE,
+                        if workspace.layout.hidden {
+                            "Show hidden files: on"
+                        } else {
+                            "Show hidden files: off"
+                        },
+                        |s, tx| s.dispatch(AppAction::ToggleHidden, tx),
+                    )
+                    .fill(if workspace.layout.hidden {
+                        a.accent().alpha(0.18)
+                    } else {
+                        Color::TRANSPARENT
+                    }),
+                )
+                .child(
+                    icon_button(
+                        a,
+                        "explorer-ignore",
+                        &rune_kit::glyphs::FILTER,
+                        if s.config.explorer.respect_ignore {
+                            "Respect Git ignore rules: on"
+                        } else {
+                            "Respect Git ignore rules: off"
+                        },
+                        |s, tx| s.dispatch(AppAction::ToggleIgnore, tx),
+                    )
+                    .fill(if s.config.explorer.respect_ignore {
+                        a.accent().alpha(0.18)
+                    } else {
+                        Color::TRANSPARENT
+                    }),
+                )
+                .child(el().grow(1.0))
+                .child(icon_button(
+                    a,
+                    "explorer-hide",
+                    &rune_kit::glyphs::CLOSE,
+                    "Hide file explorer",
+                    |s, tx| s.dispatch(AppAction::ToggleExplorer, tx),
                 )),
         );
     if let Some(cwd) = &workspace.outside_root {
@@ -1615,6 +1700,7 @@ fn explorer(s: &State, a: &Appearance) -> El {
     }
     let danger = a.danger();
     let dark = a.dark;
+    let workspace_root_path = workspace.directory.clone().unwrap_or_default();
     let mut tree_style = TreeStyle::from_kit(a.kit())
         .label(ui_label(), a.ink(), a.ink())
         .radius(6.0);
@@ -1629,7 +1715,10 @@ fn explorer(s: &State, a: &Appearance) -> El {
     .style(tree_style)
     .row(move |node, row| {
         let mut item = TreeItem::new(&node.label).badge(&node.badge);
-        if let Some(entry) = &node.entry {
+        if node.root {
+            // The workspace folder's own row: drawn open, rooted at the folder's name.
+            item = item.icon(file_icons::resolve(&workspace_root_path, true, true, dark));
+        } else if let Some(entry) = &node.entry {
             item = item.icon(file_icons::resolve(
                 &entry.path,
                 entry.directory,
@@ -1701,9 +1790,16 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         .scroll_x()
         .fill(a.panel());
     if width < 880.0 {
-        tabs = tabs.child(button(a, "return-terminal", "‹ Terminal", |s, tx| {
-            s.dispatch(AppAction::ShowTerminal, tx)
-        }));
+        tabs = tabs.child(
+            icon_button(
+                a,
+                "return-terminal",
+                &rune_kit::glyphs::ARROW_LEFT,
+                "Return to terminal",
+                |s, tx| s.dispatch(AppAction::ShowTerminal, tx),
+            )
+            .fill(a.hover_bg()),
+        );
     }
     let mut tab_items = Vec::new();
     for (i, tab) in workspace.tabs.iter().enumerate() {
@@ -1743,63 +1839,83 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         tab_items.push(
             row()
                 .key(format!("editor-group-{id}"))
-                .gap(2.0)
+                .gap(0.0)
                 .center_y()
+                .radius(6.0)
+                .fill(if i == workspace.active && !s.settings {
+                    a.hover_bg()
+                } else {
+                    a.panel()
+                })
+                .hover(a.hover_bg())
                 .child(super::tabs::interactive(
-                    button(
-                        a,
-                        format!("editor-tab-{id}"),
-                        if tab.preview {
+                    el().key(format!("editor-tab-{id}"))
+                        .role("button")
+                        .label(if tab.preview {
                             format!("{name} (preview)")
                         } else {
-                            name
-                        },
-                        move |s, tx| s.dispatch(AppAction::ActivateEditor(i), tx),
-                    )
-                    .on_double_press(move |s: &mut State| {
-                        if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
-                            tab.preview = false;
-                        }
-                    })
-                    .w(180.0)
-                    .pl(30.0)
-                    .child(
-                        el().pin(Some(8.0), Some(0.0), None, Some(0.0))
-                            .w(16.0)
-                            .center()
-                            .a11y_hidden()
-                            .child(
-                                rune::icon(
-                                    file_icons::resolve(&tab.document.path, false, false, a.dark),
-                                    16.0,
-                                )
-                                .color(a.muted())
-                                .key(format!("editor-file-icon-{id}")),
-                            ),
-                    )
-                    .fill(if i == workspace.active && !s.settings {
-                        a.hover_bg()
-                    } else {
-                        a.panel()
-                    })
-                    .help(tab.document.path.to_string_lossy()),
+                            name.clone()
+                        })
+                        .help(tab.document.path.to_string_lossy())
+                        .focusable(true)
+                        .focus_ring(2.0, 1.0, a.accent())
+                        .max_w(190.0)
+                        .h(29.0)
+                        .center()
+                        .px(8.0)
+                        .gap(6.0)
+                        .on_press_tx(move |s: &mut State, tx| {
+                            tx.blur();
+                            s.dispatch(AppAction::ActivateEditor(i), tx);
+                        })
+                        .on_double_press(move |s: &mut State| {
+                            if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
+                                tab.preview = false;
+                            }
+                        })
+                        .child(
+                            rune::icon(
+                                file_icons::resolve(&tab.document.path, false, false, a.dark),
+                                16.0,
+                            )
+                            .color(a.muted())
+                            .key(format!("editor-file-icon-{id}")),
+                        )
+                        .child(
+                            text(if tab.preview {
+                                format!("{name} (preview)")
+                            } else {
+                                name.clone()
+                            })
+                            .font(ui_label())
+                            .color(if i == workspace.active {
+                                a.ink()
+                            } else {
+                                a.muted()
+                            })
+                            .max_w(120.0)
+                            .truncate(),
+                        )
+                        .children(tab.dirty().then(|| {
+                            text("•")
+                                .key(format!("editor-dirty-{id}"))
+                                .font(ui_label())
+                                .color(a.accent())
+                        })),
                     super::tabs::Target::Editor(id),
                 ))
-                .children(tab.preview.then(|| {
-                    text("Preview")
-                        .key(format!("editor-preview-{id}"))
-                        .font(ui_style(10.0, 500.0))
-                        .color(a.accent())
-                }))
-                .children(
-                    tab.dirty()
-                        .then(|| text("•").font(ui_label()).color(a.accent())),
-                )
                 .child(
-                    button(a, format!("editor-close-{id}"), "×", move |s, tx| {
-                        s.dispatch(AppAction::CloseEditor(Some(id)), tx)
-                    })
-                    .px(6.0),
+                    icon_button(
+                        a,
+                        format!("editor-close-{id}"),
+                        &rune_kit::glyphs::CLOSE,
+                        "Close editor tab",
+                        move |s, tx| s.dispatch(AppAction::CloseEditor(Some(id)), tx),
+                    )
+                    .w(24.0)
+                    .min_h(24.0)
+                    .fill(Color::TRANSPARENT)
+                    .hover(a.hover_bg()),
                 ),
         );
     }
@@ -1808,20 +1924,45 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             s.tab_strips.settings_position.min(tab_items.len()),
             row()
                 .key("settings-group")
-                .gap(2.0)
+                .gap(0.0)
                 .center_y()
+                .radius(6.0)
+                .fill(if s.settings { a.hover_bg() } else { a.panel() })
+                .hover(a.hover_bg())
                 .child(super::tabs::interactive(
-                    button(a, "settings-tab", "Settings", |s, tx| {
-                        s.dispatch(AppAction::Settings, tx)
-                    })
-                    .fill(if s.settings { a.hover_bg() } else { a.panel() }),
+                    el().key("settings-tab")
+                        .role("button")
+                        .label("Settings")
+                        .help("Settings")
+                        .focusable(true)
+                        .focus_ring(2.0, 1.0, a.accent())
+                        .h(29.0)
+                        .center()
+                        .px(8.0)
+                        .on_press_tx(|s: &mut State, tx| {
+                            tx.blur();
+                            s.dispatch(AppAction::Settings, tx);
+                        })
+                        .child(
+                            text("Settings")
+                                .font(ui_label())
+                                .color(if s.settings { a.ink() } else { a.muted() })
+                                .truncate(),
+                        ),
                     super::tabs::Target::Settings,
                 ))
                 .child(
-                    button(a, "settings-close", "×", |s, tx| {
-                        s.dispatch(AppAction::CloseSettings, tx)
-                    })
-                    .px(6.0),
+                    icon_button(
+                        a,
+                        "settings-close",
+                        &rune_kit::glyphs::CLOSE,
+                        "Close Settings tab",
+                        |s, tx| s.dispatch(AppAction::CloseSettings, tx),
+                    )
+                    .w(24.0)
+                    .min_h(24.0)
+                    .fill(Color::TRANSPARENT)
+                    .hover(a.hover_bg()),
                 ),
         );
     }
@@ -1834,69 +1975,137 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         return pane.child(super::settings::content(s, a));
     }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
-        return pane.child(
-            col().grow(1.0).center().child(
-                text("Open a file from Files")
-                    .font(fonts::editor())
-                    .color(a.muted()),
-            ),
-        );
+        // Settings closed its tab but the pane is still drawn while it exits;
+        // an editor pane with nothing open renders nothing rather than a placeholder.
+        return pane.child(el().grow(1.0).fill(a.bg()));
     };
     let id = tab.id;
-    let mut modes = row().grow(1.0).min_w(0.0).gap(2.0).scroll_x().child(
-        button(a, "file-edit", "Edit", |s, tx| {
-            s.dispatch(AppAction::EditFile, tx)
-        })
-        .h(26.0)
+    let markdown = is_markdown(&tab.document.path);
+    let mut modes = row().min_w(0.0).gap(2.0).scroll_x().child(
+        icon_button(
+            a,
+            "file-edit",
+            &rune_kit::glyphs::PENCIL,
+            "Edit",
+            move |s: &mut State, tx| s.dispatch(AppAction::EditFile, tx),
+        )
         .fill(if tab.mode == View::Edit {
-            a.hover_bg()
+            a.accent().alpha(0.18)
         } else {
-            a.bg()
-        }),
+            Color::TRANSPARENT
+        })
+        .hover(a.hover_bg()),
     );
-    for (key, label, mode) in [
-        ("diff-current", "Current", Comparison::Current),
-        ("diff-unstaged", "Unstaged", Comparison::Unstaged),
-        ("diff-staged", "Staged", Comparison::Staged),
-    ] {
+    if markdown {
         modes = modes.child(
-            button(a, key, label, move |s, tx| {
-                s.dispatch(AppAction::Compare(mode), tx)
-            })
-            .h(26.0)
-            .fill(if tab.mode == View::Diff(mode) {
-                a.hover_bg()
+            icon_button(
+                a,
+                "file-preview",
+                &rune_kit::glyphs::PREVIEW_TEXT,
+                if tab.mode == View::Preview {
+                    "Preview: on"
+                } else {
+                    "Preview"
+                },
+                move |s: &mut State, tx| {
+                    if let Some(tab) = s.workspace.tabs.get_mut(s.workspace.active) {
+                        tab.mode = if tab.mode == View::Preview {
+                            View::Edit
+                        } else {
+                            View::Preview
+                        };
+                    }
+                    s.workspace.terminal_focus = false;
+                    tx.blur();
+                },
+            )
+            .fill(if tab.mode == View::Preview {
+                a.accent().alpha(0.18)
             } else {
-                a.bg()
-            }),
+                Color::TRANSPARENT
+            })
+            .hover(a.hover_bg()),
         );
     }
-    let controls = row()
+    for (key, label, mode) in [
+        (
+            "diff-current",
+            "Compare with saved file",
+            Comparison::Current,
+        ),
+        (
+            "diff-unstaged",
+            "Compare unstaged changes",
+            Comparison::Unstaged,
+        ),
+        ("diff-staged", "Compare staged changes", Comparison::Staged),
+    ] {
+        modes = modes.child(
+            icon_button(a, key, &rune_kit::glyphs::COMPARE, label, move |s, tx| {
+                s.dispatch(AppAction::Compare(mode), tx)
+            })
+            .fill(if tab.mode == View::Diff(mode) {
+                a.accent().alpha(0.18)
+            } else {
+                Color::TRANSPARENT
+            })
+            .hover(a.hover_bg()),
+        );
+    }
+    let save_help = s.shortcut_help("save-file", "Save file");
+    modes = modes.child(
+        icon_button(
+            a,
+            "file-save",
+            &rune_kit::glyphs::SAVE,
+            if tab.saving { "Saving…" } else { &save_help },
+            move |s: &mut State, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
+        )
+        .disabled(tab.saving),
+    );
+    // The editor's status line: mode icons on the left, position and encoding on
+    // the right, with breathing room on all sides.
+    let status_text = if tab.mode == View::Edit {
+        let position = tab.edit.focus;
+        let line = tab.edit.text[..position]
+            .bytes()
+            .filter(|b| *b == b'\n')
+            .count()
+            + 1;
+        let column = tab.edit.text[..position]
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .chars()
+            .count()
+            + 1;
+        Some(format!(
+            "UTF-8{} · {:?} · Ln {line}, Col {column}",
+            if tab.document.saved.bom { " BOM" } else { "" },
+            tab.document.saved.preferred
+        ))
+    } else if tab.mode == View::Preview {
+        Some("Markdown preview".to_owned())
+    } else {
+        None
+    };
+    let footer = row()
+        .key("editor-status")
         .w_full()
-        .h(36.0_f32.max(ui_label().size * 1.5 + 14.0))
-        .px(8.0)
+        .fill(a.panel())
+        .border_sides([1.0, 0.0, 0.0, 0.0], a.hover_bg())
+        .px(10.0)
+        .py(4.0)
         .gap(6.0)
         .center_y()
         .child(modes)
-        .child(
-            button(
-                a,
-                "file-save",
-                if tab.saving { "Saving…" } else { "Save" },
-                move |s, tx| s.dispatch(AppAction::SaveEditor(Some(id)), tx),
-            )
-            .help(s.shortcut_help("save-file", "Save file"))
-            .h(26.0),
-        );
-    pane = pane.child(controls).child(
-        text(tab.document.path.to_string_lossy())
-            .font(ui_style(10.0, 400.0))
-            .color(a.muted())
-            .truncate()
-            .w_full()
-            .px(10.0)
-            .py(4.0),
-    );
+        .child(el().grow(1.0));
+    let footer = if let Some(status) = status_text {
+        footer.child(text(status).font(ui_label()).color(a.muted()).shrink())
+    } else {
+        footer
+    };
+    pane = pane.child(footer);
     if let Some(error) = &tab.disk_error {
         pane = pane.child(
             text(format!("Disk: {error}"))
@@ -1954,6 +2163,8 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                                 .h(28.0)
                                 .color(a.ink())
                                 .placeholder("Find text", a.muted())
+                                .border(1.0, a.kit().c.border_base)
+                                .radius(6.0)
                                 .on_edit(|s: &mut State| &mut s.workspace.find_query)
                                 .on_submit(|s: &mut State, tx| s.find_editor(false, tx)),
                         )
@@ -1978,6 +2189,8 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                                 .h(28.0)
                                 .color(a.ink())
                                 .placeholder("Replace with", a.muted())
+                                .border(1.0, a.kit().c.border_base)
+                                .radius(6.0)
                                 .on_edit(|s: &mut State| &mut s.workspace.replacement),
                         )
                         .child(button(a, "replace-next", "Replace", |s, tx| {
@@ -1987,7 +2200,25 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 ),
         );
     }
-    if tab.mode == View::Edit {
+    if tab.mode == View::Preview {
+        // Rendered markdown: the same text the editor shows, laid out and styled
+        // by Rune Kit, in the editor's scroll area.
+        let rendered = rune_kit::Markdown::new(tab.edit.text.clone())
+            .autolink(true)
+            .build(a.kit());
+        let viewport = col()
+            .key(format!("editor-scroll-{id}"))
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .scroll(rune::ScrollSpec {
+                stick_bottom: false,
+            })
+            .px(16.0)
+            .py(12.0)
+            .child(rendered);
+        pane = pane.child(a.kit().scroll_bar(viewport));
+    } else if tab.mode == View::Edit {
         let language = syntax::lang_for_path(&tab.document.path.to_string_lossy());
         let highlights = syntax::highlight(language, &tab.edit.text);
         let spans = SyntaxTheme::from_kit(a.kit()).spans(&highlights, 0);
@@ -2034,33 +2265,13 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .py(8.0)
             .child(field);
         pane = pane.child(a.kit().scroll_bar(viewport));
-        let position = tab.edit.focus;
-        let line = tab.edit.text[..position]
-            .bytes()
-            .filter(|b| *b == b'\n')
-            .count()
-            + 1;
-        let column = tab.edit.text[..position]
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .chars()
-            .count()
-            + 1;
-        pane = pane.child(
-            text(format!(
-                "UTF-8{} · {:?} · Ln {line}, Col {column}",
-                if tab.document.saved.bom { " BOM" } else { "" },
-                tab.document.saved.preferred
-            ))
-            .font(ui_style(10.0, 400.0))
-            .color(a.muted()),
-        );
     } else {
         pane = pane.child(
             row()
+                .key("diff-controls")
                 .gap(4.0)
-                .h(32.0)
+                .h(30.0)
+                .px(10.0)
                 .scroll_x()
                 .child(button(a, "diff-auto", "Auto", |s, _| {
                     s.workspace.diff_layout = 0
@@ -2071,12 +2282,24 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .child(button(a, "diff-split", "Split", |s, _| {
                     s.workspace.diff_layout = 2
                 }))
-                .child(button(a, "diff-prev", "↑", |s, tx| {
-                    s.workspace.diff.next_hunk(false, tx);
-                }))
-                .child(button(a, "diff-next", "↓", |s, tx| {
-                    s.workspace.diff.next_hunk(true, tx);
-                })),
+                .child(icon_button(
+                    a,
+                    "diff-prev",
+                    &rune_kit::glyphs::ARROW_UP,
+                    "Previous change",
+                    |s: &mut State, tx| {
+                        s.workspace.diff.next_hunk(false, tx);
+                    },
+                ))
+                .child(icon_button(
+                    a,
+                    "diff-next",
+                    &rune_kit::glyphs::ARROW_DOWN,
+                    "Next change",
+                    |s: &mut State, tx| {
+                        s.workspace.diff.next_hunk(true, tx);
+                    },
+                )),
         );
         pane = pane.child(
             text(&workspace.diff_label)
@@ -2126,9 +2349,16 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     pane
 }
 
+/// Whether the path names a markdown file Rodtty can render as a preview.
+fn is_markdown(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+}
+
 fn editor_available(s: &State) -> bool {
-    s.workspace.layout.editor
-        && (!s.workspace.tabs.is_empty() || s.settings_open || s.workspace.show_empty_editor)
+    // No open editor tab and no Settings tab: the pane closes rather than
+    // showing an empty placeholder, so the terminal keeps the workspace.
+    s.workspace.layout.editor && (!s.workspace.tabs.is_empty() || s.settings_open)
 }
 
 fn explorer_minimum_width(s: &State) -> f32 {
@@ -2182,12 +2412,7 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
     }
     let mut main = row().grow(1.0).min_w(0.0).h_full().min_h(0.0);
     if terminal {
-        let mut pane = col()
-            .key("terminal-pane")
-            .h_full()
-            .min_h(0.0)
-            .min_w(0.0)
-            .child(terminal_tabs(s, a));
+        let mut pane = col().key("terminal-pane").h_full().min_h(0.0).min_w(0.0);
         if s.search {
             pane = pane.child(
                 row()
@@ -2205,6 +2430,8 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
                             .h(29.0)
                             .placeholder("Find in terminal…", a.muted())
                             .color(a.ink())
+                            .border(1.0, a.kit().c.border_base)
+                            .radius(6.0)
                             .caret(a.accent(), a.selection())
                             .on_edit(|s: &mut State| &mut s.query)
                             .on_submit(|s: &mut State, tx| {
@@ -2267,10 +2494,13 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
             1.0
         }));
     }
-    body = body.child(main);
     if explorer_shown && !explorer_visible {
-        body = body.child(explorer(s, a).absolute(0.0, 0.0).border(1.0, a.hover_bg()));
+        // Compact reveal: the explorer draws in flow beside the panes rather than
+        // over them, so the terminal keeps its content visible and resizes for
+        // the space it actually has.
+        main = main.child(explorer(s, a).min_w(160.0).border(1.0, a.hover_bg()));
     }
+    body = body.child(main);
     body
 }
 
@@ -2355,7 +2585,6 @@ pub(super) fn demo(s: &mut State, diff: bool) {
     s.workspace.layout.explorer = true;
     s.workspace.layout.editor = true;
     s.workspace.directory = Some(PathBuf::from("/workspace/rodtty"));
-    s.workspace.address.replace_text("/workspace/rodtty");
     s.workspace.entries = vec![
         Entry {
             path: PathBuf::from("/workspace/rodtty/src"),
@@ -2424,9 +2653,6 @@ pub(super) fn real_diff_demo(s: &mut State) -> anyhow::Result<()> {
     s.workspace.layout.explorer = true;
     s.workspace.layout.editor = true;
     s.workspace.directory = Some(directory.clone());
-    s.workspace
-        .address
-        .replace_text(directory.to_string_lossy());
     s.workspace.entries = crate::files::list_directory(&directory, false)?.1;
     s.workspace.repo = Some(repo);
     s.rebuild_tree();
@@ -2442,7 +2668,6 @@ pub(super) fn icons_demo(s: &mut State) {
     demo(s, false);
     let root = PathBuf::from("/workspace/icons");
     s.workspace.directory = Some(root.clone());
-    s.workspace.address.replace_text(root.to_string_lossy());
     s.workspace.layout.terminal = false;
     s.workspace.entries = [
         ("alpine", true),
@@ -2544,9 +2769,6 @@ pub(super) fn host_tree_demo(s: &mut State) {
     match listing {
         Ok((listing, repo)) => {
             s.workspace.directory = Some(listing.root.clone());
-            s.workspace
-                .address
-                .replace_text(listing.root.to_string_lossy());
             s.workspace.entries = listing.entries;
             s.workspace.tree_errors = listing.errors;
             s.workspace.repo = repo;
@@ -2682,7 +2904,7 @@ mod tests {
     #[test]
     fn editor_artwork_keeps_parent_labels_dirty_marks_and_tab_actions_when_appearance_changes() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         icons_demo(&mut state);
         state.config.appearance = config::Appearance::Dark;
@@ -2715,7 +2937,7 @@ mod tests {
     #[test]
     fn explorer_artwork_matches_exact_names_compound_extensions_folders_and_current_appearance() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in [
             "Dockerfile",
             "package.json",
@@ -2787,7 +3009,7 @@ mod tests {
     #[test]
     fn explorer_displays_offline_file_artwork_beside_file_labels() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         std::fs::write(root.path().join("main.rs"), "fn main() {}\n").unwrap();
         let mut state = state(root.path());
         state.workspace.layout.explorer = true;
@@ -2837,7 +3059,7 @@ mod tests {
     #[test]
     fn single_click_previews_reuse_one_visible_tab_and_double_click_keeps_it() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(root.path().join(name), name).unwrap();
         }
@@ -2899,7 +3121,7 @@ mod tests {
     #[test]
     fn late_preview_load_does_not_replace_a_file_explicitly_reopened_while_loading() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["a.txt", "b.txt"] {
             std::fs::write(root.path().join(name), name).unwrap();
         }
@@ -2939,7 +3161,7 @@ mod tests {
     #[test]
     fn selecting_an_existing_editor_tab_supersedes_a_pending_preview() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["a.txt", "b.txt"] {
             std::fs::write(root.path().join(name), name).unwrap();
         }
@@ -2966,6 +3188,63 @@ mod tests {
     }
 
     #[test]
+    fn markdown_files_offer_a_rendered_preview_and_toggle_back_to_edit() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        let file = root.path().join("README.md");
+        std::fs::write(
+            &file,
+            "# Title\n\nSome **markdown** and a list:\n\n- one\n- two\n",
+        )
+        .unwrap();
+        let mut state = state(root.path());
+        open(&mut state, &file);
+        state.workspace.layout.editor = true;
+        state.workspace.terminal_focus = false;
+        let mut runtime = runtime_for(state);
+        runtime.settle_all();
+        runtime.frame(1.0);
+        // The editor starts in Edit mode; the preview button switches to rendered
+        // markdown, and back to the raw editor.
+        assert!(runtime.find("file-editor-1").is_some());
+        assert!(runtime.find("file-preview").is_some());
+        click(&mut runtime, "file-preview");
+        runtime.settle_all();
+        runtime.frame(1.0);
+        assert!(
+            runtime.find("file-editor-1").is_none(),
+            "preview hides the raw editor"
+        );
+        assert!(
+            runtime
+                .elements()
+                .into_iter()
+                .any(|e| e.text.as_deref() == Some("Title")),
+            "preview renders the markdown heading"
+        );
+        assert!(
+            runtime
+                .elements()
+                .into_iter()
+                .any(|e| e.text.as_deref() == Some("one")),
+            "preview renders the markdown list"
+        );
+        click(&mut runtime, "file-preview");
+        runtime.settle_all();
+        runtime.frame(1.0);
+        assert!(runtime.find("file-editor-1").is_some());
+        runtime.update(|s, _| {
+            s.workspace.tabs[0].document.path = root.path().join("plain.txt");
+        });
+        runtime.settle_all();
+        runtime.frame(1.0);
+        assert!(
+            runtime.find("file-preview").is_none(),
+            "non-markdown files offer no preview button"
+        );
+    }
+
+    #[test]
     fn returning_to_settings_or_terminal_supersedes_a_pending_preview() {
         use super::super::tests::runtime_for;
         for action in [
@@ -2974,14 +3253,14 @@ mod tests {
             Some(AppAction::ToggleEditor),
             None,
         ] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             std::fs::write(root.path().join("a.txt"), "a").unwrap();
             let mut state = state(root.path());
             state.navigate(root.path().to_owned());
             state.workspace.layout.explorer = true;
-            // ToggleEditor hides the existing pane, returning to the terminal.
+            // The editor pane is requested, but with no editor tab or Settings
+            // it stays closed: the terminal is the pane the owner is in.
             state.workspace.layout.editor = true;
-            state.workspace.show_empty_editor = true;
             wait(&mut state, |s| s.workspace.entries.len() == 1);
             let mut runtime = runtime_for(state);
             click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
@@ -2994,6 +3273,12 @@ mod tests {
             wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
             match action {
                 Some(AppAction::Settings) => assert!(runtime.find("settings-search").is_some()),
+                // No empty editor pane exists to hide: toggling it leaves the
+                // terminal as the visible pane without opening the preview.
+                Some(AppAction::ToggleEditor) => {
+                    assert!(runtime.find("terminal-pane").is_some());
+                    assert!(runtime.find("file-editor-1").is_none());
+                }
                 _ => assert!(runtime.state.workspace.terminal_focus),
             }
             assert!(!runtime.elements().iter().any(|e| {
@@ -3007,7 +3292,7 @@ mod tests {
     #[test]
     fn preview_while_saving_keeps_the_saving_file_and_uses_normal_close_protection() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let a = root.path().join("a.txt");
         let b = root.path().join("b.txt");
         std::fs::write(&a, "saved").unwrap();
@@ -3053,7 +3338,7 @@ mod tests {
     #[test]
     fn context_palette_and_double_click_during_load_all_keep_the_selected_file() {
         use super::super::tests::{open_palette, press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(root.path().join(name), name).unwrap();
         }
@@ -3108,7 +3393,7 @@ mod tests {
     #[test]
     fn editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let a = root.path().join("a.txt");
         let b = root.path().join("b.txt");
         std::fs::write(&a, "saved text").unwrap();
@@ -3131,7 +3416,7 @@ mod tests {
             &mut runtime,
             Key::Command('z'),
             rune::Mods {
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 cmd: true,
                 ..Default::default()
             },
@@ -3181,7 +3466,7 @@ mod tests {
     #[test]
     fn behavior_setting_applies_live_persists_resets_and_external_json_updates() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
             std::fs::write(root.path().join(name), name).unwrap();
         }
@@ -3206,7 +3491,7 @@ mod tests {
         }));
         click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         click(&mut runtime, "reset-single-click-keeps-open");
         assert!(!Config::load(root.path()).unwrap().single_click_keeps_open);
         click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
@@ -3250,7 +3535,7 @@ mod tests {
     #[test]
     fn editor_tabs_disambiguate_reorder_and_middle_close_through_dirty_policy() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = state(root.path());
         for (index, folder) in ["client", "host", "shared"].iter().enumerate() {
             let path = root.path().join(folder).join("config.rs");
@@ -3312,7 +3597,7 @@ mod tests {
     #[test]
     fn settings_tab_can_move_and_middle_close_without_closing_file_editors() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("notes.txt");
         std::fs::write(&path, "notes").unwrap();
         let mut state = state(root.path());
@@ -3340,7 +3625,7 @@ mod tests {
     #[test]
     fn overflowing_editor_tabs_scroll_with_the_mouse_wheel() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = state(root.path());
         for i in 0..8 {
             let path = root.path().join(format!("file-{i}.rs"));
@@ -3374,7 +3659,7 @@ mod tests {
     #[test]
     fn explorer_create_actions_write_and_reveal_files_and_folders() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = state(root.path());
         state.toggle_files();
         wait(&mut state, |s| !s.workspace.scan_busy);
@@ -3410,7 +3695,7 @@ mod tests {
     #[test]
     fn explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash() {
         use super::super::tests::runtime_for;
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "desktop::workspace::tests::explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash", "--nocapture"])
@@ -3484,7 +3769,7 @@ mod tests {
     #[test]
     fn trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel() {
         use super::super::tests::runtime_for;
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "desktop::workspace::tests::trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel", "--nocapture"])
@@ -3599,7 +3884,7 @@ mod tests {
     #[test]
     fn trash_failure_requires_permanent_confirmation_even_when_preferences_disable_confirmation() {
         use super::super::tests::runtime_for;
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "desktop::workspace::tests::trash_failure_requires_permanent_confirmation_even_when_preferences_disable_confirmation", "--nocapture"])
@@ -3663,7 +3948,7 @@ mod tests {
     #[test]
     fn real_pty_input_survives_background_trash_preparation_save_as_and_removal() {
         use super::super::tests::{press, runtime_for};
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
             let output=std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact","desktop::workspace::tests::real_pty_input_survives_background_trash_preparation_save_as_and_removal","--nocapture"])
@@ -3786,7 +4071,7 @@ mod tests {
     #[test]
     fn trash_waits_for_in_flight_open_and_save_before_starting_any_removal() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("notes.txt");
         std::fs::write(&path, "saved source").unwrap();
         let mut state = state(root.path());
@@ -3828,7 +4113,7 @@ mod tests {
     #[test]
     fn deletion_confirmation_preference_is_live_persisted_searchable_and_resettable() {
         use super::super::tests::runtime_for;
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_support::tempdir().unwrap();
         let mut state = state(fixture.path());
         state.open_settings(&mut Tx::default());
         state.settings_query.replace_text("Trash");
@@ -3872,6 +4157,12 @@ mod tests {
         }
         panic!("application operation timed out: {}", runtime.state.message);
     }
+    fn open_settings(runtime: &mut rune::Runtime<State>) {
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
+        for _ in 0..45 {
+            runtime.frame(1.0 / 60.0);
+        }
+    }
     fn click(runtime: &mut rune::Runtime<State>, key: &str) {
         runtime.frame(1.0);
         let (x, y) = runtime.find(key).unwrap_or_else(|| panic!("missing {key}"));
@@ -3887,7 +4178,7 @@ mod tests {
             runtime,
             Key::Command('a'),
             rune::Mods {
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 cmd: true,
                 ..Default::default()
             },
@@ -3898,7 +4189,7 @@ mod tests {
     #[test]
     fn explorer_replace_refreshes_a_clean_destination_and_preserves_preview_identity() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source.txt");
         let target = root.path().join("target.txt");
         std::fs::write(&source, "source disk").unwrap();
@@ -3941,7 +4232,7 @@ mod tests {
     #[test]
     fn explorer_move_cancel_and_failure_leave_paths_tree_and_drafts_unchanged() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source.txt");
         let target = root.path().join("target.txt");
         std::fs::write(&source, "source disk").unwrap();
@@ -3984,7 +4275,7 @@ mod tests {
     #[test]
     fn explorer_move_waits_for_pending_io_and_keeps_external_conflict_and_diff_protection() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source.txt");
         let target = root.path().join("target.txt");
         let other = root.path().join("other.txt");
@@ -4055,7 +4346,7 @@ mod tests {
     #[test]
     fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source.txt");
         let target = root.path().join("target.txt");
         std::fs::write(&source, "source disk").unwrap();
@@ -4125,7 +4416,7 @@ mod tests {
     #[test]
     fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_staging_git() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let git = |args: &[&str]| {
             let output = std::process::Command::new("git")
                 .arg("-C")
@@ -4253,7 +4544,7 @@ mod tests {
             &mut runtime,
             Key::Command('z'),
             rune::Mods {
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 cmd: true,
                 ..Default::default()
             },
@@ -4286,7 +4577,7 @@ mod tests {
     #[test]
     fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("draft.txt");
         let target = root.path().join("renamed.txt");
         std::fs::write(&source, b"\xef\xbb\xbffirst\r\nsecond\r\n").unwrap();
@@ -4346,7 +4637,7 @@ mod tests {
     #[test]
     fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source");
         let destination = root.path().join("destination");
         std::fs::create_dir_all(source.join("nested")).unwrap();
@@ -4416,7 +4707,7 @@ mod tests {
     #[test]
     fn explorer_copy_collision_choices_never_silently_overwrite_open_content() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("report.txt");
         let destination = root.path().join("destination");
         std::fs::create_dir(&destination).unwrap();
@@ -4489,7 +4780,7 @@ mod tests {
     #[test]
     fn explorer_file_operation_errors_leave_disk_and_editor_content_intact() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source");
         std::fs::create_dir_all(source.join("child")).unwrap();
         let editor = source.join("draft.txt");
@@ -4555,7 +4846,7 @@ mod tests {
     #[test]
     fn responsive_workspace_keeps_editor_contents_and_remembers_pane_widths() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("notes.txt");
         std::fs::write(&path, "saved notes").unwrap();
         let mut state = state(root.path());
@@ -4607,7 +4898,7 @@ mod tests {
     #[test]
     fn explicitly_hiding_compact_panes_stays_hidden_when_the_window_widens() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("notes.txt");
         std::fs::write(&path, "notes").unwrap();
         let mut state = state(root.path());
@@ -4636,7 +4927,7 @@ mod tests {
     #[test]
     fn new_workspace_keeps_the_explorer_beside_the_terminal_until_space_is_needed() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = state(root.path());
         state.workspace.layout.explorer = true;
         // Older saved workspaces may request an editor without any open files.
@@ -4658,9 +4949,7 @@ mod tests {
         runtime.settle_all();
         runtime.frame(0.0);
         assert!(runtime.find("explorer").is_some());
-        let (x, y) = runtime.find("settings").unwrap();
-        runtime.pointer_down(x, y);
-        runtime.pointer_up(x, y);
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
         runtime.settle_all();
         runtime.frame(0.0);
         assert!(runtime.find("explorer").is_none());
@@ -4684,7 +4973,7 @@ mod tests {
     #[test]
     fn a_small_window_with_large_ui_text_can_create_a_file_by_keyboard() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = state(root.path());
         state.config.fonts.ui_size = 24.0;
         state.toggle_files();
@@ -4724,8 +5013,8 @@ mod tests {
     #[test]
     fn copied_items_outside_the_root_offer_an_explicit_reveal_action() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
+        let outside = crate::test_support::tempdir().unwrap();
         let source = root.path().join("notes.txt");
         std::fs::write(&source, "copied notes").unwrap();
         let mut state = state(root.path());
@@ -4770,7 +5059,7 @@ mod tests {
     #[test]
     fn dismissing_palette_returns_typing_to_the_editor_without_changing_its_text() {
         use super::super::tests::{open_palette, press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
@@ -4811,7 +5100,7 @@ mod tests {
     #[test]
     fn palette_and_editor_close_control_both_preserve_unsaved_work_until_a_decision() {
         use super::super::tests::{open_palette, press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
@@ -4848,15 +5137,13 @@ mod tests {
     #[test]
     fn palette_file_actions_do_not_target_an_editor_behind_settings() {
         use super::super::tests::{open_palette, press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
         open(&mut state, &path);
         let mut runtime = runtime_for(state);
-        let (x, y) = runtime.find("settings").unwrap();
-        runtime.pointer_down(x, y);
-        runtime.pointer_up(x, y);
+        runtime.update(|s, tx| s.dispatch(AppAction::Settings, tx));
         runtime.frame(0.0);
         open_palette(&mut runtime);
         press(
@@ -4879,7 +5166,7 @@ mod tests {
     fn autosave_conflict_waits_for_another_files_close_decision() {
         use super::super::tests::runtime_for;
         for newer_edit in [false, true] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let a = root.path().join("a.txt");
             let b = root.path().join("b.txt");
             std::fs::write(&a, "a original").unwrap();
@@ -4954,7 +5241,7 @@ mod tests {
     #[test]
     fn autosave_keeps_preview_edit_promotion_undo_redo_and_find_replace() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("draft.txt");
         std::fs::write(&path, "original").unwrap();
         std::fs::write(
@@ -4978,7 +5265,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft token");
         let command = rune::Mods {
             cmd: true,
-            ctrl: true,
+            ctrl: !cfg!(target_os = "macos"),
             ..Default::default()
         };
         press(&mut runtime, Key::Command('z'), command);
@@ -5008,7 +5295,7 @@ mod tests {
     #[test]
     fn autosave_does_not_preempt_removal_save_as_collision_or_cancel() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         if std::env::var_os("RODTTY_AUTOSAVE_REMOVAL_CHILD").is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "desktop::workspace::tests::autosave_does_not_preempt_removal_save_as_collision_or_cancel", "--nocapture"])
@@ -5106,7 +5393,7 @@ mod tests {
     fn autosave_waits_for_rename_and_saves_the_new_path_without_recreating_the_source() {
         use super::super::tests::runtime_for;
         for policy in ["after_delay", "editor_focus_loss"] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let source = root.path().join("draft.txt");
             let target = root.path().join("renamed.txt");
             std::fs::write(&source, "original").unwrap();
@@ -5148,7 +5435,7 @@ mod tests {
     fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_descendant() {
         use super::super::tests::runtime_for;
         for policy in ["after_delay", "editor_focus_loss"] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let source = root.path().join("source");
             let destination = root.path().join("moved");
             std::fs::create_dir_all(source.join("nested")).unwrap();
@@ -5216,7 +5503,7 @@ mod tests {
     #[test]
     fn autosave_external_conflict_keeps_edits_and_cancel_does_not_repeat_the_prompt() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         std::fs::write(
@@ -5257,7 +5544,7 @@ mod tests {
     #[test]
     fn autosave_preserves_later_edits_during_an_explicit_save_and_restarts_the_delay() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         std::fs::write(
@@ -5289,7 +5576,7 @@ mod tests {
     #[test]
     fn autosave_respects_cancelled_dirty_close_until_the_next_edit() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         std::fs::write(
@@ -5323,7 +5610,7 @@ mod tests {
             AppAction::ToggleEditor,
             AppAction::ActivateEditor(1),
         ] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let path = root.path().join("file.txt");
             let other = root.path().join("other.txt");
             std::fs::write(&path, "original").unwrap();
@@ -5361,7 +5648,7 @@ mod tests {
     #[test]
     fn autosave_is_explicit_by_default_and_delay_applies_live_without_changing_file_format() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, b"\xef\xbb\xbforiginal\r\n").unwrap();
         #[cfg(unix)]
@@ -5380,7 +5667,7 @@ mod tests {
         fill(&mut runtime, "file-editor-1", "updated\n");
         pump_autosave(&mut runtime, Duration::from_millis(160));
         assert_eq!(std::fs::read(&path).unwrap(), b"\xef\xbb\xbforiginal\r\n");
-        click(&mut runtime, "settings");
+        open_settings(&mut runtime);
         fill(&mut runtime, "settings-search", "autosave");
         click(&mut runtime, "autosave-after-delay");
         runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
@@ -5411,7 +5698,7 @@ mod tests {
     #[test]
     fn save_control_shortcut_and_palette_save_the_same_editor_buffer() {
         use super::super::tests::{open_palette, press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
@@ -5458,7 +5745,7 @@ mod tests {
 
     #[test]
     fn clean_files_reload_but_dirty_files_keep_edits_and_require_conflict_resolution() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
@@ -5489,7 +5776,7 @@ mod tests {
 
     #[test]
     fn canceling_a_save_and_close_keeps_the_window_open_when_save_completes() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.txt");
         std::fs::write(&path, "original").unwrap();
         let mut state = state(root.path());
@@ -5507,7 +5794,7 @@ mod tests {
 
     #[test]
     fn editor_keys_insert_newlines_support_undo_and_close_without_losing_unsaved_work() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let path = root.path().join("file.rs");
         std::fs::write(&path, "fn main() {}").unwrap();
         let mut state = state(root.path());
@@ -5545,7 +5832,7 @@ mod tests {
             key: Key::Command('z'),
             mods: rune::Mods {
                 cmd: true,
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 ..Default::default()
             },
         });
@@ -5555,7 +5842,7 @@ mod tests {
             key: Key::Command('z'),
             mods: rune::Mods {
                 cmd: true,
-                ctrl: true,
+                ctrl: !cfg!(target_os = "macos"),
                 shift: true,
                 ..Default::default()
             },
@@ -5581,7 +5868,7 @@ mod tests {
     #[test]
     fn explorer_opens_descendants_without_replacing_the_chosen_root() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let folder = root.path().join("src");
         std::fs::create_dir_all(folder.join("nested")).unwrap();
         std::fs::write(folder.join("nested/hello.txt"), "hello").unwrap();
@@ -5613,7 +5900,7 @@ mod tests {
     #[test]
     fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_without_writes() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let git = |args: &[&str]| {
             let result = std::process::Command::new("git")
                 .arg("-C")
@@ -5667,15 +5954,24 @@ mod tests {
                     "{name}"
                 );
             }
+            // The filter toggles are icon buttons that name their state.
             for label in [
-                if show_all { "Hidden ✓" } else { "Hidden" },
-                if show_all { "Ignore" } else { "Ignore ✓" },
+                if show_all {
+                    "Show hidden files: on"
+                } else {
+                    "Show hidden files: off"
+                },
+                if show_all {
+                    "Respect Git ignore rules: off"
+                } else {
+                    "Respect Git ignore rules: on"
+                },
             ] {
                 assert!(
                     runtime
                         .elements()
                         .iter()
-                        .any(|e| e.text.as_deref() == Some(label)),
+                        .any(|e| e.label.as_deref() == Some(label)),
                     "missing {label}"
                 );
             }
@@ -5702,7 +5998,7 @@ mod tests {
     #[test]
     fn explorer_controls_filter_real_git_ignores_and_persist_owner_preferences() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         assert!(
             std::process::Command::new("git")
                 .arg("-C")
@@ -5790,7 +6086,7 @@ mod tests {
 
     #[test]
     fn explorer_only_tracks_terminal_location_when_follow_is_enabled() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let child = root.path().join("child");
         std::fs::create_dir(&child).unwrap();
         let mut state = state(root.path());
@@ -5815,7 +6111,7 @@ mod tests {
 
     #[test]
     fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_filters() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         assert!(
             std::process::Command::new("git")
                 .arg("-C")
@@ -5844,8 +6140,8 @@ mod tests {
     #[test]
     fn explorer_follow_outside_root_requires_explicit_root_change() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
+        let outside = crate::test_support::tempdir().unwrap();
         std::fs::write(outside.path().join("host.txt"), "host").unwrap();
         let mut state = state(root.path());
         state.toggle_files();
@@ -5881,7 +6177,7 @@ mod tests {
     #[test]
     fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let folder = root.path().join("source");
         std::fs::create_dir_all(folder.join("nested")).unwrap();
         let path = folder.join("nested/hello.txt");
@@ -5923,7 +6219,7 @@ mod tests {
     #[test]
     fn explorer_refresh_keeps_selection_and_shows_folder_failures_while_actions_work() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let folder = root.path().join("source");
         std::fs::create_dir(&folder).unwrap();
         std::fs::write(folder.join("existing.txt"), "hello").unwrap();
@@ -5933,7 +6229,10 @@ mod tests {
         let mut runtime = runtime_for(state);
         runtime.update(|s, tx| s.dispatch(AppAction::ExplorerFocus, tx));
         runtime.frame(0.0);
+        // Home lands on the workspace root row, which is already open: the
+        // first Right steps into it and the second expands `source`.
         press(&mut runtime, Key::Home, Default::default());
+        press(&mut runtime, Key::Right, Default::default());
         press(&mut runtime, Key::Right, Default::default());
         wait(&mut runtime.state, |s| !s.workspace.scan_busy);
         runtime.update(|_, _| {});
@@ -5953,10 +6252,7 @@ mod tests {
             folder.join("existing.txt")
         );
         runtime.update(|s, tx| {
-            s.workspace
-                .address
-                .replace_text(root.path().join("missing").to_string_lossy());
-            s.dispatch(AppAction::ExplorerSetRoot, tx);
+            s.navigate(root.path().join("missing"));
             s.workspace_poll(tx);
             s.dispatch(AppAction::CommandPalette, tx);
         });
@@ -5975,7 +6271,7 @@ mod tests {
     #[test]
     fn explorer_type_select_prefix_survives_an_unchanged_refresh() {
         use super::super::tests::{press, runtime_for};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         for name in ["sea.txt", "soap.txt"] {
             std::fs::write(root.path().join(name), "hello").unwrap();
         }
@@ -6008,7 +6304,7 @@ mod tests {
 
     #[test]
     fn legacy_explorer_preferences_move_to_owner_json_without_losing_workspace_root() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         std::fs::write(root.path().join("settings.json"), "{}\n").unwrap();
         let workspace = serde_json::json!({ "explorer": true, "explorer_directory": root.path(), "follow": true, "hidden": true });
         std::fs::write(
@@ -6034,7 +6330,7 @@ mod tests {
     #[test]
     fn workspace_controls_inspect_current_unstaged_and_staged_git_without_writes() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let git = |args: &[&str]| {
             let output = std::process::Command::new("git")
                 .arg("-C")
@@ -6165,7 +6461,7 @@ mod tests {
 
     #[test]
     fn real_git_patch_reaches_the_read_only_diff_view_and_adapts_layout() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         assert!(
             std::process::Command::new("git")
                 .arg("-C")
@@ -6198,7 +6494,7 @@ mod tests {
     #[test]
     fn double_clicking_a_symlink_retains_the_canonical_preview_and_persists_it() {
         use super::super::tests::runtime_for;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let real = root.path().join("real.txt");
         let alias = root.path().join("alias.txt");
         let other = root.path().join("other.txt");

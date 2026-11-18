@@ -2,6 +2,7 @@ use crate::{
     config::{self, Config},
     profile,
     session::Session,
+    work::WindowGeometry,
 };
 use anyhow::{Context, Result};
 use rune::{
@@ -64,6 +65,11 @@ struct State {
     handle: Option<rune::AppHandle<State>>,
     window: Option<rune::WindowHandle>,
     window_maximized: bool,
+    /// The geometry last written to the saved layout, and when. A drag or
+    /// resize moves the window many times a second; compare against this and
+    /// write once it settles rather than on every host event.
+    window_saved: Option<WindowGeometry>,
+    window_geometry_poll: Option<std::time::Instant>,
     window_close_approved: bool,
     shutdown_saved: bool,
     root: PathBuf,
@@ -89,6 +95,9 @@ struct State {
     query: TextEdit,
     pending: Option<Pending>,
     selection: Option<((u16, u16), (u16, u16))>,
+    /// Where the current terminal press started, before it has travelled far
+    /// enough to be a selection. `None` between gestures.
+    drag_origin: Option<(f32, f32)>,
     terminal_context_open: bool,
     message: String,
     preview: Option<vt100::Screen>,
@@ -132,6 +141,9 @@ impl State {
             handle: None,
             window: None,
             window_maximized: false,
+            window_saved: None,
+            window_geometry_poll: None,
+            drag_origin: None,
             window_close_approved: false,
             shutdown_saved: false,
             settings_seen: std::fs::read(root.join("settings.json")).ok(),
@@ -408,6 +420,35 @@ fn button(
         )
 }
 
+fn icon_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    glyph: &'static rune::Icon,
+    tooltip: impl Into<String>,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let key = key.into();
+    let tooltip = tooltip.into();
+    el().key(key)
+        .label(tooltip.clone())
+        .help(tooltip)
+        .focusable(true)
+        .no_window_drag()
+        .focus_ring(2.0, 1.0, a.accent())
+        .min_h(29.0_f32.max(ui_label().size * 1.5 + 8.0))
+        .w(30.0)
+        .px(0.0)
+        .center()
+        .radius(5.0)
+        .fill(a.panel())
+        .hover(a.hover_bg())
+        .on_press_tx(move |state: &mut State, tx| {
+            tx.blur();
+            action(state, tx);
+        })
+        .child(rune::icon(glyph, 16.0).color(a.ink()))
+}
+
 fn grid(state: &State, a: &Appearance) -> El {
     state.with_screen(|screen| grid_view(state, screen, a))
 }
@@ -528,6 +569,10 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
     .on_background_press_tx(|s: &mut State, tx| {
         s.supersede_pending_preview();
         s.workspace.terminal_focus = true;
+        // The selection is the drag's to keep or drop: a pointer press reaches
+        // the drag handler first, whose `Down` drops any earlier selection, and
+        // this press also follows the release of a drag that just selected, so
+        // clearing here would erase every selection the moment it was made.
         tx.blur();
     })
     .on_secondary_press(clipboard::terminal_menu)
@@ -544,15 +589,43 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         };
         if drag.cancelled() {
             s.selection = None;
+            s.drag_origin = None;
             return;
         }
-        if drag.phase == Phase::Down {
-            s.selection = Some((point(drag.x, drag.y), point(drag.x, drag.y)));
-        } else if let Some((start, _)) = s.selection {
-            s.selection = Some((start, point(drag.x, drag.y)));
-        }
-        if drag.phase == Phase::Up && s.config.terminal_clipboard.copy_on_selection {
-            s.copy(tx);
+        match drag.phase {
+            Phase::Down => {
+                // Record the press but select nothing yet: a click that drifts
+                // a few points on a trackpad would otherwise highlight a cell
+                // the owner never meant to touch, and a click is not a select.
+                s.selection = None;
+                s.drag_origin = Some((drag.x, drag.y));
+            }
+            Phase::Move => {
+                let Some((sx, sy)) = s.drag_origin else {
+                    return;
+                };
+                if s.selection.is_none() {
+                    let travel = (drag.x - sx).hypot(drag.y - sy);
+                    if travel < SELECTION_THRESHOLD {
+                        return;
+                    }
+                    s.selection = Some((point(sx, sy), point(drag.x, drag.y)));
+                } else {
+                    let (start, _) = s.selection.unwrap_or((point(sx, sy), point(sx, sy)));
+                    s.selection = Some((start, point(drag.x, drag.y)));
+                }
+            }
+            Phase::Up => {
+                let extended = s.selection.is_some();
+                s.drag_origin = None;
+                if extended && s.config.terminal_clipboard.copy_on_selection {
+                    s.copy(tx);
+                }
+                // A press that never became a selection leaves nothing behind.
+                if !extended {
+                    s.selection = None;
+                }
+            }
         }
     })
     .on_wheel(move |s: &mut State, event, _| {
@@ -567,67 +640,129 @@ fn header_height() -> f32 {
     44.0_f32.max(ui_label().size * 1.5 + 18.0)
 }
 
+/// A display path with the owner's home folder as `~`, so `/Users/rodcoura/…`
+/// and `/home/…/…` both read as `~/…`. The owner's actual home folder, whatever
+/// the host calls it, comes from the same source the app root does.
+fn tilde_path(path: &std::path::Path) -> String {
+    let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_owned()) else {
+        return path.display().to_string();
+    };
+    if path == home {
+        return "~".into();
+    }
+    if let Some(rest) = path
+        .strip_prefix(&home)
+        .ok()
+        .filter(|rest| !rest.as_os_str().is_empty())
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
+}
+
+/// How far the pointer travels before a terminal press becomes a selection, in
+/// points. Below this it is a click: a trackpad's contact wobble and a slow
+/// click both stay under it, so neither highlights a cell the owner never
+/// meant to select and a click never copies.
+pub(super) const SELECTION_THRESHOLD: f32 = 4.0;
+
+/// A titlebar tab's height, in points. Shorter than the band so the pills keep
+/// a margin above and below at any UI zoom.
+const HEADER_TAB_HEIGHT: f32 = 26.0;
+
+/// The terminal tabs, laid out as the titlebar's own strip: each tab a pill,
+/// the active one filled, its close button beside the label, and the new-tab
+/// button after the last tab. The strip takes the width it is given and
+/// scrolls rather than pushing the header's actions off the edge.
 fn terminal_tabs(state: &State, a: &Appearance) -> El {
     let mut tabs = row()
         .key("tabs")
-        .w_full()
-        .h(38.0_f32.max(ui_label().size * 1.5 + 16.0))
-        .px(8.0)
+        .h(HEADER_TAB_HEIGHT)
         .gap(4.0)
-        .center_y()
-        .fill(a.panel());
+        .min_w(0.0)
+        .center_y();
+    // Sized to its tabs so the new-tab button follows the last one, but free
+    // to shrink below them so a crowded strip scrolls inside the header.
     let mut list = row()
         .key("terminal-tabs")
-        .grow(1.0)
-        .min_w(0.0)
+        .shrink()
         .scroll_x()
-        .gap(4.0);
+        .gap(4.0)
+        .center_y();
     for (i, session) in state.sessions.iter().enumerate() {
         let label = session.tab_title();
         let id = tabs::session_id(session);
+        let selected = i == state.active;
         list = list.child(
             row()
                 .key(format!("terminal-group-{id}"))
-                .gap(2.0)
+                .gap(0.0)
                 .center_y()
+                .radius(6.0)
+                .fill(if selected { a.hover_bg() } else { a.panel() })
+                .hover(a.hover_bg())
+                .no_window_drag()
+                // The pill only draws; the label below carries the activation,
+                // because interactive()'s drag and middle handlers make the label
+                // its own press target and would otherwise swallow the press.
                 .child(tabs::interactive(
-                    button(a, format!("tab-{i}"), &label, move |s, tx| {
-                        s.dispatch(AppAction::ActivateTerminal(i), tx)
-                    })
-                    .w(180.0)
-                    .help(&label)
-                    .fill(if i == state.active {
-                        a.hover_bg()
-                    } else {
-                        a.panel()
-                    }),
+                    tab_label(a, &label, selected)
+                        .key(format!("tab-{i}"))
+                        .help(&label)
+                        .on_press_tx(move |s: &mut State, tx| {
+                            tx.blur();
+                            s.dispatch(AppAction::ActivateTerminal(i), tx);
+                        }),
                     tabs::Target::Terminal(id),
                 ))
                 .child(
-                    button(a, format!("terminal-close-{i}"), "×", move |s, tx| {
-                        s.dispatch(AppAction::CloseTerminal(id), tx)
-                    })
-                    .px(6.0)
-                    .help("End terminal session"),
+                    icon_button(
+                        a,
+                        format!("terminal-close-{i}"),
+                        &rune_kit::glyphs::CLOSE,
+                        "End terminal session",
+                        move |s, tx| s.dispatch(AppAction::CloseTerminal(id), tx),
+                    )
+                    .w(22.0)
+                    .min_h(22.0)
+                    .fill(if selected { a.hover_bg() } else { a.panel() }),
                 ),
         );
     }
     if state.preview.is_some() {
         list = list.child(
-            button(a, "preview-tab", "›_  Terminal", |s, tx| {
-                s.dispatch(AppAction::ShowTerminal, tx)
-            })
-            .w(168.0)
+            icon_button(
+                a,
+                "preview-tab",
+                &rune_kit::glyphs::TERMINAL,
+                "Show terminal",
+                |s, tx| s.dispatch(AppAction::ShowTerminal, tx),
+            )
             .fill(a.hover_bg()),
         );
     }
-    tabs = tabs.child(tabs::scroll_strip(list, state, true)).child(
-        button(a, "new-tab", "+", |s, tx| {
-            s.dispatch(AppAction::NewTerminal, tx)
-        })
-        .help(state.shortcut_help("new-terminal", "New terminal tab")),
-    );
+    tabs = tabs
+        .child(tabs::scroll_strip(list, state, true))
+        .child(icon_button(
+            a,
+            "new-tab",
+            &rune_kit::glyphs::PLUS,
+            "New terminal tab",
+            |s, tx| s.dispatch(AppAction::NewTerminal, tx),
+        ));
     tabs
+}
+
+/// A tab's label: the text, tinted for whether the tab is the active one and
+/// sized to sit in the strip.
+fn tab_label(a: &Appearance, label: &str, selected: bool) -> El {
+    el().px(9.0).h(HEADER_TAB_HEIGHT).center().child(
+        text(label)
+            .font(ui_label())
+            .color(if selected { a.ink() } else { a.muted() })
+            .max_w(150.0)
+            .truncate(),
+    )
 }
 
 fn workspace_menu_items() -> [(&'static str, &'static str, AppAction); 6] {
@@ -691,11 +826,6 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
         .map(|r| r[0])
         .unwrap_or(state.workspace.body_width);
     let (show_explorer, show_terminal, show_editor) = workspace::pane_visibility(state, width);
-    let cwd = state
-        .active()
-        .map(Session::cwd)
-        .unwrap_or_else(|| state.directory.clone());
-    let folder = state.workspace.directory.as_ref().unwrap_or(&cwd);
     let mut root = col()
         .key("root")
         .pointer_buttons([rune::PointerButton::Back, rune::PointerButton::Forward])
@@ -709,19 +839,12 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
         .w_full()
         .h_full()
         .fill(a.bg())
-        .padding(if placement != frame::Placement::Native {
+        .padding(if frame::borderless() {
             frame::BORDER
         } else {
             0.0
         })
-        .border(
-            if placement != frame::Placement::Native {
-                1.0
-            } else {
-                0.0
-            },
-            a.hover_bg(),
-        )
+        .border(if frame::borderless() { 1.0 } else { 0.0 }, a.hover_bg())
         .child(
             row()
                 .key("workspace-header")
@@ -729,48 +852,34 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 .instant_changes()
                 .w_full()
                 .h(header_height())
-                .px(if width < 880.0 { 4.0 } else { 12.0 })
+                // A hosted titlebar draws the window's own controls over this
+                // band: keep the header's content clear of them.
+                .pl(if placement == frame::Placement::Hosted {
+                    cx.chrome_insets().leading
+                } else {
+                    0.0
+                } + if width < 880.0 { 4.0 } else { 12.0 })
+                .pr(if width < 880.0 { 4.0 } else { 12.0 })
                 .gap(if width < 880.0 { 3.0 } else { 6.0 })
                 .center_y()
                 .fill(a.panel())
-                .child(if placement == frame::Placement::Left {
-                    frame::controls(state, a, placement)
-                } else {
-                    el()
-                })
+                .child(terminal_tabs(state, a).grow(1.0).min_w(0.0))
+                .child(el().grow(0.0))
                 .child(
-                    text(if width < 880.0 { "" } else { "Rodtty" })
-                        .font(ui_style(13.0, 600.0))
-                        .color(a.muted()),
-                )
-                .child(el().w(1.0).h(16.0).fill(a.hover_bg()))
-                .child(
-                    text(
-                        folder
-                            .file_name()
-                            .unwrap_or(folder.as_os_str())
-                            .to_string_lossy(),
+                    icon_button(
+                        a,
+                        "files",
+                        &rune_kit::glyphs::SIDEBAR,
+                        state.shortcut_help(
+                            "toggle-explorer",
+                            if show_explorer {
+                                "Hide file explorer"
+                            } else {
+                                "Show file explorer"
+                            },
+                        ),
+                        |s, tx| s.dispatch(AppAction::ToggleExplorer, tx),
                     )
-                    .key("active-folder")
-                    .font(ui_label())
-                    .color(a.ink())
-                    .truncate()
-                    .min_w(0.0)
-                    .grow(1.0)
-                    .help(folder.to_string_lossy()),
-                )
-                .child(
-                    button(a, "files", "Files", |s, tx| {
-                        s.dispatch(AppAction::ToggleExplorer, tx)
-                    })
-                    .help(state.shortcut_help(
-                        "toggle-explorer",
-                        if show_explorer {
-                            "Hide file explorer"
-                        } else {
-                            "Show file explorer"
-                        },
-                    ))
                     .fill(if show_explorer {
                         a.hover_bg()
                     } else {
@@ -778,20 +887,25 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                     }),
                 )
                 .child(
-                    button(a, "toggle-terminal", "Terminal", |s, tx| {
-                        if s.workspace.body_width < 880.0 {
-                            s.dispatch(AppAction::ShowTerminal, tx)
+                    icon_button(
+                        a,
+                        "toggle-terminal",
+                        &rune_kit::glyphs::TERMINAL,
+                        if width < 880.0 {
+                            "Show terminal"
+                        } else if show_terminal {
+                            "Hide terminal pane"
                         } else {
-                            s.dispatch(AppAction::ToggleTerminal, tx)
-                        }
-                    })
-                    .help(if width < 880.0 {
-                        "Show terminal"
-                    } else if show_terminal {
-                        "Hide terminal pane"
-                    } else {
-                        "Show terminal pane"
-                    })
+                            "Show terminal pane"
+                        },
+                        |s, tx| {
+                            if s.workspace.body_width < 880.0 {
+                                s.dispatch(AppAction::ShowTerminal, tx)
+                            } else {
+                                s.dispatch(AppAction::ToggleTerminal, tx)
+                            }
+                        },
+                    )
                     .fill(if show_terminal {
                         a.hover_bg()
                     } else {
@@ -799,32 +913,34 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                     }),
                 )
                 .child(
-                    button(a, "toggle-editor", "Editor", |s, tx| {
-                        s.dispatch(AppAction::ToggleEditor, tx)
-                    })
-                    .help(if width < 880.0 {
-                        "Show editor"
-                    } else if show_editor {
-                        "Hide editor pane"
-                    } else {
-                        "Show editor pane"
-                    })
+                    icon_button(
+                        a,
+                        "toggle-editor",
+                        &rune_kit::glyphs::PANE_EDIT,
+                        if width < 880.0 {
+                            "Show editor"
+                        } else if show_editor {
+                            "Hide editor pane"
+                        } else {
+                            "Show editor pane"
+                        },
+                        |s, tx| s.dispatch(AppAction::ToggleEditor, tx),
+                    )
                     .fill(if show_editor { a.hover_bg() } else { a.panel() }),
                 )
-                .child(button(a, "settings", "⚙", |s, tx| {
-                    s.dispatch(AppAction::Settings, tx)
-                }))
-                .child(button(a, "workspace-menu", "···", |s, tx| {
-                    s.workspace_menu = !s.workspace_menu;
-                    if s.workspace_menu {
-                        tx.focus_when_shown("palette", true);
-                    }
-                }))
-                .child(if placement == frame::Placement::Right {
-                    frame::controls(state, a, placement)
-                } else {
-                    el()
-                }),
+                .child(icon_button(
+                    a,
+                    "workspace-menu",
+                    &rune_kit::glyphs::ELLIPSIS,
+                    "Workspace menu",
+                    |s, tx| {
+                        s.workspace_menu = !s.workspace_menu;
+                        if s.workspace_menu {
+                            tx.focus_when_shown("palette", true);
+                        }
+                    },
+                ))
+                .child(frame::controls(state, a, placement)),
         );
     root = root.child(workspace::body(state, a, width));
 
@@ -838,32 +954,49 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
     };
     root = root.child(
         row()
+            .key("app-footer")
             .w_full()
-            .h(25.0_f32.max(ui_label().size * 1.5 + 4.0))
-            .px(12.0)
-            .gap(10.0)
-            .center_y()
-            .fill(a.panel())
+            // A one-point frame on every side keeps the footer off the window edge.
+            .padding(1.0)
+            .fill(a.bg())
             .child(
-                text(cwd.to_string_lossy())
-                    .font(ui_label())
-                    .color(a.muted())
-                    .truncate()
-                    .min_w(0.0)
-                    .shrink(),
-            )
-            .child(el().grow(1.0))
-            .child(
-                text(if state.message.is_empty() {
-                    format!("{}  Actions", state.shortcut_label("command-palette"))
-                } else {
-                    state.message.clone()
-                })
-                .font(ui_label())
-                .color(a.muted())
-                .truncate()
-                .min_w(0.0)
-                .shrink(),
+                row()
+                    .key("app-footer-content")
+                    .w_full()
+                    .h(25.0_f32.max(ui_label().size * 1.5 + 4.0))
+                    .px(10.0)
+                    .gap(10.0)
+                    .center_y()
+                    .fill(a.panel())
+                    .child(
+                        text(concat!("Rodtty ", env!("CARGO_PKG_VERSION")))
+                            .key("footer-app-name")
+                            .font(ui_style(13.0, 700.0))
+                            .color(a.ink())
+                            .shrink(),
+                    )
+                    .child(
+                        text(tilde_path(&cwd))
+                            .key("footer-path")
+                            .font(ui_label())
+                            .color(a.muted())
+                            .truncate()
+                            .min_w(0.0)
+                            .grow(1.0),
+                    )
+                    .child(
+                        text(if state.message.is_empty() {
+                            format!("{}  Actions", state.shortcut_label("command-palette"))
+                        } else {
+                            state.message.clone()
+                        })
+                        .key("footer-message")
+                        .font(ui_label())
+                        .color(a.muted())
+                        .truncate()
+                        .min_w(0.0)
+                        .shrink(),
+                    ),
             ),
     );
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
@@ -1148,6 +1281,7 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         .unwrap_or(false);
     let frame_changed = state.window_maximized != maximized;
     state.window_maximized = maximized;
+    let geometry_changed = state.capture_window_geometry();
     let generations: Vec<_> = state
         .sessions
         .iter()
@@ -1161,6 +1295,14 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         .collect();
     let changed = generations != state.generations;
     state.generations = generations;
+    if changed {
+        // New output moves the cells a highlight was drawn over. Keep it only
+        // while a gesture is still extending it, where the drag re-derives the
+        // range on its next move anyway.
+        if state.drag_origin.is_none() {
+            state.selection = None;
+        }
+    }
     let fonts_changed = state.font_catalog.poll();
     let settings_changed = state.poll_settings();
     let (sans, mono) = state.font_families();
@@ -1175,6 +1317,7 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         || settings_changed
         || metrics_changed
         || frame_changed
+        || geometry_changed
         || fonts_changed
 }
 
@@ -1422,17 +1565,19 @@ pub fn run() -> Result<()> {
         });
     let handle = app.handle();
     let native_state = handle.clone();
-    app = app
-        .window_options(frame::options())
-        .on_window(move |window| {
-            let raw = window
-                .with_raw_handle(|handle| format!("{:?}", handle.as_raw()))
-                .unwrap_or_default();
-            *backend_slot.lock().unwrap_or_else(|e| e.into_inner()) =
-                raw.split('(').next().unwrap_or("unknown").to_owned();
-            let window = window.clone();
-            native_state.update(move |s, _| s.window = Some(window));
-        });
+    app = app.window_options(frame::options());
+    if let Some(titlebar) = frame::titlebar() {
+        app = app.titlebar(titlebar);
+    }
+    app = app.on_window(move |window| {
+        let raw = window
+            .with_raw_handle(|handle| format!("{:?}", handle.as_raw()))
+            .unwrap_or_default();
+        *backend_slot.lock().unwrap_or_else(|e| e.into_inner()) =
+            raw.split('(').next().unwrap_or("unknown").to_owned();
+        let window = window.clone();
+        native_state.update(move |s, _| s.window = Some(window));
+    });
     let state_handle = handle.clone();
     app = app.init(move || {
         let mut state = State::init();
@@ -1637,9 +1782,12 @@ fn native_check(
                 let info = info_rx
                     .recv_timeout(Duration::from_secs(10))?
                     .context("frame native window missing")?;
+                // macOS keeps its native frame so the traffic lights survive; the
+                // app-drawn frames are the other two, and they must be borderless.
+                let expected_decorated = cfg!(target_os = "macos");
                 anyhow::ensure!(
-                    info["decorated"] == false,
-                    "native decorations remain: {info}"
+                    info["decorated"] == expected_decorated,
+                    "expected decorated == {expected_decorated} on this platform: {info}"
                 );
                 std::fs::write(
                     report.with_extension("ready.json"),
@@ -2183,6 +2331,35 @@ mod tests {
         runtime
     }
 
+    /// A runtime pinned to one platform's window chrome, for the tests that
+    /// exercise app-drawn or host-drawn controls regardless of the host they
+    /// run on. `Runtime::new` takes a plain function pointer, so the
+    /// placement is selected here rather than captured.
+    pub(super) fn runtime_for_frame(
+        state: State,
+        placement: frame::Placement,
+    ) -> rune::Runtime<State> {
+        fn hosted(state: &State, cx: &mut Cx<State>) -> El {
+            view_with_frame(state, cx, frame::Placement::Hosted)
+        }
+        fn trailing(state: &State, cx: &mut Cx<State>) -> El {
+            view_with_frame(state, cx, frame::Placement::Trailing)
+        }
+        fn native(state: &State, cx: &mut Cx<State>) -> El {
+            view_with_frame(state, cx, frame::Placement::Native)
+        }
+        let view = match placement {
+            frame::Placement::Hosted => hosted as fn(&State, &mut Cx<State>) -> El,
+            frame::Placement::Trailing => trailing,
+            frame::Placement::Native => native,
+        };
+        let mut runtime =
+            rune::Runtime::new(state, view, (1200.0, 700.0), rune::Env::new(true, 1.0));
+        runtime.on_key = Some(on_key);
+        runtime.frame(0.0);
+        runtime
+    }
+
     pub(super) fn press(runtime: &mut rune::Runtime<State>, key: Key, mods: rune::Mods) {
         runtime.key(KeyEvent { key, mods });
         runtime.frame(0.0);
@@ -2277,7 +2454,7 @@ mod tests {
                 for entry in [
                     "button", "middle", "context", "shortcut", "remapped", "menu", "palette",
                 ] {
-                    let root = tempfile::tempdir().unwrap();
+                    let root = crate::test_support::tempdir().unwrap();
                     let mut state = State::with_root(root.path().into());
                     state.shell = Some(shell.clone());
                     state.start_tab(root.path().into());
@@ -2326,7 +2503,7 @@ mod tests {
 
     #[test]
     fn window_quit_and_explicit_quit_keep_running_confirmation_even_with_immediate_tab_close() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         state.shell = std::env::current_exe()
             .unwrap()
@@ -2376,7 +2553,7 @@ mod tests {
             Policy::QuitRodtty,
         ] {
             for action in [AppAction::CloseWindow, AppAction::Quit] {
-                let root = tempfile::tempdir().unwrap();
+                let root = crate::test_support::tempdir().unwrap();
                 let mut state = State::with_root(root.path().into());
                 workspace::demo(&mut state, false);
                 state.workspace.tabs[0].edit.insert("draft remains ");
@@ -2416,7 +2593,7 @@ mod tests {
     fn new_terminal_directories_follow_live_choices_without_changing_startup_or_session_snapshots()
     {
         use crate::config::NewTerminalDirectory;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let active = root.path().join("active");
         let explorer = root.path().join("explorer");
         let specified = root.path().join("specified");
@@ -2485,7 +2662,7 @@ mod tests {
     #[test]
     fn window_close_policy_applies_live_and_ask_can_cancel_keep_or_quit() {
         use crate::config::WindowClosePolicy;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime_for(State::with_root(root.path().into()));
         runtime.update(|s, tx| s.dispatch(AppAction::CloseWindow, tx));
         assert_eq!(runtime.shell_request.take(), Some(rune::Shell::Close));
@@ -2524,8 +2701,153 @@ mod tests {
     }
 
     #[test]
+    fn terminal_ansi_colors_follow_the_selected_theme_family_live() {
+        // A preview screen with a bright-blue word and default-ink text: the
+        // fills of the glyphs the terminal draws must come from the selected
+        // family's palette, the way a themed prompt restyles the terminal.
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        let mut parser = vt100::Parser::new(24, 112, 100);
+        parser.process(b"\x1b[38;5;12mthemed\x1b[0m: prompt $ ");
+        state.preview = Some(parser.screen().clone());
+        let mut rt = runtime_for(state);
+        let mut draw_in_family = |family: crate::config::ThemeFamily| {
+            rt.update(|s, _| {
+                s.save_config(|c| c.theme_family = family);
+                s.config.appearance = crate::config::Appearance::Dark;
+            });
+            // Theme colors animate to their new values; let the flight land first.
+            for _ in 0..60 {
+                rt.frame(1.0 / 60.0);
+            }
+            let a = Appearance::resolve(family, crate::config::Appearance::Dark, true);
+            let blue = a.terminal(vt100::Color::Idx(12), true);
+            let ink = a.terminal(vt100::Color::Default, true);
+            // The terminal's own cells report their element rects; find the glyph
+            // instances drawn inside them and compare their fills.
+            let cells: Vec<[f32; 4]> = rt
+                .elements()
+                .into_iter()
+                .filter(|e| {
+                    e.key
+                        .as_deref()
+                        .is_some_and(|k| k.starts_with("terminal-cell-"))
+                })
+                .map(|e| e.rect)
+                .collect();
+            let fills: Vec<[f32; 4]> = rt
+                .instances
+                .iter()
+                .filter(|i| i.params[1] == rune::render::KIND_GLYPH)
+                .filter(|i| {
+                    cells.iter().any(|c| {
+                        i.rect[0] >= c[0]
+                            && i.rect[1] >= c[1]
+                            && i.rect[0] + i.rect[2] <= c[0] + c[2] + 1.0
+                            && i.rect[1] + i.rect[3] <= c[1] + c[3] + 1.0
+                    })
+                })
+                .map(|i| i.fill)
+                .collect();
+            let close = |fill: [f32; 4], expected: rune::Color| {
+                (fill[0] - expected.r).abs() < 0.001
+                    && (fill[1] - expected.g).abs() < 0.001
+                    && (fill[2] - expected.b).abs() < 0.001
+            };
+            let has_blue = fills.iter().any(|f| close(*f, blue));
+            let has_ink = fills.iter().any(|f| close(*f, ink));
+            has_blue && has_ink
+        };
+        assert!(
+            draw_in_family(crate::config::ThemeFamily::TokyoNight),
+            "Tokyo Night palette missing from the terminal"
+        );
+        assert!(
+            draw_in_family(crate::config::ThemeFamily::Everforest),
+            "Everforest palette missing from the terminal"
+        );
+    }
+
+    #[test]
+    fn footer_shows_bold_app_identity_then_tilde_home_path_with_a_point_frame() {
+        let home = directories::BaseDirs::new().unwrap().home_dir().to_owned();
+        // The owner's actual home folder collapses to `~`, whatever the host
+        // calls it, and never collapses folders that merely sit beside it.
+        assert_eq!(tilde_path(&home), "~");
+        let project = home.join("Projects/CouraLabs/Rodtty");
+        assert_eq!(tilde_path(&project), "~/Projects/CouraLabs/Rodtty");
+        let elsewhere = home.parent().unwrap().join("shared-not-home/readme");
+        assert_eq!(tilde_path(&elsewhere), elsewhere.display().to_string());
+
+        let root = crate::test_support::tempdir().unwrap();
+        let mut runtime = runtime_for(State::with_root(root.path().to_owned()));
+        runtime.frame(0.0);
+        let identity = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("footer-app-name"))
+            .expect("footer identity");
+        assert_eq!(
+            identity.text.as_deref(),
+            Some(concat!("Rodtty ", env!("CARGO_PKG_VERSION")))
+        );
+        // One point of breathing room around the footer strip's content.
+        let rect = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("app-footer"))
+            .unwrap()
+            .rect;
+        let content = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("app-footer-content"))
+            .unwrap()
+            .rect;
+        assert!((content[0] - rect[0] - 1.0).abs() < 0.001);
+        assert!((content[1] - rect[1] - 1.0).abs() < 0.001);
+        assert!((rect[0] + rect[2] - 1.0 - content[0] - content[2]).abs() < 0.001);
+        assert!((rect[1] + rect[3] - 1.0 - content[1] - content[3]).abs() < 0.001);
+    }
+
+    #[test]
+    fn clicking_a_terminal_tab_switches_the_active_session_both_ways() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        let shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file())
+            .unwrap();
+        state.shell = Some(shell);
+        for _ in 0..2 {
+            state.start_tab(root.path().into());
+        }
+        let mut rt = runtime_for(state);
+        rt.state.sessions.iter().for_each(|s| {
+            s.wait_for("rodtty:", std::time::Duration::from_secs(15))
+                .unwrap()
+        });
+        assert_eq!(rt.state.active, 1);
+        let (x, y) = rt.find("tab-0").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        assert_eq!(
+            rt.state.active, 0,
+            "click on tab-0 switches the active session"
+        );
+        let (x, y) = rt.find("tab-1").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        assert_eq!(rt.state.active, 1, "click on tab-1 switches back");
+    }
+
+    #[test]
     fn idle_terminal_closes_immediately_but_live_commands_offer_cancel() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().into());
         state.shell = std::env::current_exe()
             .unwrap()
@@ -2576,34 +2898,40 @@ mod tests {
     }
 
     #[test]
-    fn mac_frame_keeps_left_controls_clickable_at_minimum_size() {
-        let root = tempfile::tempdir().unwrap();
+    fn mac_hosted_titlebar_keeps_traffic_lights_and_header_clicks() {
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         workspace::demo(&mut state, false);
-        state.workspace.tabs[0].edit.insert("mac frame draft ");
-        let draft = state.workspace.tabs[0].edit.text.clone();
         let mut runtime = rune::Runtime::new(
             state,
-            |state, cx| view_with_frame(state, cx, frame::Placement::Left),
+            |state, cx| view_with_frame(state, cx, frame::Placement::Hosted),
             (640.0, 360.0),
             rune::Env::new(true, 2.0),
         );
         runtime.frame(0.0);
-        let close = runtime.find("window-close").expect("custom close");
-        let minimize = runtime.find("window-minimize").expect("custom minimize");
-        let maximize = runtime.find("window-maximize").expect("custom maximize");
-        let folder = runtime.find("active-folder").expect("folder");
+        // macOS keeps the host's traffic lights: the app draws no window controls,
+        // and nothing in the header sits where the lights are.
+        assert!(runtime.find("window-close").is_none(), "no app-drawn close");
         assert!(
-            close.0 < minimize.0 && minimize.0 < maximize.0 && maximize.0 < folder.0,
-            "macOS controls must precede folder identity: {close:?} {minimize:?} {maximize:?} {folder:?}"
+            runtime.find("window-minimize").is_none(),
+            "no app-drawn minimize"
         );
-        for key in [
-            "window-close",
-            "window-minimize",
-            "window-maximize",
-            "settings",
-            "workspace-menu",
-        ] {
+        assert!(
+            runtime.find("window-maximize").is_none(),
+            "no app-drawn maximize"
+        );
+        assert!(
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("toggle-terminal"))
+                .unwrap()
+                .rect[0]
+                > 0.0,
+            "header controls sit past the traffic lights, not under them"
+        );
+        // Header controls keep their presses and fit the minimum-size frame.
+        for key in ["toggle-terminal", "workspace-menu", "files"] {
             let rect = runtime
                 .elements()
                 .into_iter()
@@ -2611,55 +2939,42 @@ mod tests {
                 .unwrap()
                 .rect;
             assert!(
-                rect[0] >= 6.0
-                    && rect[0] + rect[2] <= 634.0
-                    && rect[1] >= 6.0
+                rect[0] >= 0.0
+                    && rect[0] + rect[2] <= 640.0
+                    && rect[1] >= 0.0
                     && rect[1] + rect[3] <= 54.0,
                 "{key} fits inside the minimum-size frame: {rect:?}"
             );
         }
-        runtime.pointer_down(close.0, close.1);
+        let pane = runtime.find("toggle-terminal").unwrap();
+        runtime.pointer_down(pane.0, pane.1);
         assert_eq!(runtime.take_titlebar_action(), None);
-        runtime.pointer_up(close.0, close.1);
-        runtime.frame(0.1);
-        runtime.settle_all();
-        runtime.frame(0.15);
-        assert!(runtime.find("file-save-confirm").is_some());
-        let cancel = runtime.find("file-cancel").unwrap();
-        runtime.pointer_down(cancel.0, cancel.1);
-        runtime.pointer_up(cancel.0, cancel.1);
-        runtime.frame(0.2);
-        assert_eq!(runtime.state.workspace.tabs[0].edit.text, draft);
-        assert!(runtime.state.workspace.tabs[0].dirty());
-        let settings = runtime.find("settings").unwrap();
-        runtime.pointer_down(settings.0, settings.1);
-        assert_eq!(runtime.take_titlebar_action(), None);
-        runtime.pointer_up(settings.0, settings.1);
+        runtime.pointer_up(pane.0, pane.1);
         runtime.frame(0.3);
-        assert!(runtime.find("settings-search").is_some());
+        // The header band still moves the window, and a double press zooms it.
         runtime.set_viewport((1200.0, 700.0), 1.0);
         runtime.settle_all();
         runtime.frame(0.5);
-        let folder = runtime.find("active-folder").unwrap();
-        runtime.pointer_down(folder.0, folder.1);
+        let header = runtime.find("workspace-header").unwrap();
+        runtime.pointer_down(header.0, header.1);
         assert_eq!(
             runtime.take_titlebar_action(),
             Some(rune::TitlebarAction::Drag)
         );
-        runtime.pointer_up(folder.0, folder.1);
-        runtime.pointer_down(folder.0, folder.1);
+        runtime.pointer_up(header.0, header.1);
+        runtime.pointer_down(header.0, header.1);
         assert_eq!(
             runtime.take_titlebar_action(),
             Some(rune::TitlebarAction::DoubleClick)
         );
-        runtime.pointer_up(folder.0, folder.1);
+        runtime.pointer_up(header.0, header.1);
     }
 
     #[test]
     fn right_frame_places_controls_right_and_header_controls_keep_their_clicks() {
         let mut runtime = rune::Runtime::new(
             State::init(),
-            |state, cx| view_with_frame(state, cx, frame::Placement::Right),
+            |state, cx| view_with_frame(state, cx, frame::Placement::Trailing),
             (1200.0, 700.0),
             rune::Env::new(true, 1.0),
         );
@@ -2686,12 +3001,11 @@ mod tests {
             Some(rune::TitlebarAction::DoubleClick)
         );
         runtime.pointer_up(240.0, 20.0);
-        let (x, y) = runtime.find("settings").unwrap();
+        let (x, y) = runtime.find("toggle-terminal").unwrap();
         runtime.pointer_down(x, y);
         assert_eq!(runtime.take_titlebar_action(), None);
         runtime.pointer_up(x, y);
         runtime.frame(0.2);
-        assert!(runtime.find("settings-search").is_some());
         runtime.set_viewport((640.0, 360.0), 1.0);
         runtime.settle_all();
         runtime.frame(0.3);
@@ -2699,7 +3013,7 @@ mod tests {
             "window-minimize",
             "window-maximize",
             "window-close",
-            "settings",
+            "toggle-terminal",
             "workspace-menu",
         ] {
             let rect = runtime
@@ -2721,12 +3035,12 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn custom_close_keeps_unsaved_editor_until_owner_decides() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         workspace::demo(&mut state, false);
         state.workspace.tabs[0].edit.insert("draft remains ");
         let draft = state.workspace.tabs[0].edit.text.clone();
-        let mut runtime = runtime_for(state);
+        let mut runtime = runtime_for_frame(state, frame::Placement::Trailing);
         let (x, y) = runtime.find("window-close").unwrap();
         runtime.pointer_down(x, y);
         assert_eq!(runtime.take_titlebar_action(), None);
@@ -2747,7 +3061,7 @@ mod tests {
 
     #[test]
     fn terminal_tabs_show_application_title_verbatim_then_directory_fallback() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         let shell = std::env::current_exe()
             .unwrap()
@@ -2857,7 +3171,7 @@ mod tests {
 
     #[test]
     fn dragging_and_closing_earlier_terminal_tabs_preserves_active_session() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         state.config.behavior.terminal_tab_close =
             crate::config::TerminalClosePolicy::AlwaysConfirm;
@@ -2939,7 +3253,7 @@ mod tests {
 
     #[test]
     fn terminal_overflow_scrolls_and_context_close_targets_its_session() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let mut state = State::with_root(root.path().to_owned());
         state.config.behavior.terminal_tab_close =
             crate::config::TerminalClosePolicy::AlwaysConfirm;
@@ -3043,7 +3357,9 @@ mod tests {
         runtime.frame(0.0);
         assert!(runtime.state.pending.is_none());
         let (x, y) = runtime.find("new-tab").unwrap();
-        assert!(x > last.rect[0] && x < 640.0 && y > header_height());
+        // The tabs share the header band now: the button sits in it, after
+        // the last tab, and pressing it must not start a window drag.
+        assert!(x > last.rect[0] && x < 640.0 && y < header_height());
         runtime.pointer_down(x, y);
         assert_eq!(runtime.take_titlebar_action(), None);
         runtime.pointer_up(x, y);

@@ -9,7 +9,7 @@ default-run = "rodtty"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:rune", "dep:rune-kit", "dep:fontique", "dep:read-fonts"]
+desktop = ["dep:rune", "dep:rune-kit", "dep:fontique", "dep:read-fonts", "rune-kit/markdown"]
 
 [dependencies]
 anyhow = "1"
