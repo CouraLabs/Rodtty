@@ -212,6 +212,32 @@ impl Appearance {
     pub fn muted(&self) -> Color {
         self.kit.c.text_muted
     }
+    /// A preview editor tab's title: dimmed from the regular title color
+    /// (ink when selected, muted otherwise) toward muted and the tab fill, then
+    /// brought back toward ink until it reads at 4.5:1 on both the idle and the
+    /// hovered or selected tab fill. Some families' muted equals their ink, so
+    /// the fill supplies the dimming there; where ink itself reads below 4.5:1
+    /// on a tab fill (Solarized), it moves past ink toward black or white.
+    pub fn temporary_tab_ink(&self, selected: bool) -> Color {
+        let readable =
+            |c: Color| contrast(c, self.panel()).min(contrast(c, self.hover_bg())) >= 4.5;
+        let strong = if readable(self.ink()) {
+            self.ink()
+        } else if self.dark {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
+        let regular = if selected { self.ink() } else { self.muted() };
+        let mut color = regular.mix(self.muted(), 0.5).mix(self.hover_bg(), 0.2);
+        for _ in 0..64 {
+            if readable(color) {
+                break;
+            }
+            color = color.mix(strong, 0.12);
+        }
+        color
+    }
     pub fn accent(&self) -> Color {
         self.kit.c.text_accent
     }
@@ -247,15 +273,49 @@ impl Appearance {
 
 /// Preserve palette hues while bringing low-contrast upstream small text toward ink.
 fn readable(mut color: Color, background: Color, ink: Color) -> Color {
-    // Rune Color channels are already linear sRGB; decoding again overestimates
-    // the contrast of pale colors on a light surface.
-    let bg = background.luminance();
     for _ in 0..32 {
-        let fg = color.luminance();
-        if (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05) >= 4.5 {
+        if contrast(color, background) >= 4.5 {
             break;
         }
         color = color.mix(ink, 0.12);
     }
     color
+}
+
+/// WCAG contrast ratio between two opaque colors. Rune Color channels are
+/// already linear sRGB; decoding again overestimates the contrast of pale
+/// colors on a light surface.
+pub(super) fn contrast(a: Color, b: Color) -> f32 {
+    let (a, b) = (a.luminance(), b.luminance());
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_tab_ink_is_dimmed_yet_readable_on_tab_fills_in_every_theme() {
+        for family in ThemeFamily::ALL {
+            for mode in [Mode::Light, Mode::Dark] {
+                let a = Appearance::resolve(*family, mode, false);
+                for selected in [true, false] {
+                    let ink = a.temporary_tab_ink(selected);
+                    for fill in [a.panel(), a.hover_bg()] {
+                        let ratio = contrast(ink, fill);
+                        assert!(ratio >= 4.5, "{} {selected}: {ratio:.2}:1", a.name);
+                    }
+                    // Dimmer than a selected regular title wherever that
+                    // title itself leaves room above 4.5:1.
+                    if contrast(a.ink(), a.panel()).min(contrast(a.ink(), a.hover_bg())) >= 4.5 {
+                        assert!(
+                            contrast(ink, a.hover_bg()) < contrast(a.ink(), a.hover_bg()),
+                            "{} {selected} reads dimmer than a regular title",
+                            a.name
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1411,10 +1411,19 @@ impl State {
                             }
                             let id = self.workspace.next_id;
                             self.workspace.next_id += 1;
-                            let mode = if document.existed {
-                                View::Edit
-                            } else {
+                            // Markdown opens rendered, newly or on restoration,
+                            // unless a Search Files match asked for its source.
+                            let source_requested = self
+                                .workspace
+                                .pending_location
+                                .as_ref()
+                                .is_some_and(|(pending, _)| *pending == document.path);
+                            let mode = if !document.existed {
                                 View::Diff(Comparison::Current)
+                            } else if is_markdown(&document.path) && !source_requested {
+                                View::Preview
+                            } else {
+                                View::Edit
                             };
                             let mut edit = TextEdit::new(&document.saved.text);
                             edit.focused = mode == View::Edit;
@@ -2324,12 +2333,13 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .child(super::tabs::interactive(
                     el().key(format!("editor-tab-{id}"))
                         .role("button")
-                        .label(if tab.preview {
-                            format!("{name} (preview)")
-                        } else {
-                            name.clone()
-                        })
+                        .label(name.clone())
                         .help(tab.document.path.to_string_lossy())
+                        .description(if tab.preview {
+                            format!("{PREVIEW_TAB_DESCRIPTION}. {}", tab.document.path.display())
+                        } else {
+                            tab.document.path.to_string_lossy().into_owned()
+                        })
                         .focusable(true)
                         .focus_ring(2.0, 1.0, a.accent())
                         .max_w(190.0)
@@ -2355,19 +2365,16 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                             .key(format!("editor-file-icon-{id}")),
                         )
                         .child(
-                            text(if tab.preview {
-                                format!("{name} (preview)")
-                            } else {
-                                name.clone()
-                            })
-                            .font(ui_label())
-                            .color(if i == workspace.active {
-                                a.ink()
-                            } else {
-                                a.muted()
-                            })
-                            .max_w(120.0)
-                            .truncate(),
+                            text(name.clone())
+                                .key(format!("editor-title-{id}"))
+                                .font(tab_title_font(tab.preview))
+                                .color(match (tab.preview, i == workspace.active) {
+                                    (true, selected) => a.temporary_tab_ink(selected),
+                                    (false, true) => a.ink(),
+                                    (false, false) => a.muted(),
+                                })
+                                .max_w(120.0)
+                                .truncate(),
                         )
                         .children(tab.dirty().then(|| {
                             text("•")
@@ -2578,9 +2585,11 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     } else {
         footer
     };
-    pane = pane.child(footer);
+    // Tabs and compact navigation stay above the content; the file's status,
+    // Git diff controls and file actions sit below it, the actions last.
+    let mut below = Vec::new();
     if let Some(error) = &tab.disk_error {
-        pane = pane.child(
+        below.push(
             text(format!("Disk: {error}"))
                 .font(ui_label())
                 .color(a.danger())
@@ -2588,8 +2597,9 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         );
     }
     if tab.external.is_some() && !tab.dismissed {
-        pane = pane.child(
+        below.push(
             col()
+                .key("external-change")
                 .w_full()
                 .fill(a.warning_bg())
                 .py(6.0)
@@ -2751,7 +2761,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .child(field);
         pane = pane.child(a.kit().scroll_bar(viewport));
     } else {
-        pane = pane.child(
+        let mut diff_below = vec![
             row()
                 .key("diff-controls")
                 .gap(4.0)
@@ -2785,15 +2795,14 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                         s.workspace.diff.next_hunk(true, tx);
                     },
                 )),
-        );
-        pane = pane.child(
             text(&workspace.diff_label)
+                .key("diff-label")
                 .font(ui_style(10.0, 400.0))
                 .color(a.muted())
                 .wrap(),
-        );
+        ];
         if let Some(error) = &workspace.diff_error {
-            pane = pane.child(
+            diff_below.push(
                 text(error)
                     .font(ui_label())
                     .color(a.muted())
@@ -2830,8 +2839,20 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     .child(diff),
             );
         }
+        below.splice(0..0, diff_below);
     }
-    pane
+    pane.children(below).child(footer)
+}
+
+/// The accessible description that marks a preview editor tab, whose title
+/// shows the temporary state only as italic, dimmed text.
+pub(super) const PREVIEW_TAB_DESCRIPTION: &str =
+    "Preview tab, replaced when another file is previewed";
+
+/// An editor tab title's type: a preview editor tab's is italic.
+fn tab_title_font(temporary: bool) -> rune::TextStyle {
+    let font = ui_label();
+    if temporary { font.italic() } else { font }
 }
 
 /// Whether the path names a markdown file Rodtty can render as a preview.
@@ -3538,12 +3559,7 @@ mod tests {
         let mut runtime = runtime_for(state);
         click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
-        assert!(runtime.elements().iter().any(|e| {
-            e.key
-                .as_deref()
-                .is_some_and(|key| key.starts_with("editor-tab-"))
-                && e.label.as_deref() == Some("a.txt (preview)")
-        }));
+        assert!(preview_tabs(&runtime).contains(&"a.txt".to_owned()));
         click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| {
             s.workspace
@@ -3618,12 +3634,7 @@ mod tests {
                 .path,
             root.path().join("a.txt")
         );
-        assert!(!runtime.elements().iter().any(|e| {
-            e.key
-                .as_deref()
-                .is_some_and(|key| key.starts_with("editor-tab-"))
-                && e.label.as_deref() == Some("b.txt (preview)")
-        }));
+        assert!(!preview_tabs(&runtime).contains(&"b.txt".to_owned()));
     }
 
     #[test]
@@ -3647,16 +3658,11 @@ mod tests {
         click(&mut runtime, "editor-tab-1");
         wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
         assert!(runtime.find("file-editor-1").is_some());
-        assert!(!runtime.elements().iter().any(|e| {
-            e.key
-                .as_deref()
-                .is_some_and(|key| key.starts_with("editor-tab-"))
-                && e.label.as_deref() == Some("b.txt (preview)")
-        }));
+        assert!(!preview_tabs(&runtime).contains(&"b.txt".to_owned()));
     }
 
     #[test]
-    fn markdown_files_offer_a_rendered_preview_and_toggle_back_to_edit() {
+    fn markdown_files_open_rendered_and_edit_or_the_preview_toggle_shows_source() {
         use super::super::tests::runtime_for;
         let root = crate::test_support::tempdir().unwrap();
         let file = root.path().join("README.md");
@@ -3672,13 +3678,7 @@ mod tests {
         let mut runtime = runtime_for(state);
         runtime.settle_all();
         runtime.frame(1.0);
-        // The editor starts in Edit mode; the preview button switches to rendered
-        // markdown, and back to the raw editor.
-        assert!(runtime.find("file-editor-1").is_some());
-        assert!(runtime.find("file-preview").is_some());
-        click(&mut runtime, "file-preview");
-        runtime.settle_all();
-        runtime.frame(1.0);
+        // The file starts as rendered markdown.
         assert!(
             runtime.find("file-editor-1").is_none(),
             "preview hides the raw editor"
@@ -3697,6 +3697,17 @@ mod tests {
                 .any(|e| e.text.as_deref() == Some("one")),
             "preview renders the markdown list"
         );
+        // Edit switches to the source, focused for typing.
+        click(&mut runtime, "file-edit");
+        runtime.settle_all();
+        runtime.frame(1.0);
+        assert!(runtime.state.workspace.tabs[0].mode == View::Edit);
+        assert!(runtime.find("file-editor-1").is_some());
+        // The preview button switches back to rendered, and toggles to source.
+        click(&mut runtime, "file-preview");
+        runtime.settle_all();
+        runtime.frame(1.0);
+        assert!(runtime.find("file-editor-1").is_none());
         click(&mut runtime, "file-preview");
         runtime.settle_all();
         runtime.frame(1.0);
@@ -3710,6 +3721,343 @@ mod tests {
             runtime.find("file-preview").is_none(),
             "non-markdown files offer no preview button"
         );
+    }
+
+    #[test]
+    fn markdown_extensions_open_rendered_in_any_case_and_other_files_in_source() {
+        let root = crate::test_support::tempdir().unwrap();
+        let names = [
+            "a.md",
+            "b.markdown",
+            "C.MD",
+            "d.Markdown",
+            "e.txt",
+            "f.rs",
+            "md",
+        ];
+        for name in names {
+            std::fs::write(root.path().join(name), "# Heading\n").unwrap();
+        }
+        let mut state = state(root.path());
+        for name in names {
+            state.open_file(root.path().join(name));
+        }
+        wait(&mut state, |s| s.workspace.tabs.len() == names.len());
+        for name in names {
+            let tab = state
+                .workspace
+                .tabs
+                .iter()
+                .find(|t| t.document.path == root.path().join(name))
+                .unwrap();
+            let rendered = name.contains('.') && !name.ends_with(".txt") && !name.ends_with(".rs");
+            assert_eq!(tab.mode == View::Preview, rendered, "{name}");
+            assert_eq!(tab.mode == View::Edit, !rendered, "{name}");
+            assert!(
+                !tab.edit.focused || !rendered,
+                "{name}: rendered takes no caret"
+            );
+        }
+    }
+
+    #[test]
+    fn restored_markdown_tabs_start_rendered_even_when_closed_in_source() {
+        let root = crate::test_support::tempdir().unwrap();
+        let notes = root.path().join("notes.md");
+        let code = root.path().join("main.rs");
+        std::fs::write(&notes, "# Notes\n").unwrap();
+        std::fs::write(&code, "fn main() {}\n").unwrap();
+        let mut state = state(root.path());
+        state.open_file(notes.clone());
+        state.open_file(code.clone());
+        wait(&mut state, |s| s.workspace.tabs.len() == 2);
+        state.workspace.tabs[0].mode = View::Edit;
+        state.workspace.active = 0;
+        state.persist_workspace();
+        drop(state);
+        let mut restored = self::state(root.path());
+        wait(&mut restored, |s| {
+            s.workspace.tabs.len() == 2 && s.workspace_restoration_ready()
+        });
+        let mode = |path: &std::path::Path| {
+            restored
+                .workspace
+                .tabs
+                .iter()
+                .find(|t| t.document.path == path)
+                .unwrap()
+                .mode
+        };
+        assert!(mode(&notes) == View::Preview);
+        assert!(mode(&code) == View::Edit);
+    }
+
+    #[test]
+    fn a_content_match_opens_a_new_markdown_file_in_source_at_its_line() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        let doc = root.path().join("guide.md");
+        std::fs::write(&doc, "# Guide\n\nfirst\nthe needle here\n").unwrap();
+        let state = state(root.path());
+        let mut runtime = runtime_for(state);
+        runtime.update(|s, _| {
+            s.open_file_at(
+                doc.clone(),
+                true,
+                SourceLocation {
+                    line: 4,
+                    column: 5,
+                    length: 6,
+                },
+            )
+        });
+        wait_runtime(&mut runtime, |s| s.workspace.search_reveal.is_some());
+        let tab = &runtime.state.workspace.tabs[runtime.state.workspace.active];
+        assert_eq!(tab.document.path, doc);
+        assert!(tab.mode == View::Edit, "source, not rendered");
+        assert!(tab.preview);
+        let (start, end) = tab.edit.range();
+        assert_eq!(&tab.edit.text[start..end], "needle");
+        let id = tab.id;
+        runtime.frame(1.0);
+        assert!(runtime.find(&format!("file-editor-{id}")).is_some());
+    }
+
+    #[test]
+    fn preview_tab_titles_are_italic_dimmed_and_described_until_editing_keeps_the_source() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), "alpha").unwrap();
+        let mut state = state(root.path());
+        state.config.appearance = crate::config::Appearance::Light;
+        state.config.theme_family = crate::config::ThemeFamily::Solarized;
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 1);
+        let a = Appearance::resolve(
+            crate::config::ThemeFamily::Solarized,
+            crate::config::Appearance::Light,
+            false,
+        );
+        let mut runtime = runtime_for(state);
+        click(&mut runtime, root.path().join("a.txt").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        runtime.frame(1.0);
+        let id = runtime.state.workspace.tabs[0].id;
+        assert!(runtime.state.workspace.tabs[0].preview);
+        let title = |runtime: &rune::Runtime<State>| {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(&format!("editor-title-{id}")))
+                .unwrap()
+        };
+        let shown = title(&runtime);
+        assert_eq!(shown.text.as_deref(), Some("a.txt"));
+        assert_eq!(shown.text_color, Some(a.temporary_tab_ink(true)));
+        assert_ne!(shown.text_color, Some(a.ink()));
+        assert!(tab_title_font(true).italic);
+        assert!(!tab_title_font(false).italic);
+        assert!(
+            runtime.elements().iter().all(|e| {
+                !e.text.as_deref().is_some_and(|t| t.contains("(preview)"))
+                    && !e.label.as_deref().is_some_and(|t| t.contains("(preview)"))
+            }),
+            "no visible preview suffix"
+        );
+        assert_eq!(preview_tabs(&runtime), ["a.txt"]);
+        // Editing the source keeps the tab as a regular, source-view tab.
+        runtime.update(|s, _| {
+            s.workspace.tabs[0].edit.insert("!");
+            s.changed_editor(id);
+        });
+        runtime.frame(1.0);
+        let tab = &runtime.state.workspace.tabs[0];
+        assert!(!tab.preview);
+        assert!(tab.mode == View::Edit);
+        assert_eq!(title(&runtime).text_color, Some(a.ink()));
+        assert!(preview_tabs(&runtime).is_empty());
+        assert!(runtime.find(&format!("file-editor-{id}")).is_some());
+    }
+
+    #[test]
+    fn keeping_a_preview_tab_preserves_its_rendered_or_source_view() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        std::fs::write(root.path().join("doc.md"), "# Doc\n").unwrap();
+        std::fs::write(root.path().join("src.md"), "# Src\n").unwrap();
+        std::fs::write(root.path().join("plain.txt"), "plain").unwrap();
+        let mut state = state(root.path());
+        state.config.appearance = crate::config::Appearance::Dark;
+        state.navigate(root.path().to_owned());
+        state.workspace.layout.explorer = true;
+        wait(&mut state, |s| s.workspace.entries.len() == 3);
+        let ink = Appearance::resolve(
+            state.config.theme_family,
+            crate::config::Appearance::Dark,
+            true,
+        )
+        .ink();
+        let mut runtime = runtime_for(state);
+        let double_click = |runtime: &mut rune::Runtime<State>, key: &str| {
+            runtime.frame(1.0);
+            let (x, y) = runtime.find(key).unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.1);
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(1.0);
+        };
+        let opened = |runtime: &rune::Runtime<State>, name: &str| {
+            runtime
+                .state
+                .workspace
+                .tabs
+                .iter()
+                .find(|t| t.document.path.ends_with(name))
+                .map(|t| (t.id, t.preview, t.mode))
+        };
+        // Double-clicking a rendered preview tab keeps it rendered.
+        click(&mut runtime, root.path().join("doc.md").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| !s.workspace.tabs.is_empty());
+        let (id, preview, mode) = opened(&runtime, "doc.md").unwrap();
+        assert!(preview && mode == View::Preview);
+        double_click(&mut runtime, &format!("editor-tab-{id}"));
+        let (_, preview, mode) = opened(&runtime, "doc.md").unwrap();
+        assert!(!preview, "double-click keeps the tab");
+        assert!(mode == View::Preview, "and leaves it rendered");
+        assert!(runtime.find(&format!("file-editor-{id}")).is_none());
+        let title = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(&format!("editor-title-{id}")))
+            .unwrap();
+        assert_eq!(title.text_color, Some(ink));
+        // A preview switched to source and then edited stays in source.
+        click(&mut runtime, root.path().join("src.md").to_str().unwrap());
+        wait_runtime(&mut runtime, |s| opened_any(s, "src.md"));
+        let (id, preview, _) = opened(&runtime, "src.md").unwrap();
+        assert!(preview);
+        click(&mut runtime, "file-edit");
+        runtime.update(|s, _| {
+            let tab = s.workspace.tabs.iter_mut().find(|t| t.id == id).unwrap();
+            tab.edit.insert("x");
+            s.changed_editor(id);
+        });
+        let (_, preview, mode) = opened(&runtime, "src.md").unwrap();
+        assert!(!preview && mode == View::Edit);
+        // Double-clicking a source preview in the explorer keeps it in source.
+        click(
+            &mut runtime,
+            root.path().join("plain.txt").to_str().unwrap(),
+        );
+        wait_runtime(&mut runtime, |s| opened_any(s, "plain.txt"));
+        double_click(
+            &mut runtime,
+            root.path().join("plain.txt").to_str().unwrap(),
+        );
+        wait_runtime(&mut runtime, |s| s.workspace.opening.is_empty());
+        let (_, preview, mode) = opened(&runtime, "plain.txt").unwrap();
+        assert!(!preview && mode == View::Edit);
+        assert!(preview_tabs(&runtime).is_empty());
+    }
+
+    fn opened_any(s: &State, name: &str) -> bool {
+        s.workspace
+            .tabs
+            .iter()
+            .any(|t| t.document.path.ends_with(name))
+    }
+
+    #[test]
+    fn file_actions_diff_controls_and_status_sit_below_content_with_tabs_above() {
+        use super::super::tests::runtime_for;
+        fn rect(runtime: &rune::Runtime<State>, key: &str) -> [f32; 4] {
+            runtime
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .rect
+        }
+        let bottom = |r: [f32; 4]| r[1] + r[3];
+        // Source view: tabs, then content, then the disk status, then actions.
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().to_owned());
+        demo(&mut state, false);
+        state.workspace.tabs[0].disk_error = Some("unreadable".into());
+        let mut runtime = runtime_for(state);
+        runtime.settle_all();
+        runtime.frame(1.0);
+        let tabs = rect(&runtime, "editor-tabs");
+        let content = rect(&runtime, "editor-scroll-1");
+        let status = rect(&runtime, "editor-status");
+        let save = rect(&runtime, "file-save");
+        let disk = runtime
+            .elements()
+            .into_iter()
+            .find(|e| e.text.as_deref() == Some("Disk: unreadable"))
+            .unwrap()
+            .rect;
+        assert!(bottom(tabs) <= content[1], "{tabs:?} above {content:?}");
+        assert!(bottom(content) <= disk[1], "{content:?} above {disk:?}");
+        assert!(bottom(disk) <= status[1], "{disk:?} above {status:?}");
+        assert!(save[1] >= status[1] && bottom(save) <= bottom(status) + 0.5);
+        let pane = rect(&runtime, "editor-pane");
+        assert!(
+            (bottom(status) - bottom(pane)).abs() < 1.0,
+            "actions end the pane"
+        );
+        // Git diff mode: controls and its label follow the diff.
+        runtime.update(|s, _| demo_diff(s));
+        runtime.settle_all();
+        runtime.frame(1.0);
+        let viewport = rect(&runtime, "git-diff-viewport");
+        let controls = rect(&runtime, "diff-controls");
+        let label = rect(&runtime, "diff-label");
+        let status = rect(&runtime, "editor-status");
+        assert!(bottom(rect(&runtime, "editor-tabs")) <= viewport[1]);
+        assert!(
+            bottom(viewport) <= controls[1],
+            "{viewport:?} above {controls:?}"
+        );
+        assert!(bottom(controls) <= label[1] + 0.5);
+        assert!(bottom(label) <= status[1] + 0.5);
+        for key in ["diff-prev", "diff-next", "diff-current"] {
+            assert!(
+                rect(&runtime, key)[1] >= bottom(viewport),
+                "{key} below the diff"
+            );
+        }
+        // Compact navigation stays with the tabs, above the content.
+        let mut state = State::with_root(root.path().to_owned());
+        demo(&mut state, false);
+        let mut compact = rune::Runtime::new(
+            state,
+            super::super::view,
+            (720.0, 600.0),
+            rune::Env::new(true, 1.0),
+        );
+        compact.settle_all();
+        compact.frame(1.0);
+        let back = rect(&compact, "return-terminal");
+        let tabs = rect(&compact, "editor-tabs");
+        assert!(back[1] >= tabs[1] && bottom(back) <= bottom(tabs) + 0.5);
+        assert!(bottom(back) <= rect(&compact, "editor-scroll-1")[1]);
+    }
+
+    fn demo_diff(s: &mut State) {
+        let tab = &s.workspace.tabs[0];
+        let (old, new) = (tab.document.saved.text.clone(), tab.edit.text.clone());
+        s.workspace.tabs[0].mode = View::Diff(Comparison::Current);
+        s.workspace.diff = DiffState::new(vec![rune_kit::diff::FileDiff::from_texts(
+            "src/main.rs",
+            &old,
+            &new,
+        )]);
+        s.workspace.diff_patch = "preview".into();
+        s.workspace.diff_label = "Editor ↔ HEAD".into();
     }
 
     #[test]
@@ -3792,12 +4140,7 @@ mod tests {
                 .is_some_and(|key| key.starts_with("editor-tab-"))
                 && e.label.as_deref() == Some("a.txt")
         }));
-        assert!(runtime.elements().iter().any(|e| {
-            e.key
-                .as_deref()
-                .is_some_and(|key| key.starts_with("editor-tab-"))
-                && e.label.as_deref() == Some("b.txt (preview)")
-        }));
+        assert!(preview_tabs(&runtime).contains(&"b.txt".to_owned()));
         runtime.update(|s, _| s.persist_workspace());
         assert_eq!(Layout::load(root.path()).unwrap().files, vec![a.clone()]);
         assert_eq!(std::fs::read_to_string(a).unwrap(), "saved");
@@ -3964,12 +4307,7 @@ mod tests {
         assert!(!Config::load(root.path()).unwrap().single_click_keeps_open);
         click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 3);
-        assert!(runtime.elements().iter().any(|e| {
-            e.key
-                .as_deref()
-                .is_some_and(|key| key.starts_with("editor-tab-"))
-                && e.label.as_deref() == Some("c.txt (preview)")
-        }));
+        assert!(preview_tabs(&runtime).contains(&"c.txt".to_owned()));
         let mut config = Config::load(root.path()).unwrap();
         config.single_click_keeps_open = true;
         config.save(root.path()).unwrap();
@@ -3993,11 +4331,7 @@ mod tests {
         let restored = self::state(root.path());
         let mut restored = runtime_for(restored);
         wait_runtime(&mut restored, |s| s.workspace.tabs.len() == 3);
-        assert!(restored.elements().iter().all(|e| {
-            !e.label
-                .as_deref()
-                .is_some_and(|label| label.contains("(preview)"))
-        }));
+        assert!(preview_tabs(&restored).is_empty());
     }
 
     #[test]
@@ -4611,6 +4945,32 @@ mod tests {
         assert!(runtime.find("settings-confirm-deletion").is_some());
     }
 
+    /// Titles of the editor tabs marked, for assistive technology, as
+    /// preview editor tabs.
+    fn preview_tabs(runtime: &rune::Runtime<State>) -> Vec<String> {
+        fn description<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+            if node["key"] == key {
+                return node["description"].as_str();
+            }
+            node["children"]
+                .as_array()?
+                .iter()
+                .find_map(|child| description(child, key))
+        }
+        let tree = runtime.accessibility_json();
+        runtime
+            .elements()
+            .into_iter()
+            .filter(|e| {
+                e.key.as_deref().is_some_and(|key| {
+                    key.starts_with("editor-tab-")
+                        && description(&tree, key)
+                            .is_some_and(|d| d.starts_with(PREVIEW_TAB_DESCRIPTION))
+                })
+            })
+            .filter_map(|e| e.label)
+            .collect()
+    }
     fn wait_runtime(runtime: &mut rune::Runtime<State>, condition: impl Fn(&State) -> bool) {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(8) {
