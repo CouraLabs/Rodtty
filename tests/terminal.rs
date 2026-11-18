@@ -155,9 +155,18 @@ fn run(session: &Session, script: &str, marker: &str) {
     session
         .send(format!("{script}; printf '\\n__DONE_%s__\\n' '{marker}'\r").into_bytes())
         .unwrap();
-    session
-        .wait_for(&format!("__DONE_{marker}__"), Duration::from_secs(15))
-        .unwrap();
+    let marker = format!("__DONE_{marker}__");
+    session.wait_for(&marker, Duration::from_secs(15)).unwrap();
+    // Between commands, while prompt hooks run, the terminal is in canonical
+    // mode, where the tty truncates a typed-ahead line at MAX_CANON (1024 bytes
+    // on macOS). Brush switches to raw mode before drawing its prompt, so the
+    // next command is sent only once the prompt shows after the marker.
+    wait_screen(session, "the prompt after the marker", |screen| {
+        screen
+            .contents()
+            .rsplit_once(&marker)
+            .is_some_and(|(_, after)| !after.trim().is_empty())
+    });
 }
 
 #[test]

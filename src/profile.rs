@@ -43,6 +43,26 @@ pub fn cleanup_stale(root: &Path) {
     }
 }
 
+/// Points a utility launcher at the shell binary.
+///
+/// On Unix the launcher is a symbolic link, so every exec resolves to the
+/// shell binary's own, single name. Hard links give that one file a name in
+/// every session's profile; macOS then can report an exec under another
+/// session's name, and when that session has already removed its profile,
+/// Gatekeeper's scan of the vanished path fails and the system SIGKILLs the
+/// command. Windows keeps hard links: symbolic links there need privileges.
+fn link_launcher(shell: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let shell = std::path::absolute(shell)?;
+        std::os::unix::fs::symlink(shell, target)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::hard_link(shell, target)
+    }
+}
+
 pub struct PreparedProfile {
     pub directory: tempfile::TempDir,
     pub rc: PathBuf,
@@ -74,7 +94,7 @@ impl PreparedProfile {
         std::fs::create_dir(&bin)?;
         for name in utility_names() {
             let target = bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-            if std::fs::hard_link(shell, &target).is_err() {
+            if link_launcher(shell, &target).is_err() {
                 std::fs::copy(shell, &target)
                     .with_context(|| format!("create launcher {}", target.display()))?;
             }

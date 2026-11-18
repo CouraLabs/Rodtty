@@ -34,7 +34,7 @@ Final feature-source Linux Wayland and actual Xlib native checks passed for eigh
 
 The [visual matrix](integrated-qualification.md#visual-evidence) covers all eighteen appearances at 1440×900 and 640×360, representative terminal/tree/selected editor/Settings/palette and real Git versions/layouts. Files, index bytes, and Git status remained unchanged. Live System Light→Dark→Light is exercised against the existing open Rune runtime at both sizes; native mode cycling separately retains the same session. These are distinct checks.
 
-Use the [README validation commands](../README.md#validation). Set `TMPDIR` and `GIT_CEILING_DIRECTORIES` to the same target-local directory; build binaries before focused Session tests. Native profiles belong on the binary's filesystem so utility launchers hard-link rather than copy binaries:
+Use the [README validation commands](../README.md#validation). Set `TMPDIR` and `GIT_CEILING_DIRECTORIES` to the same target-local directory; build binaries before focused Session tests. Unix profiles symlink utility launchers to the shell binary; on Windows, keep profiles on the binary's filesystem so launchers hard-link rather than copy binaries:
 
 ```sh
 export TMPDIR="$PWD/target/native-tmp"

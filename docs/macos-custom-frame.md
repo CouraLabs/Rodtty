@@ -36,8 +36,8 @@ custom-close/Cancel that preserves the draft.
 
 On a macOS GUI host with Xcode command-line tools, build Rodtty and grant the
 invoking terminal Accessibility permission for synthetic Quartz input. The
-harness queries only its launched PID; it uses an isolated RODTTY_HOME. Keep
-TMPDIR on the binary's filesystem so session profiles can hard-link executables.
+harness queries only its launched PID; it uses an isolated RODTTY_HOME. Session
+profiles symlink their utility launchers to the shell binary.
 
 ```sh
 cargo build --locked --bins
