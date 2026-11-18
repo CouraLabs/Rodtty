@@ -38,6 +38,13 @@ _Avoid_: Editor tab, connection
 The text supplied by a running application to name its terminal session. It takes precedence over Rodtty's directory-based fallback tab label.
 _Avoid_: Window title when referring to the title of one terminal session
 
+**Prompt style**:
+The owner's choice of layout for the prompt Rodtty draws in its terminal sessions: Classic, Directory, Rodtty, Powerline, or Two-line. It applies to running sessions at their next prompt, and Rodtty stops drawing the prompt in a session whose shell sets its own `PS1`.
+_Avoid_: Theme when referring to the prompt layout
+
+**Prompt symbol**:
+The character that ends a Rodtty-drawn prompt, chosen independently of the prompt style.
+
 **Follow Terminal**:
 An optional explorer mode that expands and reveals the active terminal's current directory within the explorer root. Moving outside that root offers an action to change the root instead of replacing it automatically; with this mode off, the explorer navigates independently.
 

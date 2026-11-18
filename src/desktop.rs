@@ -296,7 +296,16 @@ impl State {
         }
     }
 
+    /// Running Rodtty shells adopt prompt preferences at their next prompt.
+    fn publish_prompt(&self) {
+        for session in &self.sessions {
+            // An ending session may already have removed its profile.
+            let _ = session.publish_prompt(self.config.prompt);
+        }
+    }
+
     fn save_config(&mut self, edit: impl FnOnce(&mut Config)) {
+        let prompt = self.config.prompt;
         // An invalid owner file may be in the middle of an external edit. Keep
         // it intact rather than treating a UI change as permission to replace it.
         match Config::load(&self.root) {
@@ -321,6 +330,9 @@ impl State {
                 self.settings_seen = std::fs::read(self.root.join("settings.json")).ok();
                 self.settings_error = None;
                 self.config_valid = true;
+                if self.config.prompt != prompt {
+                    self.publish_prompt();
+                }
                 "Saved. Command, history, and scrollback settings apply to new sessions.".into()
             }
             Err(error) => {

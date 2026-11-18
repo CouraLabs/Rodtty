@@ -1,4 +1,9 @@
-use rodtty::{config::Config, profile::PreparedProfile, session::Session};
+use rodtty::{
+    config::Config,
+    profile::PreparedProfile,
+    prompt::{PromptPreferences, PromptStyle, PromptSymbol},
+    session::Session,
+};
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -678,4 +683,158 @@ fn other_sessions_activity_markers_cannot_hide_a_running_builtin() {
         running,
         "another session's prompt marker must not clear this owning shell's command"
     );
+}
+
+fn wait_screen(session: &Session, what: &str, ready: impl Fn(&vt100::Screen) -> bool) {
+    let start = Instant::now();
+    while !session.with_screen(&ready) {
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "timed out waiting for {what}; screen:\n{}",
+            session.screen().contents()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The row holding the cursor, where the shell's current prompt ends.
+fn prompt_row(screen: &vt100::Screen) -> String {
+    let (row, _) = screen.cursor_position();
+    screen
+        .rows(0, screen.size().1)
+        .nth(usize::from(row))
+        .unwrap_or_default()
+}
+
+fn prefs(style: PromptStyle, symbol: PromptSymbol) -> PromptPreferences {
+    PromptPreferences { style, symbol }
+}
+
+#[test]
+fn prompt_preferences_apply_to_a_running_shell_at_its_next_prompt() {
+    let root = common::tempdir().unwrap();
+    let dir = root.path().display().to_string();
+    let terminal = session(root.path(), Config::default());
+    wait_screen(&terminal, "default classic prompt", |s| {
+        prompt_row(s) == format!("rodtty:{dir}$ ")
+    });
+    let pid = "printf 'PID:%s\\n' \"$$\"";
+    run(&terminal, pid, "PID_BEFORE");
+    let shell_pid = terminal
+        .screen()
+        .contents()
+        .lines()
+        .find_map(|l| l.strip_prefix("PID:").map(str::to_owned))
+        .unwrap();
+    for (style, symbol, expected) in [
+        (
+            PromptStyle::Directory,
+            PromptSymbol::Chevron,
+            format!("{dir} › "),
+        ),
+        (
+            PromptStyle::Rodtty,
+            PromptSymbol::Triangle,
+            "Rodtty ▶ ".into(),
+        ),
+        (
+            PromptStyle::Powerline,
+            PromptSymbol::DoubleChevron,
+            format!(" Rodtty  {dir}  ⟫ "),
+        ),
+        (
+            PromptStyle::Classic,
+            PromptSymbol::Dollar,
+            format!("rodtty:{dir}$ "),
+        ),
+    ] {
+        terminal.publish_prompt(prefs(style, symbol)).unwrap();
+        terminal.send(b"\r".to_vec()).unwrap();
+        wait_screen(&terminal, &expected, |s| prompt_row(s) == expected);
+        if style == PromptStyle::Powerline {
+            let cell = terminal.with_screen(|s| {
+                let (row, _) = s.cursor_position();
+                s.cell(row, 1).unwrap().bgcolor()
+            });
+            assert_eq!(cell, vt100::Color::Idx(6), "indexed ANSI cyan segment");
+        }
+    }
+    run(&terminal, pid, "PID_AFTER");
+    assert_eq!(
+        terminal
+            .screen()
+            .contents()
+            .matches(&format!("PID:{shell_pid}"))
+            .count(),
+        2,
+        "the same shell keeps running"
+    );
+
+    terminal
+        .publish_prompt(prefs(PromptStyle::TwoLine, PromptSymbol::Dollar))
+        .unwrap();
+    let symbol_color = |failed: bool| {
+        terminal
+            .send(if failed { &b"false\r"[..] } else { b"true\r" }.to_vec())
+            .unwrap();
+        let color = vt100::Color::Idx(if failed { 1 } else { 2 });
+        let what = format!("two-line prompt with symbol {color:?}");
+        wait_screen(&terminal, &what, |s| {
+            let (row, _) = s.cursor_position();
+            let directory = s.rows(0, s.size().1).nth(usize::from(row) - 1);
+            prompt_row(s) == "$ "
+                && s.cell(row, 0).unwrap().fgcolor() == color
+                && directory.is_some_and(|line| line.trim_end() == dir)
+        });
+    };
+    symbol_color(true);
+    symbol_color(false);
+    symbol_color(true);
+}
+
+#[test]
+fn owner_defined_ps1_from_startup_or_interactively_stays_unmanaged() {
+    let root = common::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("startup.sh"),
+        "PS1='owner> '\nPROMPT_COMMAND=('printf \"[status=%s]\" $?')\n",
+    )
+    .unwrap();
+    let owner = Session::spawn(
+        shell(),
+        root.path(),
+        root.path(),
+        Config::default(),
+        30,
+        110,
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    wait_screen(&owner, "owner prompt", |s| {
+        prompt_row(s) == "owner> " && s.contents().contains("[status=0]")
+    });
+    owner
+        .publish_prompt(prefs(PromptStyle::Rodtty, PromptSymbol::Dollar))
+        .unwrap();
+    // Owner hooks still see the finished command's own exit status.
+    owner.send(b"false\r".to_vec()).unwrap();
+    wait_screen(&owner, "owner prompt after change", |s| {
+        prompt_row(s) == "owner> " && s.contents().contains("[status=1]")
+    });
+    assert!(!owner.screen().contents().contains("Rodtty $"));
+
+    let other = common::tempdir().unwrap();
+    let interactive = session(other.path(), Config::default());
+    interactive.send(b"PS1='x> '\r".to_vec()).unwrap();
+    wait_screen(&interactive, "interactive prompt", |s| {
+        prompt_row(s) == "x> "
+    });
+    interactive
+        .publish_prompt(prefs(PromptStyle::TwoLine, PromptSymbol::Chevron))
+        .unwrap();
+    run(&interactive, "true", "INTERACTIVE");
+    wait_screen(&interactive, "interactive prompt kept", |s| {
+        prompt_row(s) == "x> "
+    });
+    assert!(!interactive.screen().contents().contains('›'));
 }

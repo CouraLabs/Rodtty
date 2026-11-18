@@ -100,6 +100,7 @@ pub struct Session {
     shell_pid: Option<u32>,
     jobs: PathBuf,
     job_pids: PathBuf,
+    profile: PathBuf,
 }
 
 impl Session {
@@ -208,6 +209,7 @@ impl Session {
         });
         let jobs = profile.jobs.clone();
         let job_pids = profile.job_pids.clone();
+        let profile_directory = profile.directory.path().to_owned();
         let exit_state = state.clone();
         std::thread::spawn(move || {
             // Windows cannot remove in-use launcher executables. Keep the
@@ -236,6 +238,7 @@ impl Session {
             shell_pid,
             jobs,
             job_pids,
+            profile: profile_directory,
         })
     }
 
@@ -290,6 +293,22 @@ impl Session {
             // ConPTY has no foreground-group or process-liveness query.
             !jobs.is_empty()
         }
+    }
+
+    /// Republish prompt preferences to this shell's private profile; the
+    /// shell applies them when it next draws a prompt. An ended session has
+    /// no prompt left to update.
+    pub fn publish_prompt(&self, prompt: crate::prompt::PromptPreferences) -> Result<()> {
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .exit
+            .is_some()
+        {
+            return Ok(());
+        }
+        prompt.publish(&self.profile)
     }
 
     pub fn send(&self, bytes: impl Into<Vec<u8>>) -> Result<()> {

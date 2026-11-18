@@ -45,8 +45,12 @@ impl State {
             Ok(config) => {
                 self.behavior_directory
                     .replace_text(config.behavior.specified_directory.to_string_lossy());
+                let prompt_changed = self.config.prompt != config.prompt;
                 self.config = config.clone();
                 self.last_valid_config = config;
+                if prompt_changed {
+                    self.publish_prompt();
+                }
                 self.config_valid = true;
                 self.settings_error = None;
                 self.message =
@@ -174,7 +178,9 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 "startup restore workspace one single fresh terminal",
             )
         } else if section == "Terminal" {
-            matches(s, section, "history save shell commands")
+            matches(s, section, PROMPT_STYLE_SEARCH)
+                || matches(s, section, PROMPT_SYMBOL_SEARCH)
+                || matches(s, section, "history save shell commands")
                 || matches(s, section, "scrollback retained lines")
                 || matches(
                     s,
@@ -636,6 +642,12 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
             }
             "Appearance" | "Editor" => {}
             "Terminal" => {
+                if matches(s, section, PROMPT_STYLE_SEARCH) {
+                    group = group.child(prompt_style_row(s, a));
+                }
+                if matches(s, section, PROMPT_SYMBOL_SEARCH) {
+                    group = group.child(prompt_symbol_row(s, a));
+                }
                 if matches(
                     s,
                     section,
@@ -765,7 +777,7 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                 }
                 group = group.child(
                     text(
-                        "Command, history, and scrollback choices apply to new terminal sessions.",
+                        "Prompt choices apply to running Rodtty shells at their next prompt, unless the shell sets its own PS1. Command, history, and scrollback choices apply to new terminal sessions.",
                     )
                     .font(ui_label())
                     .color(a.muted())
@@ -973,6 +985,134 @@ pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
         let _ = family_picker(s, a, &mut layers);
     }
     layers
+}
+
+const PROMPT_STYLE_SEARCH: &str = "prompt style classic directory rodtty powerline two-line ps1";
+const PROMPT_SYMBOL_SEARCH: &str = "prompt symbol dollar chevron triangle ps1";
+
+fn prompt_style_row(s: &State, a: &Appearance) -> El {
+    use crate::prompt::PromptStyle;
+    let current = s.config.prompt.style;
+    let mut choices = row().gap(6.0).scroll_x();
+    for &style in PromptStyle::ALL {
+        choices = choices.child(button(
+            a,
+            format!("prompt-style-{}", style.key()),
+            format!(
+                "{} {}",
+                if current == style { "●" } else { "○" },
+                style.label()
+            ),
+            move |s, _| s.save_config(|c| c.prompt.style = style),
+        ));
+    }
+    let mut preview = col()
+        .key("prompt-style-preview")
+        .gap(4.0)
+        .child(prompt_preview(s.config.prompt, false, a));
+    if current.reports_status() {
+        preview = preview.child(
+            text("After a failed command:")
+                .font(ui_label())
+                .color(a.muted()),
+        );
+        preview = preview.child(prompt_preview(s.config.prompt, true, a));
+    }
+    col()
+        .key("prompt-style")
+        .w_full()
+        .gap(6.0)
+        .child(text("Prompt style").font(ui_label()).color(a.muted()))
+        .child(choices)
+        .child(preview)
+        .child(button(
+            a,
+            "reset-prompt-style",
+            "Reset prompt style",
+            |s, _| {
+                s.save_config(|c| c.prompt.style = Default::default());
+            },
+        ))
+}
+
+fn prompt_symbol_row(s: &State, a: &Appearance) -> El {
+    use crate::prompt::PromptSymbol;
+    let prefs = s.config.prompt;
+    let mut choices = row().gap(6.0).scroll_x();
+    for &symbol in PromptSymbol::ALL {
+        choices = choices.child(button(
+            a,
+            format!("prompt-symbol-{}", symbol.key()),
+            format!(
+                "{} {}",
+                if prefs.symbol == symbol { "●" } else { "○" },
+                symbol.glyph()
+            ),
+            move |s, _| s.save_config(|c| c.prompt.symbol = symbol),
+        ));
+    }
+    // The line holding the symbol, as drawn after success and, when the
+    // style reports it, after failure.
+    let mut preview = row().key("prompt-symbol-preview").gap(12.0).scroll_x();
+    let last_line = |failed| {
+        let lines = prefs.preview(failed, PREVIEW_DIRECTORY);
+        prompt_line(lines.last().map(Vec::as_slice).unwrap_or_default(), a)
+    };
+    preview = preview.child(last_line(false));
+    if prefs.style.reports_status() {
+        preview = preview.child(last_line(true));
+    }
+    col()
+        .key("prompt-symbol")
+        .w_full()
+        .gap(6.0)
+        .child(text("Prompt symbol").font(ui_label()).color(a.muted()))
+        .child(choices)
+        .child(preview)
+        .child(button(
+            a,
+            "reset-prompt-symbol",
+            "Reset prompt symbol",
+            |s, _| {
+                s.save_config(|c| c.prompt.symbol = Default::default());
+            },
+        ))
+}
+
+const PREVIEW_DIRECTORY: &str = "~/project";
+
+/// The prompt drawn with the active theme's ANSI palette, as the terminal would.
+fn prompt_preview(prefs: crate::prompt::PromptPreferences, failed: bool, a: &Appearance) -> El {
+    let mut lines = col()
+        .px(8.0)
+        .py(6.0)
+        .radius(6.0)
+        .fill(a.bg())
+        .label(prefs.preview_text(failed, PREVIEW_DIRECTORY));
+    for line in prefs.preview(failed, PREVIEW_DIRECTORY) {
+        lines = lines.child(prompt_line(&line, a));
+    }
+    lines
+}
+
+fn prompt_line(line: &[(String, crate::prompt::Segment)], a: &Appearance) -> El {
+    let font = ui_label().family(Family::Mono);
+    let mut spans = row().label(line.iter().map(|(t, _)| t.as_str()).collect::<String>());
+    for (content, segment) in line {
+        let color = segment
+            .fg
+            .map_or(a.ink(), |i| a.terminal(vt100::Color::Idx(i), true));
+        let mut font = font;
+        if segment.bold {
+            font.weight = 700.0;
+        }
+        let mut span = row().child(text(content).font(font).color(color));
+        if let Some(bg) = segment.bg {
+            span = span.fill(a.terminal(vt100::Color::Idx(bg), false));
+        }
+        spans = spans.child(span);
+    }
+    spans
 }
 
 fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appearance) -> El {
@@ -1789,6 +1929,114 @@ mod tests {
             reopened.frame(1.0 / 60.0);
         }
         assert_canvas(&reopened, "#1e1e2e");
+    }
+    #[test]
+    fn prompt_style_and_symbol_preview_reset_persist_and_reach_a_running_shell() {
+        use crate::prompt::{PromptStyle, PromptSymbol};
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        state.directory = root.path().into();
+        state.shell = std::env::current_exe()
+            .unwrap()
+            .ancestors()
+            .map(|p| p.join("rodtty-shell"))
+            .find(|p| p.is_file());
+        state.workspace_setup();
+        if state.sessions.is_empty() {
+            state.new_tab();
+        }
+        let dir = root.path().display().to_string();
+        fn terminal(rt: &rune::Runtime<State>) -> &Session {
+            rt.state.active().unwrap()
+        }
+        let wait_prompt = |rt: &mut rune::Runtime<State>, expected: &str| {
+            let start = Instant::now();
+            loop {
+                // The settings pane narrows the terminal, so prompts may wrap.
+                let row = terminal(rt).with_screen(|s| s.contents().trim_end().to_owned());
+                if row.ends_with(expected.trim_end()) {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(15),
+                    "screen {row:?}, expected prompt {expected:?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let mut rt = rune::Runtime::new(
+            state,
+            view,
+            (1200.0, 800.0),
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
+        rt.frame(0.0);
+        wait_prompt(&mut rt, &format!("rodtty:{dir}$ "));
+        open_settings(&mut rt);
+        rt.update(|s, _| s.settings_query.replace_text("prompt"));
+        rt.frame(1.0 / 60.0);
+        assert!(
+            rt.find("history").is_none(),
+            "search narrows to prompt rows"
+        );
+        let labelled = |rt: &rune::Runtime<State>, label: &str| {
+            rt.elements()
+                .iter()
+                .any(|e| e.label.as_deref() == Some(label))
+        };
+        assert!(rt.find("prompt-style-preview").is_some());
+        assert!(rt.find("prompt-symbol-preview").is_some());
+        assert!(
+            labelled(&rt, "rodtty:~/project$ "),
+            "default Classic $ preview"
+        );
+
+        click(&mut rt, "prompt-style-two_line");
+        click(&mut rt, "prompt-symbol-chevron");
+        let saved = Config::load(root.path()).unwrap().prompt;
+        assert_eq!(saved.style, PromptStyle::TwoLine);
+        assert_eq!(saved.symbol, PromptSymbol::Chevron);
+        assert!(labelled(&rt, "~/project\n› "), "live style preview");
+        assert!(labelled(&rt, "› "), "live symbol preview");
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, "› ");
+
+        click(&mut rt, "reset-prompt-style");
+        let saved = Config::load(root.path()).unwrap().prompt;
+        assert_eq!(saved.style, PromptStyle::Classic);
+        assert_eq!(
+            saved.symbol,
+            PromptSymbol::Chevron,
+            "resets are independent"
+        );
+        assert!(labelled(&rt, "rodtty:~/project› "));
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, &format!("rodtty:{dir}› "));
+
+        // External JSON edits apply to running shells as well.
+        let mut external = Config::load(root.path()).unwrap();
+        external.prompt.style = PromptStyle::Rodtty;
+        external.save(root.path()).unwrap();
+        rt.update(|s, tx| {
+            s.settings_poll = Instant::now() - Duration::from_secs(1);
+            poll(s, 0.0, tx);
+        });
+        rt.frame(1.0 / 60.0);
+        assert!(labelled(&rt, "Rodtty › "));
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, "Rodtty › ");
+
+        click(&mut rt, "reset-prompt-symbol");
+        click(&mut rt, "reset-prompt-style");
+        assert_eq!(
+            Config::load(root.path()).unwrap().prompt,
+            Default::default()
+        );
+        terminal(&rt).send(b"\r".to_vec()).unwrap();
+        wait_prompt(&mut rt, &format!("rodtty:{dir}$ "));
     }
     #[test]
     fn owner_searches_resets_and_edits_actual_json_beside_the_terminal() {

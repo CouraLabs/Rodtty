@@ -127,6 +127,8 @@ pub struct Config {
     pub explorer: ExplorerPreferences,
     pub behavior: BehaviorPreferences,
     pub terminal_clipboard: TerminalClipboardPreferences,
+    /// Applies live: running Rodtty shells pick it up at their next prompt.
+    pub prompt: crate::prompt::PromptPreferences,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -181,6 +183,7 @@ impl Default for Config {
             explorer: ExplorerPreferences::default(),
             behavior: BehaviorPreferences::default(),
             terminal_clipboard: TerminalClipboardPreferences::default(),
+            prompt: Default::default(),
             extra: Default::default(),
         }
     }
