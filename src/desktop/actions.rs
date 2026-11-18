@@ -603,7 +603,7 @@ impl State {
                 self.workspace.layout.terminal = true;
                 self.workspace.terminal_focus = true;
                 self.workspace.explorer_revealed = false;
-                self.search = true;
+                self.terminal_search.open = true;
                 tx.focus_when_shown("search-query", true);
             }
             AppAction::FindEditor | AppAction::ReplaceEditor => {

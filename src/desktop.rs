@@ -20,7 +20,11 @@ mod fonts;
 mod frame;
 mod palette;
 mod tabs;
+mod terminal_palette;
+mod terminal_search;
+mod terminal_view;
 use appearance::Appearance;
+use terminal_view::grid;
 mod file_operations;
 mod removal;
 mod settings;
@@ -91,8 +95,7 @@ struct State {
     settings_seen: Option<Vec<u8>>,
     settings_poll: std::time::Instant,
     last_valid_config: Config,
-    search: bool,
-    query: TextEdit,
+    terminal_search: terminal_search::TerminalSearch,
     pending: Option<Pending>,
     selection: Option<((u16, u16), (u16, u16))>,
     /// Where the current terminal press started, before it has travelled far
@@ -176,8 +179,7 @@ impl State {
             theme_family_picker: Default::default(),
             settings_error: (!config_valid).then(|| message.clone()),
             settings_poll: std::time::Instant::now(),
-            search: false,
-            query: TextEdit::new(""),
+            terminal_search: Default::default(),
             pending: None,
             selection: None,
             terminal_context_open: false,
@@ -293,6 +295,16 @@ impl State {
             read(preview)
         } else {
             read(vt100::Parser::new(28, 100, 0).screen())
+        }
+    }
+
+    fn with_screen_mut<R>(&mut self, change: impl FnOnce(&mut vt100::Screen) -> R) -> R {
+        if let Some(session) = self.active() {
+            session.with_screen_mut(change)
+        } else if let Some(preview) = &mut self.preview {
+            change(preview)
+        } else {
+            change(vt100::Parser::new(28, 100, 0).screen_mut())
         }
     }
 
@@ -461,193 +473,6 @@ fn icon_button(
         .child(rune::icon(glyph, 16.0).color(a.ink()))
 }
 
-fn grid(state: &State, a: &Appearance) -> El {
-    state.with_screen(|screen| grid_view(state, screen, a))
-}
-
-fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
-    let metrics = fonts::Metrics::measure();
-    let (cw, ch) = (metrics.width, metrics.height);
-    let (rows, cols) = screen.size();
-    let selection = state
-        .selection
-        .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
-    let mut grid = el()
-        .key("terminal")
-        .instant_changes()
-        .role("terminal")
-        .label("Terminal")
-        .w_full()
-        .grow(1.0)
-        .clip_soft(0.0)
-        .fill(a.bg());
-    // Position runs on a fixed cell grid. Wide glyphs get their own run so
-    // fallback-font advances cannot shift the cells following them.
-    for r in 0..rows {
-        let mut c = 0;
-        while c < cols {
-            let Some(cell) = screen.cell(r, c) else {
-                c += 1;
-                continue;
-            };
-            if cell.is_wide_continuation() {
-                c += 1;
-                continue;
-            }
-            let selected = |c| selection.is_some_and(|(a, b)| (r, c) >= a && (r, c) < b);
-            let start = c;
-            let mut content = String::new();
-            let mut end = c;
-            // Each terminal cell has an explicit origin. Font fallback, ligatures,
-            // combining sequences and pixel rounding must never shift later cells.
-            let next = screen.cell(r, end).unwrap();
-            content.push_str(if next.contents().is_empty() {
-                " "
-            } else {
-                next.contents()
-            });
-            end += if next.is_wide() { 2 } else { 1 };
-            let mut fg = a.terminal(cell.fgcolor(), true);
-            let mut background = a.terminal(cell.bgcolor(), false);
-            if cell.inverse() {
-                std::mem::swap(&mut fg, &mut background);
-            }
-            if selected(start) {
-                background = a.bg().mix(a.accent(), 0.28);
-            }
-            let width = (end - start) as f32 * cw;
-            if background != a.bg() {
-                grid = grid.child(
-                    el().absolute(start as f32 * cw, r as f32 * ch)
-                        .size(width, ch)
-                        .fill(background),
-                );
-            }
-            if !content.trim().is_empty() {
-                let mut style = metrics.style;
-                if cell.bold() {
-                    style.weight = 600.0;
-                }
-                style.italic = cell.italic();
-                grid = grid.child(
-                    text(content)
-                        .key(format!("terminal-cell-{r}-{start}"))
-                        .font(style)
-                        .color(fg)
-                        .absolute(start as f32 * cw, r as f32 * ch)
-                        .size(width + 1.0, ch),
-                );
-            }
-            if cell.underline() {
-                grid = grid.child(
-                    el().absolute(start as f32 * cw, r as f32 * ch + ch - 3.0)
-                        .size(width, 1.0)
-                        .fill(fg),
-                );
-            }
-            c = end.max(c + 1);
-        }
-    }
-    if !screen.hide_cursor() && screen.scrollback() == 0 {
-        let (r, c) = screen.cursor_position();
-        grid = grid.child(
-            el().key("terminal-caret")
-                .absolute(c as f32 * cw, r as f32 * ch + ch - 3.0)
-                .size(cw, 2.0)
-                .fill(a.accent())
-                .ime_cursor(),
-        );
-    }
-    // A metric/session probe also reports when the viewport itself has not changed.
-    // Rune's on_layout fires only for changed rectangles; a font-only update still
-    // needs to notify the existing PTY before its next redraw.
-    let session_key = state
-        .active()
-        .map(|s| Arc::as_ptr(&s.state) as usize)
-        .unwrap_or(0);
-    grid = grid.child(
-        el().key(format!(
-            "terminal-metrics-{session_key}-{}-{cw}-{ch}",
-            rune::text::font_epoch()
-        ))
-        .absolute(0.0, 0.0)
-        .size(cw, ch)
-        .on_layout(move |s: &mut State, _| s.resize_terminal(metrics)),
-    );
-    grid.on_layout(move |s: &mut State, rect| {
-        s.terminal_rect = Some(rect);
-        s.resize_terminal(metrics);
-    })
-    .on_background_press_tx(|s: &mut State, tx| {
-        s.supersede_pending_preview();
-        s.workspace.terminal_focus = true;
-        // The selection is the drag's to keep or drop: a pointer press reaches
-        // the drag handler first, whose `Down` drops any earlier selection, and
-        // this press also follows the release of a drag that just selected, so
-        // clearing here would erase every selection the moment it was made.
-        tx.blur();
-    })
-    .on_secondary_press(clipboard::terminal_menu)
-    .on_drag(move |s: &mut State, drag, tx| {
-        s.supersede_pending_preview();
-        s.workspace.terminal_focus = true;
-        tx.blur();
-        let (rows, cols) = s.with_screen(vt100::Screen::size);
-        let point = |x: f32, y: f32| {
-            (
-                (y / ch).floor().clamp(0.0, (rows - 1) as f32) as u16,
-                (x / cw).floor().clamp(0.0, cols as f32) as u16,
-            )
-        };
-        if drag.cancelled() {
-            s.selection = None;
-            s.drag_origin = None;
-            return;
-        }
-        match drag.phase {
-            Phase::Down => {
-                // Record the press but select nothing yet: a click that drifts
-                // a few points on a trackpad would otherwise highlight a cell
-                // the owner never meant to touch, and a click is not a select.
-                s.selection = None;
-                s.drag_origin = Some((drag.x, drag.y));
-            }
-            Phase::Move => {
-                let Some((sx, sy)) = s.drag_origin else {
-                    return;
-                };
-                if s.selection.is_none() {
-                    let travel = (drag.x - sx).hypot(drag.y - sy);
-                    if travel < SELECTION_THRESHOLD {
-                        return;
-                    }
-                    s.selection = Some((point(sx, sy), point(drag.x, drag.y)));
-                } else {
-                    let (start, _) = s.selection.unwrap_or((point(sx, sy), point(sx, sy)));
-                    s.selection = Some((start, point(drag.x, drag.y)));
-                }
-            }
-            Phase::Up => {
-                let extended = s.selection.is_some();
-                s.drag_origin = None;
-                if extended && s.config.terminal_clipboard.copy_on_selection {
-                    s.copy(tx);
-                }
-                // A press that never became a selection leaves nothing behind.
-                if !extended {
-                    s.selection = None;
-                }
-            }
-        }
-    })
-    .on_wheel(move |s: &mut State, event, _| {
-        if let Some(session) = s.active() {
-            session.scroll((-event.dy / ch).round() as isize);
-        }
-        true
-    })
-}
-
 fn header_height() -> f32 {
     44.0_f32.max(ui_label().size * 1.5 + 18.0)
 }
@@ -671,12 +496,6 @@ fn tilde_path(path: &std::path::Path) -> String {
     }
     path.display().to_string()
 }
-
-/// How far the pointer travels before a terminal press becomes a selection, in
-/// points. Below this it is a click: a trackpad's contact wobble and a slow
-/// click both stay under it, so neither highlights a cell the owner never
-/// meant to select and a click never copies.
-pub(super) const SELECTION_THRESHOLD: f32 = 4.0;
 
 /// A titlebar tab's height, in points. Shorter than the band so the pills keep
 /// a margin above and below at any UI zoom.
@@ -1306,6 +1125,11 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
         })
         .collect();
     let changed = generations != state.generations;
+    // New output in the shown session moves the cells search matches were
+    // found in; drop them rather than highlight the wrong text.
+    if generations.get(state.active) != state.generations.get(state.active) {
+        state.terminal_search.clear();
+    }
     state.generations = generations;
     if changed {
         // New output moves the cells a highlight was drawn over. Keep it only

@@ -16,3 +16,6 @@ https://github.com/rose-pine/palette/blob/main/LICENSE
 The palette names "Rosé Pine", "Rosé Pine Dawn", "Rosé Pine Moon" belong to
 their creators; Rodtty only adapts the literal color values, with attribution
 kept in Settings next to each appearance.
+
+Terminal ANSI slots come from the official Rosé Pine Alacritty port
+(https://github.com/rose-pine/alacritty, MIT), pinned in sources.json.

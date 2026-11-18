@@ -364,6 +364,11 @@ impl Session {
         read(state.parser.screen())
     }
 
+    pub fn with_screen_mut<R>(&self, change: impl FnOnce(&mut vt100::Screen) -> R) -> R {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        change(state.parser.screen_mut())
+    }
+
     /// Current application title, or the directory fallback when the app has none.
     pub fn tab_title(&self) -> String {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());

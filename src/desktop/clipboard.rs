@@ -411,7 +411,7 @@ mod tests {
 
 #[cfg(test)]
 mod selection_threshold_tests {
-    use super::super::SELECTION_THRESHOLD;
+    use super::super::terminal_view::SELECTION_THRESHOLD;
     use super::super::tests::runtime_for;
     use super::*;
 

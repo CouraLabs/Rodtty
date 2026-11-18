@@ -15,3 +15,6 @@ https://github.com/sainnhe/everforest/blob/master/LICENSE.md
 The palette name "Everforest" belongs to its creator; Rodtty only adapts the
 literal color values, with attribution kept in Settings next to each
 appearance.
+
+Terminal ANSI slots follow the terminal color mapping in colors/everforest.vim
+over the medium palette in autoload/everforest.vim, pinned in sources.json.

@@ -14,3 +14,6 @@ https://github.com/rebelot/kanagawa.nvim/blob/main/LICENSE
 The theme names "Kanagawa Wave" and "Kanagawa Lotus" belong to their creator;
 Rodtty only adapts the literal color values, with attribution kept in Settings
 next to each appearance.
+
+Terminal ANSI slots are the `term` tables in lua/kanagawa/themes.lua, pinned
+with lua/kanagawa/colors.lua in sources.json.

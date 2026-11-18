@@ -1,5 +1,6 @@
 //! One resolved appearance for chrome, editing, diff inspection, and terminal rendering.
 //! Families supply data; callers consume semantic roles rather than palette names.
+use super::terminal_palette::{TerminalPalette, over};
 use crate::config::{Appearance as Mode, ThemeFamily};
 use rune::{Color, HelpLook};
 use rune_kit::{
@@ -27,7 +28,7 @@ pub(super) struct Appearance {
     pub name: &'static str,
     pub notes: &'static str,
     kit: Kit,
-    ansi: [Color; 16],
+    terminal: TerminalPalette,
 }
 impl Appearance {
     pub fn resolve(family: ThemeFamily, mode: Mode, system_dark: bool) -> Self {
@@ -158,6 +159,24 @@ impl Appearance {
             .selection
             .as_ref()
             .map(|s| rune::theme::hex(s).expect("bundled selection color"));
+        // The terminal's own palette: canvas and ink are the appearance's, the
+        // sixteen ANSI slots are the family's terminal table, and selection,
+        // cursor and search highlights are drawn opaquely over the canvas.
+        let terminal = TerminalPalette {
+            foreground: text,
+            background: base,
+            cursor: focus,
+            selection: kit
+                .selection_color
+                .map_or_else(|| base.mix(focus, 0.28), |s| over(s, base)),
+            search_match: base.mix(c("yellow"), if dark { 0.30 } else { 0.38 }),
+            search_current: base.mix(c("peach"), 0.85),
+            search_current_text: base,
+            ansi: p
+                .ansi
+                .each_ref()
+                .map(|s| rune::theme::hex(s).expect("bundled ANSI color")),
+        };
         Self {
             dark,
             name: if family == ThemeFamily::Catppuccin {
@@ -175,10 +194,7 @@ impl Appearance {
                 p.attribution.as_str()
             },
             kit: super::fonts::kit(kit),
-            ansi: p
-                .ansi
-                .each_ref()
-                .map(|s| rune::theme::hex(s).expect("bundled ANSI color")),
+            terminal,
         }
     }
     pub fn kit(&self) -> &Kit {
@@ -220,31 +236,12 @@ impl Appearance {
             .ink(self.ink())
             .ring(1.0, self.kit.c.border_base)
     }
-    /// Only the sixteen conventional ANSI slots belong to the selected palette.
-    /// Extended indexed and truecolor output stay exactly as the program requested.
+    pub fn terminal_palette(&self) -> &TerminalPalette {
+        &self.terminal
+    }
+    /// A program's cell color under this appearance; see [`TerminalPalette`].
     pub fn terminal(&self, color: vt100::Color, foreground: bool) -> Color {
-        match color {
-            vt100::Color::Default => {
-                if foreground {
-                    self.ink()
-                } else {
-                    self.bg()
-                }
-            }
-            vt100::Color::Rgb(r, g, b) => super::rgb(r, g, b),
-            vt100::Color::Idx(i) if i < 16 => self.ansi[usize::from(i)],
-            vt100::Color::Idx(i) => {
-                let (r, g, b) = if i >= 232 {
-                    let v = 8 + (i - 232) * 10;
-                    (v, v, v)
-                } else {
-                    let n = i - 16;
-                    let level = |n: u8| if n == 0 { 0 } else { 55 + 40 * n };
-                    (level(n / 36), level(n / 6 % 6), level(n % 6))
-                };
-                super::rgb(r, g, b)
-            }
-        }
+        self.terminal.color(color, foreground)
     }
 }
 

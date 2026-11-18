@@ -16,9 +16,9 @@ The searchable Settings dropdown shows every family without cycling through them
 | Night Owl | Light Owl | Night Owl | [official editor themes](https://github.com/sdras/night-owl-vscode-theme), [MIT notice](nightowl-LICENSE.txt) |
 | Ayu | Light | Dark | [ayu-colors v7.3.2](https://github.com/ayu-theme/ayu-colors/tree/b0a0ad47792ef7e9e70f272798dcd7fce357bd0c), [MIT notice](ayu-v7.3.2-LICENSE.txt) |
 | Solarized | Light | Dark | [Xresources and Vim roles](https://github.com/altercation/solarized), [MIT notice](solarized-LICENSE.txt) |
-| Rosé Pine | Dawn | Moon | [palette](https://github.com/rose-pine/palette), [MIT notice](rosepine-NOTICE.txt) |
-| Kanagawa | Lotus | Wave | [Neovim theme palettes](https://github.com/rebelot/kanagawa.nvim), [MIT notice](kanagawa-NOTICE.txt) |
-| Everforest | Light | Dark Green | [Vim/Neovim palette](https://github.com/sainnhe/everforest), [MIT+ notice](everforest-NOTICE.txt) |
+| Rosé Pine | Dawn | Moon | [palette](https://github.com/rose-pine/palette), [official Alacritty terminal palettes](https://github.com/rose-pine/alacritty), [MIT notice](rosepine-NOTICE.txt) |
+| Kanagawa | Lotus | Wave | [Neovim theme palettes and `term` tables](https://github.com/rebelot/kanagawa.nvim), [MIT notice](kanagawa-NOTICE.txt) |
+| Everforest | Light | Dark Green | [Vim/Neovim palette and terminal colors](https://github.com/sainnhe/everforest), [MIT+ notice](everforest-NOTICE.txt) |
 
 [sources.json](sources.json) records exact verified Git blob SHA values, original
 repository/path, retrieved tree IDs and immutable Git blob API URLs. Tree IDs
@@ -72,6 +72,26 @@ Specific mappings are intentionally explicit:
 - Solarized retains Xresources' unusual exact ANSI ordering, including orange,
   violet and bright neutral slots. Light swaps the neutral base definitions;
   chromatic accents stay constant. Syntax follows the upstream Vim mappings.
+
+- Rosé Pine ANSI slots are the official `rose-pine/alacritty` `dist/rose-pine.toml`
+  (dark) and `dist/rose-pine-dawn.toml` (Dawn) normal/bright tables, verbatim.
+- Kanagawa ANSI slots are the `term` tables of `kanagawa.nvim`'s `themes.lua`
+  (Wave for dark, Lotus for light), resolved through `colors.lua`.
+- Everforest ANSI slots follow the upstream colorscheme's terminal mapping
+  (`colors/everforest.vim`) over the **medium** palette in
+  `autoload/everforest.vim`: black is `bg3` in dark and `fg` in light, white the
+  reverse, and bright slots repeat the normal ones as upstream does.
+- Catppuccin ANSI slots are palette v1.8.0's `ansiColors` normal/bright values.
+
+## Terminal palette
+
+The terminal paints every cell from one palette resolved with the appearance:
+default foreground/background are the canvas ink and canvas, the cursor is the
+focus accent, selection is the family's selection color laid opaquely over the
+canvas, and Find in Terminal highlights use the family's yellow (every match)
+and peach (the current match, drawn with canvas-colored text). Cells keep the
+program's color index, so the mapping is redone on every frame and a theme
+change recolors retained scrollback and prompts without new output.
 
 Extended indexed output (16–255) and explicit terminal truecolor retain the
 program's RGB values. Theme changes do not replace terminal sessions, alter

@@ -2413,41 +2413,8 @@ pub(super) fn body(s: &State, a: &Appearance, width: f32) -> El {
     let mut main = row().grow(1.0).min_w(0.0).h_full().min_h(0.0);
     if terminal {
         let mut pane = col().key("terminal-pane").h_full().min_h(0.0).min_w(0.0);
-        if s.search {
-            pane = pane.child(
-                row()
-                    .w_full()
-                    .px(12.0)
-                    .py(6.0)
-                    .gap(6.0)
-                    .fill(a.panel())
-                    .child(
-                        text_input(&s.query, ui_label())
-                            .key("search-query")
-                            .single_line()
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .h(29.0)
-                            .placeholder("Find in terminal…", a.muted())
-                            .color(a.ink())
-                            .border(1.0, a.kit().c.border_base)
-                            .radius(6.0)
-                            .caret(a.accent(), a.selection())
-                            .on_edit(|s: &mut State| &mut s.query)
-                            .on_submit(|s: &mut State, tx| {
-                                s.message = if s
-                                    .active()
-                                    .is_some_and(|session| session.find(&s.query.text))
-                                {
-                                    "Match found".into()
-                                } else {
-                                    "No match in retained scrollback".into()
-                                };
-                                tx.blur();
-                            }),
-                    )
-                    .child(button(a, "close-search", "×", |s, _| s.search = false)),
-            );
+        if s.terminal_search.open {
+            pane = pane.child(terminal_search::bar(s, a));
         }
         pane = pane.child(
             col()
