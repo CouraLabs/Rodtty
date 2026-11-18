@@ -190,6 +190,8 @@ struct Look {
     separator: Color,
     /// The advance of a mono column.
     adv: f32,
+    /// The `+`/`−` column beside the line numbers: one mono column with room either side.
+    sign_w: f32,
     bg: Color,
     text: Color,
     muted: Color,
@@ -245,6 +247,7 @@ impl Look {
             separator_text: TextStyle { size: font.size, line_height: GAP_H, ..k.ty.ui },
             separator: tint(bg, if dark { c.white } else { Color::BLACK }, if dark { 0.05 } else { 0.02 }),
             adv: 0.6 * font.size,
+            sign_w: (0.6 * font.size + 8.0).ceil(),
             bg,
             text: c.text_base,
             muted: c.text_muted,
@@ -340,7 +343,7 @@ impl<S: 'static> View<S> {
     fn content_width(&self, st: &DiffState) -> f32 {
         let l = &self.look;
         let digits = (0..st.files().len()).map(|f| st.digits(f)).max().unwrap_or(3);
-        BAR + 2.0 * l.number_w(digits) + st.columns() as f32 * l.adv + CODE_PAD.0 + CODE_PAD.1
+        BAR + 2.0 * l.number_w(digits) + l.sign_w + st.columns() as f32 * l.adv + CODE_PAD.0 + CODE_PAD.1
     }
 
     /// The most a full-width part of a row (a header, an annotation) spans: the viewport, not
@@ -474,7 +477,8 @@ impl<S: 'static> View<S> {
             .fill(l.gutter_fill(c.kind, selected))
             .child(self.bar(c.kind))
             .child(self.number(st, i, f, c.old, Side::Old, c.kind, selected, digits).key("no"))
-            .child(self.number(st, i, f, c.new, Side::New, c.kind, selected, digits).key("nn"));
+            .child(self.number(st, i, f, c.new, Side::New, c.kind, selected, digits).key("nn"))
+            .child(self.sign(c.kind, selected, false));
         if self.d.on_comment.is_some() {
             let at = c.new.map(|n| LineRef::new(Side::New, n)).or(c.old.map(|n| LineRef::new(Side::Old, n)));
             if let Some(at) = at {
@@ -525,6 +529,7 @@ impl<S: 'static> View<S> {
                 .label(cell.label())
                 .child(self.bar(kind))
                 .child(self.number(st, i, f, n, side, kind, selected, digits).key("n"))
+                .child(self.sign(kind, selected, true))
                 .child(self.code(st, f, &cell, copy, side, &st.keys[i]).key("code"));
             if let (Some(n), true) = (n, self.d.on_comment.is_some()) {
                 h = h.child(self.plus(f, LineRef::new(side, n)).absolute(BAR + l.number_w(digits) - 10.0, 2.0));
@@ -541,6 +546,24 @@ impl<S: 'static> View<S> {
                 line.child(half(Side::Old, old)).child(divider).child(half(Side::New, new))
             }
         }
+    }
+
+    /// The `+` or `−` (U+2212) beside an added or removed line's numbers, so a line's change
+    /// reads without its colour; an unchanged line keeps the column empty. Hidden from
+    /// assistive technology, whose row label already says "added" or "removed".
+    fn sign(&self, kind: LineKind, selected: bool, fill: bool) -> El {
+        let l = &self.look;
+        let mut c = row().key("sign").w(l.sign_w).min_h(LINE_H).self_stretch().justify_center().items_start().a11y_hidden();
+        if fill {
+            c = c.fill(l.gutter_fill(kind, selected));
+        }
+        let mark = match kind {
+            LineKind::Added => "+",
+            LineKind::Removed => "\u{2212}",
+            LineKind::Context => return c,
+        };
+        let color = if selected { l.text } else { l.tints(kind).map_or(l.text, |t| t.count) };
+        c.child(text(mark).font(l.font).color(color))
     }
 
     fn bar(&self, kind: LineKind) -> El {
@@ -662,7 +685,7 @@ impl<S: 'static> View<S> {
 
     fn gutter_w(&self, st: &DiffState, f: usize) -> f32 {
         let n = self.look.number_w(st.digits(f));
-        BAR + if st.mode() == DiffMode::Unified { 2.0 * n } else { n }
+        BAR + self.look.sign_w + if st.mode() == DiffMode::Unified { 2.0 * n } else { n }
     }
 
     /// The unchanged lines between two hunks, folded: buttons to show more, and the next

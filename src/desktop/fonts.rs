@@ -192,6 +192,65 @@ mod tests {
         frame(rt);
     }
     #[test]
+    fn font_family_reset_stays_inside_the_pane_and_wraps_below_a_narrow_picker() {
+        let _families = rune::text::with_families("Geist", "Geist Mono");
+        // A 640 pt window (the minimum) shows the editor pane alone; a wide
+        // window with a narrow editor share squeezes the Settings pane.
+        for (size, share, wraps) in [((640.0, 600.0), 0.5, false), ((1200.0, 800.0), 0.24, true)] {
+            let root = crate::test_support::tempdir().unwrap();
+            let mut state = State::with_root(root.path().into());
+            state.workspace.layout.editor_share = share;
+            state.open_settings(&mut Tx::default());
+            state.settings_query.replace_text("font family");
+            let mut rt = Runtime::with_text(
+                state,
+                view,
+                size,
+                Env {
+                    system_dark: true,
+                    scale: 1.0,
+                },
+                rune::text::TextSystem::new(BUNDLED, ("Geist", "Geist Mono")),
+            );
+            frame(&mut rt);
+            rt.settle_all();
+            frame(&mut rt);
+            let element = |key: &str| {
+                rt.elements()
+                    .into_iter()
+                    .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                    .unwrap_or_else(|| panic!("missing {key}"))
+            };
+            let section = element("settings-section-Appearance").rect;
+            for key in ["ui", "terminal"] {
+                let picker = element(&format!("font-{key}-trigger"));
+                let reset = element(&format!("reset-{key}-font-family"));
+                let right = |r: [f32; 4]| r[0] + r[2];
+                for (what, e) in [("picker", &picker), ("Reset", &reset)] {
+                    assert!(
+                        right(e.rect) <= right(section) + 0.5 && e.rect[0] >= section[0] - 0.5,
+                        "{size:?} {key} {what} stays inside its section: {:?} in {section:?}",
+                        e.rect
+                    );
+                    assert!(
+                        (e.visible[2] - e.rect[2]).abs() < 0.5,
+                        "{size:?} {key} {what} is not clipped: {:?}",
+                        e.visible
+                    );
+                }
+                let below = reset.rect[1] >= picker.rect[1] + picker.rect[3] - 0.5;
+                assert_eq!(below, wraps, "{size:?} {key} Reset wraps below the picker");
+                if !wraps {
+                    assert!(
+                        reset.rect[0] > right(picker.rect),
+                        "Reset follows the picker"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn owner_searches_and_selects_ui_and_monospace_terminal_families() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
         let root = crate::test_support::tempdir().unwrap();
@@ -782,6 +841,8 @@ fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> 
             "UI font family",
         )
     };
+    // Return opens the picker's trigger as Space and the arrows do.
+    super::pressable(&format!("{key}-value-trigger"));
     rune_kit::Combobox::new(key, state, &options, move |s: &mut State| {
         s.theme_family_picker.close();
         if terminal {
@@ -829,26 +890,45 @@ pub(super) fn selectors(s: &State, a: &Appearance) -> El {
                 .color(a.ink()),
             )
             .child(
+                // Reset follows the picker on its line while both fit and
+                // wraps below it in a narrower pane, never clipped or
+                // scrolled out of view; a picker wider than the pane shrinks.
                 row()
+                    .key(format!("font-{key}-row"))
+                    .w_full()
                     .gap(6.0)
-                    .scroll_x()
-                    .child(dropdown(s, a, terminal, &mut Vec::new()))
-                    .child(button(
-                        a,
-                        format!("reset-{key}-font-family"),
-                        "Reset",
-                        move |s, tx| {
-                            s.save_config(|c| {
-                                if terminal {
-                                    c.fonts.terminal_family = "Geist Mono".into();
-                                } else {
-                                    c.fonts.ui_family = "Geist".into();
-                                }
-                            });
-                            let (sans, mono) = s.font_families();
-                            tx.set_font_families(sans, mono);
-                        },
-                    )),
+                    .flex_wrap()
+                    .center_y()
+                    .child(
+                        dropdown(s, a, terminal, &mut Vec::new())
+                            .shrink()
+                            .min_w(0.0),
+                    )
+                    .child({
+                        let name = if terminal {
+                            "Reset terminal font family"
+                        } else {
+                            "Reset UI font family"
+                        };
+                        button(
+                            a,
+                            format!("reset-{key}-font-family"),
+                            "Reset",
+                            move |s, tx| {
+                                s.save_config(|c| {
+                                    if terminal {
+                                        c.fonts.terminal_family = "Geist Mono".into();
+                                    } else {
+                                        c.fonts.ui_family = "Geist".into();
+                                    }
+                                });
+                                let (sans, mono) = s.font_families();
+                                tx.set_font_families(sans, mono);
+                            },
+                        )
+                        .label(name)
+                        .help(name)
+                    }),
             )
             .child(
                 text("Aa Bb 0123456789 · Wi il {} =>")

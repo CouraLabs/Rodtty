@@ -10,6 +10,8 @@ use rune::{
     row, text, text_input,
 };
 use std::{path::PathBuf, sync::Arc};
+#[cfg(test)]
+mod accessibility;
 mod actions;
 mod appearance;
 mod autosave;
@@ -402,10 +404,120 @@ impl State {
     }
 }
 
+thread_local! {
+    /// Keys of the app's buttons, tabs and menu items, which Return presses
+    /// as Space does. Rune follows AppKit, where Return goes on to the
+    /// window's `on_key` rather than pressing the focused button; text
+    /// fields never register, so Return keeps submitting them.
+    static PRESSABLE: std::cell::RefCell<std::collections::HashSet<String>> =
+        Default::default();
+}
+
+/// Let Return press the control keyed `key` while it has keyboard focus.
+fn pressable(key: &str) {
+    PRESSABLE.with(|keys| {
+        if !keys.borrow().contains(key) {
+            keys.borrow_mut().insert(key.to_owned());
+        }
+    });
+}
+
+fn presses_on_return(key: &str) -> bool {
+    PRESSABLE.with(|keys| keys.borrow().contains(key))
+}
+
+/// An on/off control's state, for assistive technology (`checked`) and for
+/// sight: an active control is tinted and outlined in the accent color, a
+/// 1.5 pt ring that reads at 3:1 or more against the fills around it in
+/// every appearance, so its state never rests on a subtle fill alone. An
+/// inactive one keeps a clear ring of the same width, so toggling never
+/// shifts its content.
+trait ToggleState {
+    fn toggle_state(self, a: &Appearance, on: bool) -> Self;
+}
+impl ToggleState for El {
+    fn toggle_state(self, a: &Appearance, on: bool) -> Self {
+        self.checked(on)
+            .fill(if on {
+                a.active_fill()
+            } else {
+                Color::TRANSPARENT
+            })
+            .border(
+                TOGGLE_RING,
+                if on { a.accent() } else { Color::TRANSPARENT },
+            )
+    }
+}
+
+/// The width of an active toggle's accent ring, in points.
+const TOGGLE_RING: f32 = 1.5;
+
 fn button(
     a: &Appearance,
     key: impl Into<String>,
     label: impl Into<String>,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    button_with(a, key, label, false, action)
+}
+
+/// A button whose visible text marks its state for sight (`● Classic`,
+/// `History: on`, `✓ cat`) while assistive technology hears `name`, `role`
+/// (`radio`, `switch` or `checkbox`) and whether it is on, not the marks.
+fn state_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    shown: impl Into<String>,
+    role: &'static str,
+    name: impl Into<String>,
+    on: bool,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let name = name.into();
+    button_with(a, key, shown, true, action)
+        .role(role)
+        .label(name.clone())
+        .help(name)
+        .checked(on)
+}
+
+/// A choice among a set (`role: radio`), shown with a filled or hollow dot.
+fn radio_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    name: &str,
+    on: bool,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let shown = format!("{} {name}", if on { "●" } else { "○" });
+    state_button(a, key, shown, "radio", name, on, action)
+}
+
+/// An on/off preference (`role: switch`), shown as `name: on` or `name: off`.
+fn switch_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    name: &str,
+    on: bool,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let shown = format!("{name}: {}", if on { "on" } else { "off" });
+    state_button(a, key, shown, "switch", name, on, action)
+}
+
+/// A control set's container for assistive technology: a `radiogroup`
+/// named by its visible heading. It draws nothing and lays its choices out
+/// as `gap` apart.
+fn radio_group(name: &str, gap: f32) -> El {
+    col().role("radiogroup").label(name).w_full().gap(gap)
+}
+
+fn button_with(
+    a: &Appearance,
+    key: impl Into<String>,
+    label: impl Into<String>,
+    hide_text: bool,
     action: impl Fn(&mut State, &mut Tx) + 'static,
 ) -> El {
     let label = label.into();
@@ -418,11 +530,13 @@ fn button(
         "explorer-refresh" => "Refresh files",
         "settings-close" => "Close Settings tab",
         "find-close" => "Close editor search",
+        "close-search" => "Close terminal search",
         "diff-prev" => "Previous change",
         "diff-next" => "Next change",
         _ if key.starts_with("editor-close-") => "Close editor tab",
         _ => &label,
     };
+    pressable(&key);
     el().key(key)
         .label(help)
         .help(help)
@@ -439,13 +553,14 @@ fn button(
             tx.blur();
             action(state, tx);
         })
-        .child(
-            text(label)
+        .child({
+            let text = text(label)
                 .font(ui_label())
                 .color(a.ink())
                 .min_w(0.0)
-                .truncate(),
-        )
+                .truncate();
+            if hide_text { text.a11y_hidden() } else { text }
+        })
 }
 
 fn icon_button(
@@ -457,6 +572,7 @@ fn icon_button(
 ) -> El {
     let key = key.into();
     let tooltip = tooltip.into();
+    pressable(&key);
     el().key(key)
         .label(tooltip.clone())
         .help(tooltip)
@@ -520,10 +636,13 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
     // to shrink below them so a crowded strip scrolls inside the header.
     let mut list = row()
         .key("terminal-tabs")
+        .role("tablist")
+        .label("Terminal tabs")
         .shrink()
         .scroll_x()
         .gap(4.0)
         .center_y();
+    let count = state.sessions.len();
     for (i, session) in state.sessions.iter().enumerate() {
         let label = session.tab_title();
         // The label names the program; the tooltip says where it runs.
@@ -533,18 +652,21 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
         list = list.child(
             row()
                 .key(format!("terminal-group-{id}"))
+                // The pill only groups its tab and close button for sight;
+                // the tab list holds the tabs themselves.
+                .role("none")
                 .gap(0.0)
                 .center_y()
                 .radius(6.0)
                 .fill(if selected { a.hover_bg() } else { a.panel() })
                 .hover(a.hover_bg())
                 .no_window_drag()
+                .children(selected.then(|| tab_indicator(a)))
                 // The pill only draws; the label below carries the activation,
                 // because interactive()'s drag and middle handlers make the label
                 // its own press target and would otherwise swallow the press.
                 .child(tabs::interactive(
-                    tab_label(a, &label, selected)
-                        .key(format!("tab-{i}"))
+                    terminal_tab(a, i, count, &label, selected)
                         .help(location)
                         .on_press_tx(move |s: &mut State, tx| {
                             tx.blur();
@@ -560,6 +682,13 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
                         "End terminal session",
                         move |s, tx| s.dispatch(AppAction::CloseTerminal(id), tx),
                     )
+                    // Each close button names the tab it ends, since every
+                    // tab has one and a reader meets them out of the strip.
+                    .label(format!(
+                        "End terminal session: {label} (tab {} of {count})",
+                        i + 1
+                    ))
+                    .description("")
                     .w(22.0)
                     .min_h(22.0)
                     .fill(if selected { a.hover_bg() } else { a.panel() }),
@@ -588,6 +717,33 @@ fn terminal_tabs(state: &State, a: &Appearance) -> El {
             |s, tx| s.dispatch(AppAction::NewTerminal, tx),
         ));
     tabs
+}
+
+/// A terminal tab within the strip's tab list: a focusable `tab` that
+/// reports whether it is the active session's and where it sits among the
+/// tabs, and that Return, Space or an assistive press activates.
+fn terminal_tab(a: &Appearance, i: usize, count: usize, label: &str, selected: bool) -> El {
+    let key = format!("tab-{i}");
+    pressable(&key);
+    tab_label(a, label, selected)
+        .key(key)
+        .role("tab")
+        .label(label)
+        .focusable(true)
+        .focus_selected(selected)
+        .position_in_set(i + 1, count)
+        .focus_ring(2.0, 1.0, a.accent())
+        .radius(6.0)
+        .no_window_drag()
+}
+
+/// The active tab's accent bar along its pill's lower edge: the tab's
+/// selection mark beyond its fill, at 3:1 or more against the tab fills.
+fn tab_indicator(a: &Appearance) -> El {
+    el().pin(Some(8.0), None, Some(8.0), Some(0.0))
+        .h(2.0)
+        .radius(1.0)
+        .fill(a.accent())
 }
 
 /// A tab's label: the text, tinted for whether the tab is the active one and
@@ -717,11 +873,8 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                         ),
                         |s, tx| s.dispatch(AppAction::ToggleExplorer, tx),
                     )
-                    .fill(if show_explorer {
-                        a.hover_bg()
-                    } else {
-                        a.panel()
-                    }),
+                    .label("File explorer")
+                    .toggle_state(a, show_explorer),
                 )
                 .child(
                     icon_button(
@@ -743,11 +896,8 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                             }
                         },
                     )
-                    .fill(if show_terminal {
-                        a.hover_bg()
-                    } else {
-                        a.panel()
-                    }),
+                    .label("Terminal pane")
+                    .toggle_state(a, show_terminal),
                 )
                 .child(
                     icon_button(
@@ -763,7 +913,8 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                         },
                         |s, tx| s.dispatch(AppAction::ToggleEditor, tx),
                     )
-                    .fill(if show_editor { a.hover_bg() } else { a.panel() }),
+                    .label("Editor pane")
+                    .toggle_state(a, show_editor),
                 )
                 .child(icon_button(
                     a,
@@ -837,9 +988,17 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
             ),
     );
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
-        let title = match state.pending {
-            Some(Pending::Quit) => "Quit Rodtty and end all sessions?",
-            _ => "End this terminal session?",
+        let (title, message, confirm) = match state.pending {
+            Some(Pending::Quit) => (
+                "Quit Rodtty and end all sessions?",
+                "Running commands in these sessions will stop.",
+                "End sessions",
+            ),
+            _ => (
+                "End this terminal session?",
+                "Running commands in this session will stop.",
+                "End session",
+            ),
         };
         root = root.child(
             el().absolute(0.0, 0.0)
@@ -850,6 +1009,9 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 .child(
                     col()
                         .key("confirmation")
+                        .role("alertdialog")
+                        .label(title)
+                        .description(message)
                         .modal(false, |s: &mut State| s.pending = None)
                         .w(410.0)
                         .px(24.0)
@@ -858,16 +1020,12 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                         .radius(10.0)
                         .fill(a.panel())
                         .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
-                        .child(
-                            text("Running commands in these sessions will stop.")
-                                .font(ui_label())
-                                .color(a.muted()),
-                        )
+                        .child(text(message).font(ui_label()).color(a.muted()).wrap())
                         .child(
                             row()
                                 .gap(8.0)
                                 .child(button(a, "cancel", "Cancel", |s, _| s.pending = None))
-                                .child(button(a, "confirm", "End sessions", |s, tx| s.confirm(tx))),
+                                .child(button(a, "confirm", confirm, |s, tx| s.confirm(tx))),
                         ),
                 ),
         );
@@ -882,6 +1040,8 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 .child(
                     col()
                         .key("window-close-choice")
+                        .label("Close Rodtty window?")
+                        .description("Keep terminal sessions running or quit Rodtty and end them.")
                         .modal(false, |s: &mut State| s.pending = None)
                         .w(410.0)
                         .px(24.0)
@@ -1006,6 +1166,21 @@ fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return state.record_shortcut(event, tx);
     }
     if state.terminal_context_open || state.tab_strips.context_open {
+        return true;
+    }
+    // Return presses the focused button, tab or menu item as Space does. The
+    // workspace menu dispatches its own items on Return.
+    if event.key == Key::Enter
+        && event.mods == rune::Mods::default()
+        && !state.workspace_menu
+        && tx.focused().is_some_and(presses_on_return)
+    {
+        if !tx.key_repeat() {
+            tx.send_key(KeyEvent {
+                key: Key::Text(" ".into()),
+                mods: Default::default(),
+            });
+        }
         return true;
     }
     if state.removal_background_busy() {

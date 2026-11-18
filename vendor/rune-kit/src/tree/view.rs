@@ -116,6 +116,9 @@ impl TreeItem {
         if r.cursor && r.multi {
             e = e.outline(1.0, -1.0, c.border_focus);
         }
+        if let Some(mark) = style.selected_mark.filter(|_| r.selected) {
+            e = e.child(el().key("selected-mark").pin(Some(0.0), Some(5.0), None, Some(5.0)).w(2.0).radius(1.0).fill(mark).a11y_hidden());
+        }
         if style.guides {
             for level in 0..r.depth {
                 let x = pad + level as f32 * style.indent + chevron_w * 0.5 - 0.5;
@@ -209,6 +212,9 @@ pub struct TreeStyle {
     pub guides: bool,
     pub guide: Color,
     pub selected: Color,
+    /// A bar along a selected row's leading edge in this colour, so selection reads beyond
+    /// the fill's quiet change (none by default).
+    pub selected_mark: Option<Color>,
     hover: Color,
     gap: f32,
     radius: f32,
@@ -233,6 +239,7 @@ impl TreeStyle {
             guides: true,
             guide: k.c.border_muted,
             selected: k.alpha(k.c.text_accent, if k.dark { 0.24 } else { 0.2 }),
+            selected_mark: None,
             hover: k.c.hover,
             gap: 4.0,
             radius: k.radius.sm,

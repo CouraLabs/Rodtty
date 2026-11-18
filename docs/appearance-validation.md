@@ -84,3 +84,67 @@ RGBs for five families. They do not individually assert every token and every
 ANSI slot. The eighteen-appearance selection/diff/contact-sheet review supplies
 the broader visual evidence; the merger does not claim new native hardware
 coverage or recapture the earlier 180 frames.
+
+## Contrast floor (automated)
+
+`desktop::appearance::tests::key_role_pairs_meet_wcag_contrast_in_every_appearance`
+checks every family in light and dark (24 appearances, Solarized Light
+included) against WCAG 2.x ratios: 4.5:1 for text and 3:1 for essential
+non-text indicators. Ratios use Rune's linear channels directly. The pairs are
+listed in `appearance::contrast_pairs`. The lowest ratio across all appearances
+for each pair at the time of writing:
+
+| Pair | Minimum | Lowest | Appearance |
+| --- | --- | --- | --- |
+| ink on canvas | 4.5:1 | 5.26:1 | Everforest Light |
+| ink on panel | 4.5:1 | 4.68:1 | Solarized Light |
+| ink on tab fill / hover | 4.5:1 | 4.73:1 | Everforest Light |
+| ink on active toggle (panel) | 4.5:1 | 4.52:1 | Solarized Light |
+| ink on active toggle (canvas) | 4.5:1 | 4.54:1 | Everforest |
+| muted on canvas | 4.5:1 | 4.93:1 | Rosé Pine Dawn |
+| muted on panel | 4.5:1 | 4.51:1 | Solarized Light |
+| muted on tab fill / hover | 4.5:1 | 4.50:1 | Catppuccin Latte |
+| accent text on panel | 4.5:1 | 4.51:1 | Solarized Light |
+| danger text on panel | 4.5:1 | 4.81:1 | Gruvbox Dark (medium) |
+| diff `+` on added gutter | 4.5:1 | 4.50:1 | Everforest |
+| diff `−` on removed gutter | 4.5:1 | 4.51:1 | One Dark Pro Dark |
+| ink on added / removed line | 4.5:1 | 4.63:1 | Everforest Light |
+| focus ring on canvas / panel / tab fill | 3:1 | 4.50:1 | Ayu Light |
+| active toggle ring on its tint | 3:1 | 3.00:1 | Gruvbox Dark (medium) |
+| active tab bar, selected explorer row bar | 3:1 | 4.50:1 | Ayu Light |
+
+Before this change, the known failures included inactive editor tab text on
+tab fills (Catppuccin Latte 4.26:1, Gruvbox Dark 3.79:1), and Solarized ink
+itself at 3.64:1 and 3.80:1 on the tab fills. The diff signs and the active
+toggle's tint also failed in several families.
+
+The fixes change only derived colors in `Appearance::resolve`. The bundled
+palette data is unchanged.
+
+- Ink moves toward black (light) or white (dark) until it reads 4.5:1 on the
+  canvas, panel, raised tab/hover fill, and both diff line tints.
+- Muted, faint and accent move toward that ink until they read 4.5:1 on the
+  canvas, panel and raised fill.
+- Success and danger text (dialog errors, diff counts, the diff `+`/`−`) also
+  clear 4.5:1 on their own diff gutter tint.
+- The active-toggle tint starts at 18% accent and steps down until the icon
+  reads 4.5:1 and the 1.5 pt accent ring reads 3:1 over both the panel and
+  the canvas.
+
+The terminal's ANSI table and the syntax hues (beyond the existing
+canvas-readability adjustment) are not changed by this pass.
+
+State indicators beyond fill:
+
+- An active toolbar toggle has a 1.5 pt accent ring. This covers the header
+  Files/Terminal/Editor buttons, the explorer Follow/Hidden/Ignore controls,
+  the editor Edit/Preview and compare modes, and the diff Auto/Inline/Split
+  layouts.
+- Active terminal and editor tabs have a 2 pt accent bar.
+- The selected explorer row has a 2 pt accent bar on its leading edge.
+- Diff rows carry permanent `+` and `−` (U+2212) signs.
+
+These marks needed two vendored Rune Kit edits:
+
+- `diff/view.rs` adds the sign column.
+- `tree/view.rs` adds `TreeStyle::selected_mark`.

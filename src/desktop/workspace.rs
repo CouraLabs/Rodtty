@@ -1869,15 +1869,19 @@ impl RootControl {
             Self::Ignore => Some(s.config.explorer.respect_ignore),
         }
     }
-    /// The accessible name and tooltip, naming a toggle's state.
-    fn help(self, s: &State) -> String {
-        let name = match self {
+    /// The accessible name; a toggle reports its state separately.
+    pub(super) fn name(self) -> &'static str {
+        match self {
             Self::Search => "Search files",
             Self::Refresh => "Refresh files",
             Self::Follow => "Follow terminal",
             Self::Hidden => "Show hidden files",
             Self::Ignore => "Respect Git ignore rules",
-        };
+        }
+    }
+    /// The tooltip, naming a toggle's state for sight.
+    fn help(self, s: &State) -> String {
+        let name = self.name();
         match self.active(s) {
             Some(true) => format!("{name}: on"),
             Some(false) => format!("{name}: off"),
@@ -1976,9 +1980,10 @@ fn root_controls(s: &State, a: &Appearance, width: f32, row_height: f32) -> El {
                 control.glyph(),
                 control.help(s),
                 control.action(),
-            );
-            if control.active(s) == Some(true) {
-                button = button.fill(a.accent().alpha(0.18));
+            )
+            .label(control.name());
+            if let Some(on) = control.active(s) {
+                button = button.toggle_state(a, on);
             }
             controls = controls.child(button);
         }
@@ -2002,6 +2007,7 @@ fn root_controls(s: &State, a: &Appearance, width: f32, row_height: f32) -> El {
                 },
             )
             .min_h(row_height)
+            .expanded(s.workspace.explorer_menu)
             .fill(if s.workspace.explorer_menu {
                 a.hover_bg()
             } else {
@@ -2023,6 +2029,8 @@ pub(super) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
     };
     let mut menu = col()
         .key("explorer-menu")
+        .role("menu")
+        .label("Explorer actions")
         .w(240.0)
         .px(6.0)
         .py(6.0)
@@ -2036,10 +2044,16 @@ pub(super) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
     for control in RootControl::ALL {
         let help = control.help(s);
         let action = control.action();
+        let key = control.key().replace("explorer-", "explorer-menu-");
+        super::pressable(&key);
         let mut item = row()
-            .key(control.key().replace("explorer-", "explorer-menu-"))
-            .role("menuitem")
-            .label(help.clone())
+            .key(key)
+            .role(if control.active(s).is_some() {
+                "menuitemcheckbox"
+            } else {
+                "menuitem"
+            })
+            .label(control.name())
             .help(help)
             .focusable(true)
             .focus_ring(2.0, 1.0, a.accent())
@@ -2065,9 +2079,11 @@ pub(super) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
                     .truncate(),
             );
         if let Some(on) = control.active(s) {
-            item = item.child(
+            item = item.checked(on).child(
                 text(if on { "On" } else { "Off" })
                     .key("state")
+                    // The item's checked state says this to assistive technology.
+                    .a11y_hidden()
                     .font(ui_label())
                     .color(if on { a.accent() } else { a.muted() }),
             );
@@ -2135,6 +2151,9 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
         .radius(6.0);
     tree_style.row_height = 28.0_f32.max(ui_label().size * 1.5 + 6.0);
     tree_style.selected = a.hover_bg();
+    // The fill alone changes too little to mark the selected row: an accent
+    // bar along its leading edge reads at 3:1 or more in every appearance.
+    tree_style.selected_mark = Some(a.accent());
     // The root row's controls rest hidden and appear while the row is hovered
     // or holds keyboard focus (the row's hover track lights for both). A
     // selected row draws a fill instead of a hover track, so there they show.
@@ -2264,6 +2283,8 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         .on_layout(|s: &mut State, r| s.workspace.editor_width = r[2]);
     let mut tabs = row()
         .key("editor-tabs")
+        .role("tablist")
+        .label("Editor tabs")
         .h(38.0_f32.max(ui_label().size * 1.5 + 16.0))
         .px(6.0)
         .gap(3.0)
@@ -2321,6 +2342,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         tab_items.push(
             row()
                 .key(format!("editor-group-{id}"))
+                .role("none")
                 .gap(0.0)
                 .center_y()
                 .radius(6.0)
@@ -2330,58 +2352,64 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     a.panel()
                 })
                 .hover(a.hover_bg())
+                .children((i == workspace.active && !s.settings).then(|| super::tab_indicator(a)))
                 .child(super::tabs::interactive(
-                    el().key(format!("editor-tab-{id}"))
-                        .role("button")
-                        .label(name.clone())
-                        .help(tab.document.path.to_string_lossy())
-                        .description(if tab.preview {
-                            format!("{PREVIEW_TAB_DESCRIPTION}. {}", tab.document.path.display())
-                        } else {
-                            tab.document.path.to_string_lossy().into_owned()
-                        })
-                        .focusable(true)
-                        .focus_ring(2.0, 1.0, a.accent())
-                        .max_w(190.0)
-                        .h(29.0)
-                        .center()
-                        .px(8.0)
-                        .gap(6.0)
-                        .on_press_tx(move |s: &mut State, tx| {
-                            tx.blur();
-                            s.dispatch(AppAction::ActivateEditor(i), tx);
-                        })
-                        .on_double_press(move |s: &mut State| {
-                            if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
-                                tab.preview = false;
-                            }
-                        })
-                        .child(
-                            rune::icon(
-                                file_icons::resolve(&tab.document.path, false, false, a.dark),
-                                16.0,
-                            )
-                            .color(a.muted())
-                            .key(format!("editor-file-icon-{id}")),
+                    el().key({
+                        let key = format!("editor-tab-{id}");
+                        super::pressable(&key);
+                        key
+                    })
+                    .role("tab")
+                    .focus_selected(i == workspace.active && !s.settings)
+                    .label(name.clone())
+                    .help(tab.document.path.to_string_lossy())
+                    .description(if tab.preview {
+                        format!("{PREVIEW_TAB_DESCRIPTION}. {}", tab.document.path.display())
+                    } else {
+                        tab.document.path.to_string_lossy().into_owned()
+                    })
+                    .focusable(true)
+                    .focus_ring(2.0, 1.0, a.accent())
+                    .max_w(190.0)
+                    .h(29.0)
+                    .center()
+                    .px(8.0)
+                    .gap(6.0)
+                    .on_press_tx(move |s: &mut State, tx| {
+                        tx.blur();
+                        s.dispatch(AppAction::ActivateEditor(i), tx);
+                    })
+                    .on_double_press(move |s: &mut State| {
+                        if let Some(tab) = s.workspace.tabs.iter_mut().find(|t| t.id == id) {
+                            tab.preview = false;
+                        }
+                    })
+                    .child(
+                        rune::icon(
+                            file_icons::resolve(&tab.document.path, false, false, a.dark),
+                            16.0,
                         )
-                        .child(
-                            text(name.clone())
-                                .key(format!("editor-title-{id}"))
-                                .font(tab_title_font(tab.preview))
-                                .color(match (tab.preview, i == workspace.active) {
-                                    (true, selected) => a.temporary_tab_ink(selected),
-                                    (false, true) => a.ink(),
-                                    (false, false) => a.muted(),
-                                })
-                                .max_w(120.0)
-                                .truncate(),
-                        )
-                        .children(tab.dirty().then(|| {
-                            text("•")
-                                .key(format!("editor-dirty-{id}"))
-                                .font(ui_label())
-                                .color(a.accent())
-                        })),
+                        .color(a.muted())
+                        .key(format!("editor-file-icon-{id}")),
+                    )
+                    .child(
+                        text(name.clone())
+                            .key(format!("editor-title-{id}"))
+                            .font(tab_title_font(tab.preview))
+                            .color(match (tab.preview, i == workspace.active) {
+                                (true, selected) => a.temporary_tab_ink(selected),
+                                (false, true) => a.ink(),
+                                (false, false) => a.muted(),
+                            })
+                            .max_w(120.0)
+                            .truncate(),
+                    )
+                    .children(tab.dirty().then(|| {
+                        text("•")
+                            .key(format!("editor-dirty-{id}"))
+                            .font(ui_label())
+                            .color(a.accent())
+                    })),
                     super::tabs::Target::Editor(id),
                 ))
                 .child(
@@ -2404,31 +2432,37 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             s.tab_strips.settings_position.min(tab_items.len()),
             row()
                 .key("settings-group")
+                .role("none")
                 .gap(0.0)
                 .center_y()
                 .radius(6.0)
                 .fill(if s.settings { a.hover_bg() } else { a.panel() })
                 .hover(a.hover_bg())
+                .children(s.settings.then(|| super::tab_indicator(a)))
                 .child(super::tabs::interactive(
-                    el().key("settings-tab")
-                        .role("button")
-                        .label("Settings")
-                        .help("Settings")
-                        .focusable(true)
-                        .focus_ring(2.0, 1.0, a.accent())
-                        .h(29.0)
-                        .center()
-                        .px(8.0)
-                        .on_press_tx(|s: &mut State, tx| {
-                            tx.blur();
-                            s.dispatch(AppAction::Settings, tx);
-                        })
-                        .child(
-                            text("Settings")
-                                .font(ui_label())
-                                .color(if s.settings { a.ink() } else { a.muted() })
-                                .truncate(),
-                        ),
+                    el().key({
+                        super::pressable("settings-tab");
+                        "settings-tab"
+                    })
+                    .role("tab")
+                    .focus_selected(s.settings)
+                    .label("Settings")
+                    .help("Settings")
+                    .focusable(true)
+                    .focus_ring(2.0, 1.0, a.accent())
+                    .h(29.0)
+                    .center()
+                    .px(8.0)
+                    .on_press_tx(|s: &mut State, tx| {
+                        tx.blur();
+                        s.dispatch(AppAction::Settings, tx);
+                    })
+                    .child(
+                        text("Settings")
+                            .font(ui_label())
+                            .color(if s.settings { a.ink() } else { a.muted() })
+                            .truncate(),
+                    ),
                     super::tabs::Target::Settings,
                 ))
                 .child(
@@ -2469,11 +2503,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             "Edit",
             move |s: &mut State, tx| s.dispatch(AppAction::EditFile, tx),
         )
-        .fill(if tab.mode == View::Edit {
-            a.accent().alpha(0.18)
-        } else {
-            Color::TRANSPARENT
-        })
+        .toggle_state(a, tab.mode == View::Edit)
         .hover(a.hover_bg()),
     );
     if markdown {
@@ -2482,11 +2512,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 a,
                 "file-preview",
                 &rune_kit::glyphs::PREVIEW_TEXT,
-                if tab.mode == View::Preview {
-                    "Preview: on"
-                } else {
-                    "Preview"
-                },
+                "Preview",
                 move |s: &mut State, tx| {
                     if let Some(tab) = s.workspace.tabs.get_mut(s.workspace.active) {
                         tab.mode = if tab.mode == View::Preview {
@@ -2499,11 +2525,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                     tx.blur();
                 },
             )
-            .fill(if tab.mode == View::Preview {
-                a.accent().alpha(0.18)
-            } else {
-                Color::TRANSPARENT
-            })
+            .toggle_state(a, tab.mode == View::Preview)
             .hover(a.hover_bg()),
         );
     }
@@ -2524,11 +2546,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             icon_button(a, key, &rune_kit::glyphs::COMPARE, label, move |s, tx| {
                 s.dispatch(AppAction::Compare(mode), tx)
             })
-            .fill(if tab.mode == View::Diff(mode) {
-                a.accent().alpha(0.18)
-            } else {
-                Color::TRANSPARENT
-            })
+            .toggle_state(a, tab.mode == View::Diff(mode))
             .hover(a.hover_bg()),
         );
     }
@@ -2768,15 +2786,24 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .h(30.0)
                 .px(10.0)
                 .scroll_x()
-                .child(button(a, "diff-auto", "Auto", |s, _| {
-                    s.workspace.diff_layout = 0
-                }))
-                .child(button(a, "diff-inline", "Inline", |s, _| {
-                    s.workspace.diff_layout = 1
-                }))
-                .child(button(a, "diff-split", "Split", |s, _| {
-                    s.workspace.diff_layout = 2
-                }))
+                .children(
+                    [("auto", "Auto"), ("inline", "Inline"), ("split", "Split")]
+                        .into_iter()
+                        .zip(0u8..)
+                        .map(|((key, title), layout)| {
+                            // One of three layouts: a radio whose active
+                            // choice is outlined, not only tinted.
+                            let name = format!("{title} diff layout");
+                            button(a, format!("diff-{key}"), title, move |s, _| {
+                                s.workspace.diff_layout = layout
+                            })
+                            .role("radio")
+                            .label(name.clone())
+                            .help(name)
+                            .toggle_state(a, s.workspace.diff_layout == layout)
+                            .hover(a.hover_bg())
+                        }),
+                )
                 .child(icon_button(
                     a,
                     "diff-prev",
@@ -2995,6 +3022,11 @@ pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
         FilePrompt::Conflict { id, .. } => (*id, "File changed on disk"),
     };
     let tab = s.workspace.tabs.iter().find(|t| t.id == id)?;
+    let message = if matches!(prompt, FilePrompt::Conflict { .. }) {
+        "Saving would replace changes made outside this editor. Reload discards your editor changes."
+    } else {
+        "Choose Save, Discard, or Cancel to continue."
+    };
     let mut buttons = row()
         .gap(8.0)
         .child(button(a, "file-cancel", "Cancel", |s, _| {
@@ -3020,12 +3052,36 @@ pub(super) fn file_dialog(s: &State, a: &Appearance) -> Option<El> {
                 }));
         }
     }
-    Some(el().absolute(0.0,0.0).w_full().h_full().fill(a.scrim()).center()
-        .child(col().key("file-dialog").modal(false,|s:&mut State|s.cancel_file_action()).w(470.0).px(24.0).py(24.0).gap(16.0).radius(10.0).fill(a.panel())
-            .child(text(title).font(ui_style(17.0,600.0)).color(a.ink()))
-            .child(text(tab.document.path.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
-            .child(text(if matches!(prompt,FilePrompt::Conflict{..}){"Saving would replace changes made outside this editor. Reload discards your editor changes."}else{"Choose Save, Discard, or Cancel to continue."}).font(ui_label()).color(a.muted()).wrap())
-            .child(buttons)))
+    Some(
+        el().absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .fill(a.scrim())
+            .center()
+            .child(
+                col()
+                    .key("file-dialog")
+                    .role("alertdialog")
+                    .label(title)
+                    .description(format!("{} {message}", tab.document.path.display()))
+                    .modal(false, |s: &mut State| s.cancel_file_action())
+                    .w(470.0)
+                    .px(24.0)
+                    .py(24.0)
+                    .gap(16.0)
+                    .radius(10.0)
+                    .fill(a.panel())
+                    .child(text(title).font(ui_style(17.0, 600.0)).color(a.ink()))
+                    .child(
+                        text(tab.document.path.to_string_lossy())
+                            .font(ui_label())
+                            .color(a.muted())
+                            .wrap_anywhere(),
+                    )
+                    .child(text(message).font(ui_label()).color(a.muted()).wrap())
+                    .child(buttons),
+            ),
+    )
 }
 
 pub(super) fn demo(s: &mut State, diff: bool) {
@@ -6785,27 +6841,15 @@ mod tests {
                     "{name}"
                 );
             }
-            // The filter toggles are icon buttons that name their state.
-            for label in [
-                if show_all {
-                    "Show hidden files: on"
-                } else {
-                    "Show hidden files: off"
-                },
-                if show_all {
-                    "Respect Git ignore rules: off"
-                } else {
-                    "Respect Git ignore rules: on"
-                },
-            ] {
-                assert!(
-                    runtime
-                        .elements()
-                        .iter()
-                        .any(|e| e.label.as_deref() == Some(label)),
-                    "missing {label}"
-                );
-            }
+            // The filter toggles are icon buttons that report their state.
+            use super::super::accessibility::{checked, read};
+            assert_eq!(read(&runtime, "explorer-hidden").1, "Show hidden files");
+            assert_eq!(checked(&runtime, "explorer-hidden"), show_all);
+            assert_eq!(
+                read(&runtime, "explorer-ignore").1,
+                "Respect Git ignore rules"
+            );
+            assert_eq!(checked(&runtime, "explorer-ignore"), !show_all);
             for badge in ["MM", "??"] {
                 assert!(
                     runtime
@@ -7501,14 +7545,22 @@ mod tests {
             .into_iter()
             .find(|e| e.key.as_deref() == Some("explorer-hidden"))
             .unwrap();
-        assert_eq!(hidden.label.as_deref(), Some("Show hidden files: on"));
+        assert_eq!(hidden.label.as_deref(), Some("Show hidden files"));
+        assert!(super::super::accessibility::checked(
+            &runtime,
+            "explorer-hidden"
+        ));
         assert!(hidden.fill.a > 0.0, "an active toggle is filled");
         let follow = runtime
             .elements()
             .into_iter()
             .find(|e| e.key.as_deref() == Some("explorer-follow"))
             .unwrap();
-        assert_eq!(follow.label.as_deref(), Some("Follow terminal: off"));
+        assert_eq!(follow.label.as_deref(), Some("Follow terminal"));
+        assert!(!super::super::accessibility::checked(
+            &runtime,
+            "explorer-follow"
+        ));
         assert_eq!(follow.fill.a, 0.0);
     }
 
@@ -7553,14 +7605,17 @@ mod tests {
                 .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
                 .and_then(|e| e.label)
         };
+        use super::super::accessibility::checked;
         assert_eq!(
             label(&runtime, "explorer-menu-hidden").as_deref(),
-            Some("Show hidden files: off")
+            Some("Show hidden files")
         );
+        assert!(!checked(&runtime, "explorer-menu-hidden"));
         assert_eq!(
             label(&runtime, "explorer-menu-ignore").as_deref(),
-            Some("Respect Git ignore rules: on")
+            Some("Respect Git ignore rules")
         );
+        assert!(checked(&runtime, "explorer-menu-ignore"));
         assert_eq!(
             label(&runtime, "explorer-menu-refresh").as_deref(),
             Some("Refresh files")
@@ -7573,10 +7628,7 @@ mod tests {
         assert!(runtime.find("explorer-menu").is_none());
         click(&mut runtime, "explorer-more");
         settle(&mut runtime);
-        assert_eq!(
-            label(&runtime, "explorer-menu-hidden").as_deref(),
-            Some("Show hidden files: on")
-        );
+        assert!(checked(&runtime, "explorer-menu-hidden"));
         assert!(runtime.elements().iter().any(|e| {
             e.text.as_deref() == Some("On") && e.path.contains("explorer-menu-hidden")
         }));
@@ -8072,5 +8124,52 @@ mod tests {
             );
         }
         assert_eq!(runtime.state.workspace.tabs[0].edit.text, "overlay notes");
+    }
+
+    #[test]
+    fn diff_lines_carry_plus_and_minus_signs_beside_their_tints_in_both_layouts() {
+        use super::super::tests::runtime_for;
+        let root = crate::test_support::tempdir().unwrap();
+        let mut state = State::with_root(root.path().into());
+        demo(&mut state, true);
+        let mut runtime = runtime_for(state);
+        for layout in [1u8, 2] {
+            runtime.update(move |s, _| s.workspace.diff_layout = layout);
+            for _ in 0..30 {
+                runtime.frame(1.0 / 60.0);
+            }
+            let signs = |mark: &str| {
+                runtime
+                    .elements()
+                    .into_iter()
+                    .filter(|e| {
+                        !e.exiting && e.text.as_deref() == Some(mark) && e.path.contains("/sign")
+                    })
+                    .count()
+            };
+            // The sample changes one line and adds another.
+            assert_eq!(signs("+"), 2, "layout {layout}: added lines show +");
+            assert_eq!(
+                signs("\u{2212}"),
+                1,
+                "layout {layout}: removed lines show −"
+            );
+            assert_eq!(signs("-"), 0, "the removed sign is U+2212, not a hyphen");
+            // Assistive technology reads the change from the row's label.
+            let tree = runtime.accessibility_json().to_string();
+            assert!(tree.contains("added line"));
+            assert!(tree.contains("removed line"));
+            assert!(
+                !tree.contains("\"name\":\"\u{2212}\""),
+                "the sign stays out of the tree"
+            );
+        }
+        // The layout choices are radios whose active one is checked.
+        assert!(super::super::accessibility::checked(&runtime, "diff-split"));
+        assert!(!super::super::accessibility::checked(&runtime, "diff-auto"));
+        assert_eq!(
+            super::super::accessibility::read(&runtime, "diff-split").1,
+            "Split diff layout"
+        );
     }
 }

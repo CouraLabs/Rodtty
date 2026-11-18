@@ -301,6 +301,8 @@ pub(super) fn bar(s: &State, a: &Appearance) -> El {
         .child(
             text_input(&s.terminal_search.query, ui_label())
                 .key("search-query")
+                .role("searchbox")
+                .label("Find in terminal")
                 .single_line()
                 .grow(1.0)
                 .min_w(0.0)

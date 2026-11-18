@@ -342,7 +342,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 FileOperation::SaveAs { .. } => ("Save work as", "Save As"),
                 FileOperation::Move { .. } => ("Rename or move item", "Move"),
             };
-            content = content.child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
+            content = content
+                .label(title)
+                .child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()));
             if let FileOperation::Copy { source } | FileOperation::Move { source } = operation {
                 content = content.child(
                     text(format!("From {}", source.display()))
@@ -367,7 +369,14 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
             );
         }
         OperationPrompt::Collision(collision) => {
-            content = content.child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
+            content = content
+                .role("alertdialog")
+                .label("An item already exists")
+                .description(format!(
+                    "{}. Replace removes the existing item after the new item is ready. Keep Both uses a separate, available name.",
+                    collision.request.target.display()
+                ))
+                .child(text("An item already exists").font(ui_style(18.0,600.0)).color(a.ink()))
                 .child(text(collision.request.target.to_string_lossy()).font(ui_label()).color(a.muted()).wrap_anywhere())
                 .child(text("Replace removes the existing item after the new item is ready. Keep Both uses a separate, available name.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {

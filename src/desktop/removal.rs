@@ -402,6 +402,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
         }
     };
     content = content
+        .role("alertdialog")
+        .label(title)
+        .description(format!("{path}. {description}"))
         .child(text(title).font(ui_style(18.0, 600.0)).color(a.ink()))
         .child(text(path).font(ui_label()).color(a.muted()).wrap_anywhere())
         .child(

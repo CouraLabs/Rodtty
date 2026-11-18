@@ -216,26 +216,31 @@ pub(super) fn list(s: &State, a: &Appearance) -> El {
                 row()
                     .w_full()
                     .gap(6.0)
-                    .child(button(
-                        a,
-                        format!("record-{id}"),
-                        if binding.is_empty() {
-                            "Unassigned".into()
+                    .child({
+                        let shown = if binding.is_empty() {
+                            "Unassigned".to_owned()
                         } else {
                             binding
-                        },
-                        move |s, tx| s.begin_recording(id, tx),
-                    ))
-                    .child(button(
-                        a,
-                        format!("reset-shortcut-{id}"),
-                        "Reset",
-                        move |s, _| {
+                        };
+                        // The button shows only the binding; a reader hears
+                        // which command it records for.
+                        let name = format!("{} shortcut: {shown}", command.title);
+                        button(a, format!("record-{id}"), shown, move |s, tx| {
+                            s.begin_recording(id, tx)
+                        })
+                        .label(name)
+                        .help("Record a new shortcut")
+                    })
+                    .child({
+                        let name = format!("Reset {} shortcut", command.title);
+                        button(a, format!("reset-shortcut-{id}"), "Reset", move |s, _| {
                             s.save_config(|c| {
                                 c.shortcuts.remove(id);
                             })
-                        },
-                    )),
+                        })
+                        .label(name.clone())
+                        .help(name)
+                    }),
             );
         if !conflicts.is_empty() {
             item = item.child(
