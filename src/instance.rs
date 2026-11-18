@@ -116,8 +116,23 @@ mod tests {
                 let _ = tx.send(());
             })
             .unwrap();
-        assert!(Instance::acquire(root.path()).unwrap().is_none());
-        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        // macOS FSEvents can drop changes made while a new stream is still
+        // registering, which a busy test host hits and a real second launch
+        // never does. Relaunch until the host hears one request.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            assert!(Instance::acquire(root.path()).unwrap().is_none());
+            if rx
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_ok()
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "host never heard a reopen request"
+            );
+        }
         drop(host);
         assert!(Instance::acquire(root.path()).unwrap().is_some());
     }
