@@ -205,6 +205,7 @@ Settings offers searchable installed UI and verified monospace terminal family s
 
 ## Design documents
 
+- [Source layout](docs/architecture.md)
 - [Product scope](docs/product-scope.md)
 - [Feasibility plan](docs/terminal-feasibility.md)
 - [Feasibility report](docs/feasibility-report.md)
