@@ -29,7 +29,12 @@ impl Instance {
                 root: root.to_owned(),
                 compatibility: None,
             })),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            // Unix reports a held lock as WouldBlock; Windows reports
+            // ERROR_LOCK_VIOLATION, which fs2 names `lock_contended_error`.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
                 Self::request_open(root)?;
                 Ok(None)
             }

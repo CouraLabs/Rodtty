@@ -211,11 +211,7 @@ fn runtime_retains_real_pty_interrupt_and_fullscreen_keys_with_custom_binding() 
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
     state.directory = root.path().into();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     let session = state.active().expect("companion binary built");
     session
@@ -301,11 +297,7 @@ fn clicking_a_visible_editor_overrides_stale_terminal_pane_focus_for_close_chord
     let mut state = State::with_root(root.path().into());
     demo(&mut state, false);
     state.directory = root.path().into();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     state
         .active()

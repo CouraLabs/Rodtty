@@ -3,11 +3,7 @@ use std::time::Duration;
 
 fn fixture_state(root: PathBuf) -> State {
     let mut state = State::with_root(root);
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state
 }
 

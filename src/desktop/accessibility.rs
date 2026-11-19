@@ -51,11 +51,7 @@ mod tests {
     use rune::accesskit::Action;
 
     fn shell() -> Option<PathBuf> {
-        std::env::current_exe()
-            .unwrap()
-            .ancestors()
-            .map(|p| p.join("rodtty-shell"))
-            .find(|p| p.is_file())
+        crate::test_support::shell_binary()
     }
 
     /// Two terminal sessions beside an explorer wide enough for its root row

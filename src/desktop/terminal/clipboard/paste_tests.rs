@@ -6,11 +6,7 @@ use std::time::Duration;
 fn shell_state(root: &Path) -> State {
     let mut state = State::with_root(root.into());
     state.directory = root.into();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state
 }
 
@@ -67,12 +63,19 @@ fn paths_paste_as_single_bash_words_written_like_a_dropped_file() {
         r"$'/tmp/line\nbreak\t\'\\\x1b'",
         "control characters never reach the terminal raw"
     );
+    // Only absolute paths paste; what is absolute depends on the platform.
+    let root = if cfg!(windows) { r"C:\" } else { "/" };
     let (text, pasted, skipped) = paste_paths(&[
-        PathBuf::from("/a b"),
+        PathBuf::from(format!("{root}a b")),
         PathBuf::from("relative"),
-        PathBuf::from("/c"),
+        PathBuf::from(format!("{root}c")),
     ]);
-    assert_eq!((text.as_str(), pasted, skipped), (r"/a\ b /c", 2, 1));
+    let expected = if cfg!(windows) {
+        r"C:\\a\ b C:\\c"
+    } else {
+        r"/a\ b /c"
+    };
+    assert_eq!((text.as_str(), pasted, skipped), (expected, 2, 1));
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

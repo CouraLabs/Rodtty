@@ -1004,11 +1004,7 @@ fn prompt_style_and_symbol_preview_reset_persist_and_reach_a_running_shell() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
     state.directory = root.path().into();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.workspace_setup();
     if state.sessions.is_empty() {
         state.new_tab();

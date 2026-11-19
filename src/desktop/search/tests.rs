@@ -469,12 +469,7 @@ fn a_compact_window_searches_from_the_header_and_opens_a_result_in_the_editor() 
 fn terminal_text_is_searched_with_files_and_a_row_selects_the_match() {
     let root = crate::test_support::tempdir().unwrap();
     std::fs::write(root.path().join("a.txt"), "nothing").unwrap();
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     let session = Session::spawn(
         &shell,
         root.path(),

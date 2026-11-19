@@ -111,12 +111,7 @@ fn close_terminal_from(runtime: &mut rune::Runtime<State>, entry: &str) {
 #[test]
 fn every_terminal_close_entry_point_honors_live_idle_and_running_policy_matrix() {
     use crate::config::TerminalClosePolicy as Policy;
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     for policy in [
         Policy::ConfirmRunning,
         Policy::AlwaysConfirm,
@@ -199,11 +194,7 @@ fn startup_folder_setting_chooses_the_first_terminal_folder() {
 fn window_quit_and_explicit_quit_keep_running_confirmation_even_with_immediate_tab_close() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.start_tab(root.path().into());
     state
         .active()
@@ -295,11 +286,7 @@ fn new_terminal_directories_follow_live_choices_without_changing_startup_or_sess
     }
     let mut state = State::with_root(root.path().into());
     state.directory = active.clone();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.save_config(|c| {
         c.behavior.new_terminal_directory = NewTerminalDirectory::Specified;
         c.behavior.specified_directory = specified.clone();
@@ -505,12 +492,7 @@ fn footer_shows_bold_app_identity_then_tilde_home_path_with_a_point_frame() {
 fn clicking_a_terminal_tab_switches_the_active_session_both_ways() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     state.shell = Some(shell);
     for _ in 0..2 {
         state.start_tab(root.path().into());
@@ -540,11 +522,7 @@ fn clicking_a_terminal_tab_switches_the_active_session_both_ways() {
 fn idle_terminal_closes_immediately_but_live_commands_offer_cancel() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     state
         .active()
@@ -754,12 +732,7 @@ fn custom_close_keeps_unsaved_editor_until_owner_decides() {
 fn terminal_tabs_show_application_title_verbatim_then_terminal_fallback_with_directory_tooltip() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     let session = Session::spawn(
         &shell,
         root.path(),
@@ -892,12 +865,7 @@ fn dragging_and_closing_earlier_terminal_tabs_preserves_active_session() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
     state.config.behavior.terminal_tab_close = crate::config::TerminalClosePolicy::AlwaysConfirm;
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     for _ in 0..3 {
         state.sessions.push(
             Session::spawn(
@@ -973,12 +941,7 @@ fn terminal_overflow_scrolls_and_context_close_targets_its_session() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
     state.config.behavior.terminal_tab_close = crate::config::TerminalClosePolicy::AlwaysConfirm;
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file())
-        .unwrap();
+    let shell = crate::test_support::shell_binary().unwrap();
     state.shell = Some(shell.clone());
     for _ in 0..5 {
         state.sessions.push(

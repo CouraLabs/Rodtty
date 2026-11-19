@@ -165,11 +165,7 @@ fn terminal_clipboard_actions_reach_real_pty_and_overlay_keeps_input_out() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
     state.directory = root.path().into();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     state
         .active()

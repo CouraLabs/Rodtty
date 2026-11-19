@@ -1499,11 +1499,7 @@ fn real_pty_input_survives_background_trash_preparation_save_as_and_removal() {
     std::fs::write(&path, "saved source").unwrap();
     let mut state = state(&fixture);
     state.directory = fixture.clone();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     state
         .active()
@@ -4595,11 +4591,7 @@ fn restored_expanded_folders_load_before_reading_empty_and_keep_their_children()
     std::fs::create_dir_all(&empty).unwrap();
     std::fs::create_dir_all(&full).unwrap();
     std::fs::write(full.join("kept.txt"), "kept").unwrap();
-    let shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    let shell = crate::test_support::shell_binary();
     let mut before = State::with_root(profile.clone());
     before.shell = shell.clone();
     before.directory = files.clone();
@@ -4667,11 +4659,7 @@ fn compact_files_overlay_keeps_the_pty_and_prompt_and_returns_focus() {
     let mut state = State::with_root(fixture.path().join("profile"));
     state.directory = fixture.path().to_owned();
     state.workspace_setup();
-    state.shell = std::env::current_exe()
-        .unwrap()
-        .ancestors()
-        .map(|p| p.join("rodtty-shell"))
-        .find(|p| p.is_file());
+    state.shell = crate::test_support::shell_binary();
     state.new_tab();
     state
         .active()

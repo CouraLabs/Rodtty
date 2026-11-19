@@ -12,3 +12,14 @@ pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
     let base = std::env::temp_dir().canonicalize()?;
     tempfile::tempdir_in(base)
 }
+
+/// The `rodtty-shell` companion binary Cargo built beside the test binary,
+/// with the platform's executable suffix (`.exe` on Windows).
+pub(crate) fn shell_binary() -> Option<std::path::PathBuf> {
+    let name = format!("rodtty-shell{}", std::env::consts::EXE_SUFFIX);
+    std::env::current_exe()
+        .ok()?
+        .ancestors()
+        .map(|p| p.join(&name))
+        .find(|p| p.is_file())
+}
