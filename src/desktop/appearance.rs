@@ -40,13 +40,13 @@ impl Appearance {
         static FAMILIES: OnceLock<BTreeMap<String, Palette>> = OnceLock::new();
         let p = if family == ThemeFamily::Catppuccin {
             let palettes = CATPPUCCIN.get_or_init(|| {
-                serde_json::from_str(include_str!("../../assets/themes/catppuccin.json"))
+                serde_json::from_str(asset_str!("themes/catppuccin.json"))
                     .expect("bundled Catppuccin")
             });
             &palettes[if dark { "mocha" } else { "latte" }]
         } else {
             let palettes = FAMILIES.get_or_init(|| {
-                serde_json::from_str(include_str!("../../assets/themes/families.json"))
+                serde_json::from_str(asset_str!("themes/families.json"))
                     .expect("bundled appearance palettes")
             });
             &palettes[&format!("{}-{}", family.key(), if dark { "dark" } else { "light" })]
