@@ -10,6 +10,7 @@ use rune_kit::{
 };
 use std::time::{Duration, Instant};
 
+mod events;
 mod layout;
 mod persistence;
 mod poll;
