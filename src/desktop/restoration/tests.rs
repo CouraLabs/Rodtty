@@ -50,7 +50,7 @@ fn cold_workspace_restores_reordered_terminals_in_last_directories_without_old_c
         .unwrap()
         .wait_for("OLD_WORKSPACE_OUTPUT", Duration::from_secs(10))
         .unwrap();
-    let mut runtime = super::super::tests::runtime_for(state);
+    let mut runtime = crate::desktop::tests::runtime_for(state);
     runtime.update(|s, _| {
         s.move_tab(tabs::Target::Terminal(s.active().unwrap().id()), 0);
         s.persist_workspace();
@@ -82,7 +82,7 @@ fn cold_workspace_restores_reordered_terminals_in_last_directories_without_old_c
         assert!(!session.screen().contents().contains("OLD_WORKSPACE_OUTPUT"));
         assert!(!session.tab_title().contains("OLD APPLICATION"));
     }
-    let runtime = super::super::tests::runtime_for(fresh);
+    let runtime = crate::desktop::tests::runtime_for(fresh);
     assert!(runtime.find("tab-0").is_some());
     assert!(runtime.find("tab-1").is_some());
 }
@@ -145,7 +145,7 @@ fn regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts(
         std::fs::read(root.join("settings.json")).ok(),
         settings_before
     );
-    let mut runtime = super::super::tests::runtime_for(fresh);
+    let mut runtime = crate::desktop::tests::runtime_for(fresh);
     assert!(
         runtime.find("file-list").is_none(),
         "the explorer starts hidden"
@@ -183,7 +183,7 @@ fn single_fresh_startup_is_live_persisted_resettable_and_uses_directory_policy()
     state.start_tab(specified.clone());
     state.navigate(original.clone());
     let retained = state.active().unwrap().id();
-    let mut runtime = super::super::tests::runtime_for(state);
+    let mut runtime = crate::desktop::tests::runtime_for(state);
     runtime.update(|s, tx| {
         s.open_settings(tx);
         s.settings_query.replace_text("startup");
@@ -224,7 +224,7 @@ fn single_fresh_startup_is_live_persisted_resettable_and_uses_directory_policy()
         assert_eq!(next.sessions.len(), 1);
         assert_eq!(next.active().unwrap().cwd(), expected);
     }
-    let mut runtime = super::super::tests::runtime_for(fresh);
+    let mut runtime = crate::desktop::tests::runtime_for(fresh);
     runtime.update(|s, tx| {
         s.open_settings(tx);
         s.settings_query.replace_text("startup");

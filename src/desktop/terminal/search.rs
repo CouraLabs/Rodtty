@@ -5,30 +5,30 @@
 //! character keeps the cell it came from, so wide characters (two cells, the
 //! second a continuation) and combining sequences map back to the right
 //! columns. Matching is case-sensitive, as the earlier search was.
-use super::*;
+use crate::desktop::*;
 
 /// A cell position counted from the oldest retained scrollback line, so it
 /// stays put while the owner scrolls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct CellPos {
+pub(crate) struct CellPos {
     pub line: usize,
     pub col: u16,
 }
 
 /// The cells from `start` up to, not including, `end`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Match {
+pub(crate) struct Match {
     pub start: CellPos,
     pub end: CellPos,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Highlight {
+pub(crate) enum Highlight {
     Match,
     Current,
 }
 
-pub(super) struct TerminalSearch {
+pub(crate) struct TerminalSearch {
     pub open: bool,
     pub query: TextEdit,
     matches: Vec<Match>,
@@ -195,7 +195,7 @@ fn scrollback_len(screen: &mut vt100::Screen) -> usize {
 
 /// Every non-overlapping match of `needle`, oldest first. The screen's scroll
 /// position is left as it was.
-pub(super) fn find_all(screen: &mut vt100::Screen, needle: &str) -> Vec<Match> {
+pub(crate) fn find_all(screen: &mut vt100::Screen, needle: &str) -> Vec<Match> {
     find_in_lines(screen, needle, usize::MAX, false, false)
         .into_iter()
         .map(|found| found.at)
@@ -204,7 +204,7 @@ pub(super) fn find_all(screen: &mut vt100::Screen, needle: &str) -> Vec<Match> {
 
 /// A match with the logical line it is in, for listing as a search result.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct LineMatch {
+pub(crate) struct LineMatch {
     pub at: Match,
     /// The line's text, leading spaces trimmed.
     pub text: String,
@@ -215,7 +215,7 @@ pub(super) struct LineMatch {
 /// Up to `limit` matches of `needle` with their lines, oldest first, ignoring
 /// ASCII case as the file search does. The screen's scroll position is left
 /// as it was.
-pub(super) fn find_lines(screen: &mut vt100::Screen, needle: &str, limit: usize) -> Vec<LineMatch> {
+pub(crate) fn find_lines(screen: &mut vt100::Screen, needle: &str, limit: usize) -> Vec<LineMatch> {
     find_in_lines(screen, needle, limit, true, true)
 }
 
@@ -335,7 +335,7 @@ fn find_in_lines(
 }
 
 /// Scroll so `m` is in view, leaving the viewport alone when it already is.
-pub(super) fn reveal(screen: &mut vt100::Screen, m: Match) {
+pub(crate) fn reveal(screen: &mut vt100::Screen, m: Match) {
     let scrollback = scrollback_len(screen);
     let rows = usize::from(screen.size().0);
     let top = scrollback - screen.scrollback();
@@ -354,13 +354,13 @@ pub(super) fn reveal(screen: &mut vt100::Screen, m: Match) {
 
 impl State {
     /// Identity of the screen the terminal shows, so matches stay with it.
-    pub(super) fn screen_key(&self) -> usize {
+    pub(crate) fn screen_key(&self) -> usize {
         self.active().map_or(0, Session::id)
     }
 
     /// Enter and Shift+Enter in the search field: step and report the result.
     /// Focus stays in the field.
-    pub(super) fn step_terminal_search(&mut self, backward: bool) {
+    pub(crate) fn step_terminal_search(&mut self, backward: bool) {
         let key = self.screen_key();
         let mut search = std::mem::take(&mut self.terminal_search);
         let found = self.with_screen_mut(|screen| search.step(screen, key, backward));
@@ -375,7 +375,7 @@ impl State {
 
     /// Find in Terminal: show the terminal with the search bar open and the
     /// keyboard in its field.
-    pub(super) fn open_terminal_search(&mut self, tx: &mut Tx) {
+    pub(crate) fn open_terminal_search(&mut self, tx: &mut Tx) {
         self.workspace.layout.terminal = true;
         self.workspace.set_terminal_focus(true);
         self.workspace.explorer_revealed = false;
@@ -385,7 +385,7 @@ impl State {
 
     /// Escape or the close button: hide the bar, drop the highlight, and
     /// return the keyboard to the terminal.
-    pub(super) fn close_terminal_search(&mut self, tx: &mut Tx) {
+    pub(crate) fn close_terminal_search(&mut self, tx: &mut Tx) {
         self.terminal_search.close();
         self.workspace.set_terminal_focus(true);
         tx.blur();
@@ -393,7 +393,7 @@ impl State {
 }
 
 /// The search bar above the terminal grid.
-pub(super) fn bar(s: &State, a: &Appearance) -> El {
+pub(crate) fn bar(s: &State, a: &Appearance) -> El {
     row()
         .key("terminal-search")
         .w_full()

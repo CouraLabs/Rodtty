@@ -3,7 +3,7 @@
 //! the editor pane, grouped by file and by terminal; a file row opens through
 //! the editor's preview flow and a terminal row selects the match in its
 //! terminal. The file search itself is [`crate::files::search`]; the terminal
-//! search is [`terminal_search::find_lines`].
+//! search is [`terminal::search::find_lines`].
 //!
 //! Each search runs on a fresh thread with its own cancel flag. Editing the
 //! query sets the in-flight search's flag at once, and the next search starts
@@ -69,7 +69,7 @@ pub(super) enum Group {
 pub(super) struct TerminalMatches {
     pub session: usize,
     pub title: String,
-    pub found: Vec<terminal_search::LineMatch>,
+    pub found: Vec<terminal::search::LineMatch>,
 }
 
 pub(super) struct ExplorerSearch {
@@ -366,7 +366,7 @@ impl State {
         let mut terminal = Vec::new();
         for session in &self.sessions {
             let found = session.with_screen_mut(|screen| {
-                terminal_search::find_lines(screen, &request.text, remaining)
+                terminal::search::find_lines(screen, &request.text, remaining)
             });
             remaining -= found.len();
             if !found.is_empty() {

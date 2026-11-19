@@ -1,9 +1,9 @@
 //! The terminal grid: one positioned run per cell, painted from the
 //! appearance's terminal palette, with selection and search highlights, and
 //! the pointer gestures (selection drag, wheel scroll) over it.
-use super::*;
+use crate::desktop::*;
 
-pub(super) fn grid(state: &State, a: &Appearance) -> El {
+pub(crate) fn grid(state: &State, a: &Appearance) -> El {
     state.with_screen(|screen| grid_view(state, screen, a))
 }
 
@@ -60,13 +60,13 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             let mut fill_key = format!("terminal-fill-{r}-{start}");
             let mut highlighted = false;
             match highlight(r, start) {
-                Some(terminal_search::Highlight::Current) => {
+                Some(terminal::search::Highlight::Current) => {
                     background = p.search_current;
                     fg = p.search_current_text;
                     fill_key = format!("terminal-search-current-{r}-{start}");
                     highlighted = true;
                 }
-                Some(terminal_search::Highlight::Match) => {
+                Some(terminal::search::Highlight::Match) => {
                     background = p.search_match;
                     fill_key = format!("terminal-search-match-{r}-{start}");
                     highlighted = true;
@@ -151,7 +151,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         // clearing here would erase every selection the moment it was made.
         tx.blur();
     })
-    .on_secondary_press(clipboard::terminal_menu)
+    .on_secondary_press(terminal::clipboard::terminal_menu)
     .on_drag(move |s: &mut State, drag, tx| {
         s.supersede_pending_preview();
         s.workspace.set_terminal_focus(true);
@@ -217,7 +217,7 @@ impl State {
     /// whether there was any. Output moves the cells a selection or search
     /// highlight was drawn over, so those are dropped rather than left over
     /// the wrong text.
-    pub(super) fn observe_terminal_output(&mut self) -> bool {
+    pub(crate) fn observe_terminal_output(&mut self) -> bool {
         let generations: Vec<_> = self
             .sessions
             .iter()
@@ -248,7 +248,7 @@ impl State {
     }
 
     /// Copies the terminal selection's text, when it covers any.
-    pub(super) fn copy(&self, tx: &mut Tx) {
+    pub(crate) fn copy(&self, tx: &mut Tx) {
         if let Some((a, b)) = self.selection {
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             if a != b {
@@ -265,7 +265,7 @@ impl State {
 /// points. Below this it is a click: a trackpad's contact wobble and a slow
 /// click both stay under it, so neither highlights a cell the owner never
 /// meant to select and a click never copies.
-pub(super) const SELECTION_THRESHOLD: f32 = 4.0;
+pub(crate) const SELECTION_THRESHOLD: f32 = 4.0;
 
 #[cfg(test)]
 mod tests;

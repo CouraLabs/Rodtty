@@ -1,5 +1,5 @@
-use super::super::tests::{open_palette, press, runtime_for};
 use super::*;
+use crate::desktop::tests::{open_palette, press, runtime_for};
 
 #[test]
 fn terminal_right_click_offers_shared_copy_and_blocks_input_until_dismissed() {

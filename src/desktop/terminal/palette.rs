@@ -7,7 +7,7 @@
 //! 16–255 and truecolor stay exactly as the program requested.
 use rune::Color;
 
-pub(super) struct TerminalPalette {
+pub(crate) struct TerminalPalette {
     pub foreground: Color,
     pub background: Color,
     pub cursor: Color,
@@ -28,15 +28,15 @@ impl TerminalPalette {
             vt100::Color::Idx(i) if i < 16 => self.ansi[usize::from(i)],
             vt100::Color::Idx(i) => {
                 let (r, g, b) = xterm_extended(i);
-                super::rgb(r, g, b)
+                crate::desktop::rgb(r, g, b)
             }
-            vt100::Color::Rgb(r, g, b) => super::rgb(r, g, b),
+            vt100::Color::Rgb(r, g, b) => crate::desktop::rgb(r, g, b),
         }
     }
 }
 
 /// The standard xterm 6×6×6 cube (16–231) and grayscale ramp (232–255).
-pub(super) fn xterm_extended(i: u8) -> (u8, u8, u8) {
+pub(crate) fn xterm_extended(i: u8) -> (u8, u8, u8) {
     if i >= 232 {
         let v = 8 + (i - 232) * 10;
         (v, v, v)
@@ -48,7 +48,7 @@ pub(super) fn xterm_extended(i: u8) -> (u8, u8, u8) {
 }
 
 /// A straight-alpha theme color laid over the terminal canvas, as an opaque fill.
-pub(super) fn over(color: Color, background: Color) -> Color {
+pub(crate) fn over(color: Color, background: Color) -> Color {
     background.mix(color.alpha(1.0), color.a)
 }
 

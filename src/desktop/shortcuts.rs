@@ -32,7 +32,7 @@ impl State {
     }
     fn shortcut_context(&self, context: actions::ShortcutContext, focused: Option<&str>) -> bool {
         let (_, terminal_visible, editor_visible) =
-            workspace::pane_visibility(self, self.workspace.body_width);
+            pane_visibility(self, self.workspace.body_width);
         let editor_field =
             focused.is_some_and(|f| f.starts_with("file-editor-") || f.starts_with("editor-"));
         let settings_field = focused.is_some_and(|f| f.starts_with("settings-"));

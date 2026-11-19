@@ -1,12 +1,12 @@
-use super::*;
+use crate::desktop::*;
 
-pub(super) struct Palette {
+pub(crate) struct Palette {
     pub selected: usize,
     pub return_focus: Option<String>,
 }
 
 impl State {
-    pub(super) fn open_palette(&mut self, tx: &mut Tx) {
+    pub(crate) fn open_palette(&mut self, tx: &mut Tx) {
         self.palette_query = TextEdit::new("");
         self.palette = Some(Palette {
             selected: 0,
@@ -28,7 +28,7 @@ impl State {
             .collect()
     }
 
-    pub(super) fn dismiss_palette(&mut self, tx: &mut Tx) {
+    pub(crate) fn dismiss_palette(&mut self, tx: &mut Tx) {
         let previous = self.palette.take().and_then(|palette| palette.return_focus);
         tx.blur();
         if let Some(key) = previous {
@@ -45,7 +45,7 @@ impl State {
         self.dispatch(action, tx);
     }
 
-    pub(super) fn palette_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+    pub(crate) fn palette_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         let matches = self.palette_matches();
         let selected = self.palette.as_ref().map_or(0, |p| p.selected);
         match event.key {
@@ -71,7 +71,7 @@ impl State {
     }
 }
 
-pub(super) fn view(state: &State, a: &Appearance) -> Option<El> {
+pub(crate) fn view(state: &State, a: &Appearance) -> Option<El> {
     let palette = state.palette.as_ref()?;
     let mut content = col()
         .key("command-palette")

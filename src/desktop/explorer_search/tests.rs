@@ -1,5 +1,5 @@
-use super::super::tests::{press, runtime_for};
 use super::*;
+use crate::desktop::tests::{press, runtime_for};
 use crate::files::operations::{FileOperation, OperationRequest};
 
 fn state(root: &std::path::Path) -> State {
@@ -492,7 +492,8 @@ fn terminal_text_is_searched_with_files_and_a_row_selects_the_match() {
         .send(b"printf '  Build FAILED: wanted\\n'\r".to_vec())
         .unwrap();
     let start = Instant::now();
-    while session.with_screen_mut(|screen| terminal_search::find_all(screen, "FAILED:").len()) < 2 {
+    while session.with_screen_mut(|screen| terminal::search::find_all(screen, "FAILED:").len()) < 2
+    {
         assert!(
             start.elapsed() < Duration::from_secs(10),
             "the shell printed"

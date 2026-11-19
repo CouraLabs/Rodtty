@@ -1,8 +1,8 @@
 //! One resolved appearance for chrome, editing, diff inspection, and terminal rendering.
 //! Families supply data; callers consume semantic roles rather than palette names.
 use super::motion::Motion;
-use super::terminal_palette::{TerminalPalette, over};
 use crate::config::{Appearance as Mode, ThemeFamily};
+use crate::desktop::terminal::palette::{TerminalPalette, over};
 use rune::{Color, HelpLook};
 use rune_kit::{
     Kit, StateColors,
@@ -462,6 +462,23 @@ pub(super) fn contrast_pairs(a: &Appearance) -> Vec<(&'static str, Color, Color,
         ("active tab bar on tab fill", a.accent(), hover, 3.0),
         ("selected row bar on selected fill", a.accent(), hover, 3.0),
     ]
+}
+
+pub(crate) fn rgb(r: u8, g: u8, b: u8) -> Color {
+    let decode = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    Color {
+        r: decode(r),
+        g: decode(g),
+        b: decode(b),
+        a: 1.0,
+    }
 }
 
 #[cfg(test)]

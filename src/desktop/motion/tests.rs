@@ -1,6 +1,6 @@
-use super::super::tests::{open_palette, press, runtime_for};
 use super::super::{Pending, State};
 use super::*;
+use crate::desktop::tests::{open_palette, press, runtime_for};
 use rune::{ElementInfo, Key, Runtime};
 use std::path::Path;
 

@@ -6,16 +6,16 @@
 //! the app only reserves [`ChromeInsets`](rune::ChromeInsets) at the leading
 //! edge. Linux and Windows draw their own controls because neither has a
 //! native frame Rodtty can style.
-use super::*;
+use crate::desktop::*;
 
-pub(super) const BORDER: f32 = 6.0;
+pub(crate) const BORDER: f32 = 6.0;
 
 /// The band the header occupies, in points. Also the height the host is asked
 /// to centre its controls in on macOS.
-pub(super) const HEADER: f32 = 44.0;
+pub(crate) const HEADER: f32 = 44.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Placement {
+pub(crate) enum Placement {
     /// The host draws the controls; the app keeps clear of `chrome_insets()`.
     Hosted,
     /// The app draws the controls at the trailing edge.
@@ -24,7 +24,7 @@ pub(super) enum Placement {
     Native,
 }
 
-pub(super) fn placement() -> Placement {
+pub(crate) fn placement() -> Placement {
     if cfg!(target_os = "macos") {
         Placement::Hosted
     } else if cfg!(any(target_os = "linux", target_os = "windows")) {
@@ -35,18 +35,18 @@ pub(super) fn placement() -> Placement {
 }
 
 /// Whether the app draws its own controls.
-pub(super) fn controls_shown(placement: Placement) -> bool {
+pub(crate) fn controls_shown(placement: Placement) -> bool {
     placement == Placement::Trailing
 }
 
 /// Whether the window gives up its native frame for a themed six-point border.
 /// Only the platforms that draw their own controls do: they have no native
 /// titlebar left to keep, so the app supplies the whole frame.
-pub(super) fn borderless() -> bool {
+pub(crate) fn borderless() -> bool {
     placement() == Placement::Trailing
 }
 
-pub(super) fn options() -> rune::WindowOptions {
+pub(crate) fn options() -> rune::WindowOptions {
     rune::WindowOptions {
         borderless: borderless(),
         custom_frame_resize_border: if borderless() { BORDER } else { 0.0 },
@@ -82,14 +82,14 @@ fn saved_placement() -> rune::WindowOptions {
 /// traffic lights over a full-size content view, and reports their width as
 /// `Cx::chrome_insets().leading`. `None` elsewhere, which leaves the native
 /// frame in place.
-pub(super) fn titlebar() -> Option<rune::Titlebar> {
+pub(crate) fn titlebar() -> Option<rune::Titlebar> {
     match placement() {
         Placement::Hosted => Some(rune::Titlebar::new(HEADER)),
         _ => None,
     }
 }
 
-pub(super) fn controls(state: &State, a: &Appearance, placement: Placement) -> El {
+pub(crate) fn controls(state: &State, a: &Appearance, placement: Placement) -> El {
     if !controls_shown(placement) {
         return el();
     }

@@ -1,5 +1,5 @@
-use super::super::tests::{press, runtime_for};
 use super::super::*;
+use crate::desktop::tests::{press, runtime_for};
 
 fn click(rt: &mut rune::Runtime<State>, key: &str) {
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
@@ -120,7 +120,7 @@ fn conflicting_recording_preserves_defaults_and_palette_uses_current_binding() {
     assert!(rt.find("shortcut-recorder").is_some());
     press(&mut rt, Key::Function(9), Default::default());
     click(&mut rt, "shortcut-apply");
-    super::super::tests::open_palette(&mut rt);
+    crate::desktop::tests::open_palette(&mut rt);
     press(
         &mut rt,
         Key::Text("toggle explorer".into()),
@@ -152,7 +152,7 @@ fn owner_records_and_uses_a_mouse_shortcut() {
 fn shared_terminal_editor_chords_follow_visible_focus_and_text_fields_keep_copy_paste() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
-    workspace::demo(&mut state, false);
+    demo(&mut state, false);
     state
         .config
         .shortcuts
@@ -299,7 +299,7 @@ fn invalid_external_binding_retains_last_live_binding_and_explains_error() {
 fn clicking_a_visible_editor_overrides_stale_terminal_pane_focus_for_close_chords() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
-    workspace::demo(&mut state, false);
+    demo(&mut state, false);
     state.directory = root.path().into();
     state.shell = std::env::current_exe()
         .unwrap()

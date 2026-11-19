@@ -114,7 +114,7 @@ macro_rules! artwork {
 
 #[test]
 fn editor_artwork_keeps_parent_labels_dirty_marks_and_tab_actions_when_appearance_changes() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
     icons_demo(&mut state);
@@ -147,7 +147,7 @@ fn editor_artwork_keeps_parent_labels_dirty_marks_and_tab_actions_when_appearanc
 
 #[test]
 fn explorer_artwork_matches_exact_names_compound_extensions_folders_and_current_appearance() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     for name in [
         "Dockerfile",
@@ -219,7 +219,7 @@ fn explorer_artwork_matches_exact_names_compound_extensions_folders_and_current_
 
 #[test]
 fn explorer_displays_offline_file_artwork_beside_file_labels() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     std::fs::write(root.path().join("main.rs"), "fn main() {}\n").unwrap();
     let mut state = state(root.path());
@@ -269,7 +269,7 @@ fn open(state: &mut State, path: &std::path::Path) {
 
 #[test]
 fn single_click_previews_reuse_one_visible_tab_and_double_click_keeps_it() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     for name in ["a.txt", "b.txt", "c.txt"] {
         std::fs::write(root.path().join(name), name).unwrap();
@@ -326,7 +326,7 @@ fn single_click_previews_reuse_one_visible_tab_and_double_click_keeps_it() {
 
 #[test]
 fn late_preview_load_does_not_replace_a_file_explicitly_reopened_while_loading() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     for name in ["a.txt", "b.txt"] {
         std::fs::write(root.path().join(name), name).unwrap();
@@ -361,7 +361,7 @@ fn late_preview_load_does_not_replace_a_file_explicitly_reopened_while_loading()
 
 #[test]
 fn selecting_an_existing_editor_tab_supersedes_a_pending_preview() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     for name in ["a.txt", "b.txt"] {
         std::fs::write(root.path().join(name), name).unwrap();
@@ -385,7 +385,7 @@ fn selecting_an_existing_editor_tab_supersedes_a_pending_preview() {
 
 #[test]
 fn markdown_files_open_rendered_and_edit_or_the_preview_toggle_shows_source() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let file = root.path().join("README.md");
     std::fs::write(
@@ -516,7 +516,7 @@ fn restored_markdown_tabs_start_rendered_even_when_closed_in_source() {
 
 #[test]
 fn a_content_match_opens_a_new_markdown_file_in_source_at_its_line() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let doc = root.path().join("guide.md");
     std::fs::write(&doc, "# Guide\n\nfirst\nthe needle here\n").unwrap();
@@ -547,7 +547,7 @@ fn a_content_match_opens_a_new_markdown_file_in_source_at_its_line() {
 
 #[test]
 fn preview_tab_titles_are_italic_dimmed_and_described_until_editing_keeps_the_source() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     std::fs::write(root.path().join("a.txt"), "alpha").unwrap();
     let mut state = state(root.path());
@@ -604,7 +604,7 @@ fn preview_tab_titles_are_italic_dimmed_and_described_until_editing_keeps_the_so
 
 #[test]
 fn keeping_a_preview_tab_preserves_its_rendered_or_source_view() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     std::fs::write(root.path().join("doc.md"), "# Doc\n").unwrap();
     std::fs::write(root.path().join("src.md"), "# Src\n").unwrap();
@@ -694,7 +694,7 @@ fn opened_any(s: &State, name: &str) -> bool {
 
 #[test]
 fn file_actions_diff_controls_and_status_sit_below_content_with_tabs_above() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     fn rect(runtime: &rune::Runtime<State>, key: &str) -> [f32; 4] {
         runtime
             .elements()
@@ -793,7 +793,7 @@ fn demo_diff(s: &mut State) {
 
 #[test]
 fn returning_to_settings_or_terminal_supersedes_a_pending_preview() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     for action in [
         Some(AppAction::Settings),
         Some(AppAction::ShowTerminal),
@@ -838,7 +838,7 @@ fn returning_to_settings_or_terminal_supersedes_a_pending_preview() {
 
 #[test]
 fn preview_while_saving_keeps_the_saving_file_and_uses_normal_close_protection() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let a = root.path().join("a.txt");
     let b = root.path().join("b.txt");
@@ -879,7 +879,7 @@ fn preview_while_saving_keeps_the_saving_file_and_uses_normal_close_protection()
 
 #[test]
 fn context_palette_and_double_click_during_load_all_keep_the_selected_file() {
-    use super::super::tests::{open_palette, press, runtime_for};
+    use crate::desktop::tests::{open_palette, press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     for name in ["a.txt", "b.txt", "c.txt"] {
         std::fs::write(root.path().join(name), name).unwrap();
@@ -934,7 +934,7 @@ fn context_palette_and_double_click_during_load_all_keep_the_selected_file() {
 
 #[test]
 fn editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let a = root.path().join("a.txt");
     let b = root.path().join("b.txt");
@@ -1007,7 +1007,7 @@ fn editing_preview_keeps_undo_find_conflicts_and_dirty_close_decisions() {
 
 #[test]
 fn behavior_setting_applies_live_persists_resets_and_external_json_updates() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
         std::fs::write(root.path().join(name), name).unwrap();
@@ -1067,7 +1067,7 @@ fn behavior_setting_applies_live_persists_resets_and_external_json_updates() {
 
 #[test]
 fn editor_tabs_disambiguate_reorder_and_middle_close_through_dirty_policy() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let mut state = state(root.path());
     for (index, folder) in ["client", "host", "shared"].iter().enumerate() {
@@ -1129,7 +1129,7 @@ fn editor_tabs_disambiguate_reorder_and_middle_close_through_dirty_policy() {
 
 #[test]
 fn settings_tab_can_move_and_middle_close_without_closing_file_editors() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("notes.txt");
     std::fs::write(&path, "notes").unwrap();
@@ -1157,7 +1157,7 @@ fn settings_tab_can_move_and_middle_close_without_closing_file_editors() {
 
 #[test]
 fn overflowing_editor_tabs_scroll_with_the_mouse_wheel() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let mut state = state(root.path());
     for i in 0..8 {
@@ -1191,7 +1191,7 @@ fn overflowing_editor_tabs_scroll_with_the_mouse_wheel() {
 
 #[test]
 fn explorer_create_actions_write_and_reveal_files_and_folders() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let mut state = state(root.path());
     state.toggle_files();
@@ -1227,7 +1227,7 @@ fn explorer_create_actions_write_and_reveal_files_and_folders() {
 #[cfg(target_os = "linux")]
 #[test]
 fn explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let fixture = crate::test_support::tempdir().unwrap();
     if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1301,7 +1301,7 @@ fn explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash() {
 #[cfg(target_os = "linux")]
 #[test]
 fn trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let fixture = crate::test_support::tempdir().unwrap();
     if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1416,7 +1416,7 @@ fn trash_folder_preserves_dirty_descendants_with_save_as_discard_and_cancel() {
 #[cfg(target_os = "linux")]
 #[test]
 fn trash_failure_requires_permanent_confirmation_even_when_preferences_disable_confirmation() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let fixture = crate::test_support::tempdir().unwrap();
     if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1480,7 +1480,7 @@ fn trash_failure_requires_permanent_confirmation_even_when_preferences_disable_c
 #[cfg(target_os = "linux")]
 #[test]
 fn real_pty_input_survives_background_trash_preparation_save_as_and_removal() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let fixture = crate::test_support::tempdir().unwrap();
     if std::env::var_os("RODTTY_TRASH_UI_CHILD").is_none() {
         let output=std::process::Command::new(std::env::current_exe().unwrap())
@@ -1603,7 +1603,7 @@ fn real_pty_input_survives_background_trash_preparation_save_as_and_removal() {
 
 #[test]
 fn trash_waits_for_in_flight_open_and_save_before_starting_any_removal() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("notes.txt");
     std::fs::write(&path, "saved source").unwrap();
@@ -1645,7 +1645,7 @@ fn trash_waits_for_in_flight_open_and_save_before_starting_any_removal() {
 
 #[test]
 fn deletion_confirmation_preference_is_live_persisted_searchable_and_resettable() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let fixture = crate::test_support::tempdir().unwrap();
     let mut state = state(fixture.path());
     state.open_settings(&mut Tx::default());
@@ -1730,7 +1730,7 @@ fn click(runtime: &mut rune::Runtime<State>, key: &str) {
     runtime.frame(1.0);
 }
 fn fill(runtime: &mut rune::Runtime<State>, key: &str, value: &str) {
-    use super::super::tests::press;
+    use crate::desktop::tests::press;
     runtime.update(|_, tx| tx.focus(key, true));
     runtime.frame(1.0);
     press(
@@ -1747,7 +1747,7 @@ fn fill(runtime: &mut rune::Runtime<State>, key: &str, value: &str) {
 
 #[test]
 fn explorer_replace_refreshes_a_clean_destination_and_preserves_preview_identity() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
@@ -1790,7 +1790,7 @@ fn explorer_replace_refreshes_a_clean_destination_and_preserves_preview_identity
 
 #[test]
 fn explorer_move_cancel_and_failure_leave_paths_tree_and_drafts_unchanged() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
@@ -1833,7 +1833,7 @@ fn explorer_move_cancel_and_failure_leave_paths_tree_and_drafts_unchanged() {
 
 #[test]
 fn explorer_move_waits_for_pending_io_and_keeps_external_conflict_and_diff_protection() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
@@ -1904,7 +1904,7 @@ fn explorer_move_waits_for_pending_io_and_keeps_external_conflict_and_diff_prote
 
 #[test]
 fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source.txt");
     let target = root.path().join("target.txt");
@@ -1974,7 +1974,7 @@ fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available(
 
 #[test]
 fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_staging_git() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
@@ -2135,7 +2135,7 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
 
 #[test]
 fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("draft.txt");
     let target = root.path().join("renamed.txt");
@@ -2195,7 +2195,7 @@ fn explorer_rename_keeps_dirty_editor_identity_and_saves_at_the_new_path() {
 
 #[test]
 fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source");
     let destination = root.path().join("destination");
@@ -2265,7 +2265,7 @@ fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
 
 #[test]
 fn explorer_copy_collision_choices_never_silently_overwrite_open_content() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("report.txt");
     let destination = root.path().join("destination");
@@ -2338,7 +2338,7 @@ fn explorer_copy_collision_choices_never_silently_overwrite_open_content() {
 
 #[test]
 fn explorer_file_operation_errors_leave_disk_and_editor_content_intact() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let source = root.path().join("source");
     std::fs::create_dir_all(source.join("child")).unwrap();
@@ -2404,7 +2404,7 @@ fn explorer_file_operation_errors_leave_disk_and_editor_content_intact() {
 
 #[test]
 fn responsive_workspace_keeps_editor_contents_and_remembers_pane_widths() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("notes.txt");
     std::fs::write(&path, "saved notes").unwrap();
@@ -2456,7 +2456,7 @@ fn responsive_workspace_keeps_editor_contents_and_remembers_pane_widths() {
 
 #[test]
 fn explicitly_hiding_compact_panes_stays_hidden_when_the_window_widens() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("notes.txt");
     std::fs::write(&path, "notes").unwrap();
@@ -2486,7 +2486,7 @@ fn explicitly_hiding_compact_panes_stays_hidden_when_the_window_widens() {
 
 #[test]
 fn new_workspace_keeps_the_explorer_beside_the_terminal_until_space_is_needed() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let mut state = state(root.path());
     state.workspace.layout.explorer = true;
@@ -2532,7 +2532,7 @@ fn new_workspace_keeps_the_explorer_beside_the_terminal_until_space_is_needed() 
 
 #[test]
 fn a_small_window_with_large_ui_text_can_create_a_file_by_keyboard() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let mut state = state(root.path());
     state.config.fonts.ui_size = 24.0;
@@ -2572,7 +2572,7 @@ fn a_small_window_with_large_ui_text_can_create_a_file_by_keyboard() {
 
 #[test]
 fn copied_items_outside_the_root_offer_an_explicit_reveal_action() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let outside = crate::test_support::tempdir().unwrap();
     let source = root.path().join("notes.txt");
@@ -2618,7 +2618,7 @@ fn copied_items_outside_the_root_offer_an_explicit_reveal_action() {
 
 #[test]
 fn dismissing_palette_returns_typing_to_the_editor_without_changing_its_text() {
-    use super::super::tests::{open_palette, press, runtime_for};
+    use crate::desktop::tests::{open_palette, press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -2659,7 +2659,7 @@ fn dismissing_palette_returns_typing_to_the_editor_without_changing_its_text() {
 
 #[test]
 fn palette_and_editor_close_control_both_preserve_unsaved_work_until_a_decision() {
-    use super::super::tests::{open_palette, press, runtime_for};
+    use crate::desktop::tests::{open_palette, press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -2696,7 +2696,7 @@ fn palette_and_editor_close_control_both_preserve_unsaved_work_until_a_decision(
 
 #[test]
 fn palette_file_actions_do_not_target_an_editor_behind_settings() {
-    use super::super::tests::{open_palette, press, runtime_for};
+    use crate::desktop::tests::{open_palette, press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -2724,7 +2724,7 @@ fn palette_file_actions_do_not_target_an_editor_behind_settings() {
 
 #[test]
 fn autosave_conflict_waits_for_another_files_close_decision() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     for newer_edit in [false, true] {
         let root = crate::test_support::tempdir().unwrap();
         let a = root.path().join("a.txt");
@@ -2800,7 +2800,7 @@ fn autosave_conflict_waits_for_another_files_close_decision() {
 
 #[test]
 fn autosave_keeps_preview_edit_promotion_undo_redo_and_find_replace() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("draft.txt");
     std::fs::write(&path, "original").unwrap();
@@ -2854,7 +2854,7 @@ fn autosave_keeps_preview_edit_promotion_undo_redo_and_find_replace() {
 #[cfg(target_os = "linux")]
 #[test]
 fn autosave_does_not_preempt_removal_save_as_collision_or_cancel() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     if std::env::var_os("RODTTY_AUTOSAVE_REMOVAL_CHILD").is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -2951,7 +2951,7 @@ fn autosave_does_not_preempt_removal_save_as_collision_or_cancel() {
 
 #[test]
 fn autosave_waits_for_rename_and_saves_the_new_path_without_recreating_the_source() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     for policy in ["after_delay", "editor_focus_loss"] {
         let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("draft.txt");
@@ -2993,7 +2993,7 @@ fn autosave_waits_for_rename_and_saves_the_new_path_without_recreating_the_sourc
 
 #[test]
 fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_descendant() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     for policy in ["after_delay", "editor_focus_loss"] {
         let root = crate::test_support::tempdir().unwrap();
         let source = root.path().join("source");
@@ -3062,7 +3062,7 @@ fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_des
 
 #[test]
 fn autosave_external_conflict_keeps_edits_and_cancel_does_not_repeat_the_prompt() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -3103,7 +3103,7 @@ fn autosave_external_conflict_keeps_edits_and_cancel_does_not_repeat_the_prompt(
 
 #[test]
 fn autosave_preserves_later_edits_during_an_explicit_save_and_restarts_the_delay() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -3135,7 +3135,7 @@ fn autosave_preserves_later_edits_during_an_explicit_save_and_restarts_the_delay
 
 #[test]
 fn autosave_respects_cancelled_dirty_close_until_the_next_edit() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -3163,7 +3163,7 @@ fn autosave_respects_cancelled_dirty_close_until_the_next_edit() {
 
 #[test]
 fn autosave_focus_loss_saves_when_leaving_a_file_but_not_while_inspecting_its_diff() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     for action in [
         AppAction::Settings,
         AppAction::ShowTerminal,
@@ -3207,7 +3207,7 @@ fn autosave_focus_loss_saves_when_leaving_a_file_but_not_while_inspecting_its_di
 
 #[test]
 fn autosave_is_explicit_by_default_and_delay_applies_live_without_changing_file_format() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, b"\xef\xbb\xbforiginal\r\n").unwrap();
@@ -3257,7 +3257,7 @@ fn pump_autosave(runtime: &mut rune::Runtime<State>, duration: Duration) {
 
 #[test]
 fn save_control_shortcut_and_palette_save_the_same_editor_buffer() {
-    use super::super::tests::{open_palette, press, runtime_for};
+    use crate::desktop::tests::{open_palette, press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let path = root.path().join("file.txt");
     std::fs::write(&path, "original").unwrap();
@@ -3427,7 +3427,7 @@ fn editor_keys_insert_newlines_support_undo_and_close_without_losing_unsaved_wor
 
 #[test]
 fn explorer_opens_descendants_without_replacing_the_chosen_root() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let folder = root.path().join("src");
     std::fs::create_dir_all(folder.join("nested")).unwrap();
@@ -3459,7 +3459,7 @@ fn explorer_opens_descendants_without_replacing_the_chosen_root() {
 
 #[test]
 fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_without_writes() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let git = |args: &[&str]| {
         let result = std::process::Command::new("git")
@@ -3547,7 +3547,7 @@ fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_withou
 
 #[test]
 fn explorer_controls_filter_real_git_ignores_and_persist_owner_preferences() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     assert!(
         std::process::Command::new("git")
@@ -3682,7 +3682,7 @@ fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_fi
     state.directory = cwd.clone();
     state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
     wait(&mut state, |s| s.workspace.tree.cursor() == cwd.to_str());
-    let runtime = super::super::tests::runtime_for(state);
+    let runtime = crate::desktop::tests::runtime_for(state);
     assert!(runtime.find(cwd.to_str().unwrap()).is_some());
     assert!(!runtime.state.config.explorer.show_hidden);
     assert!(runtime.state.config.explorer.respect_ignore);
@@ -3690,7 +3690,7 @@ fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_fi
 
 #[test]
 fn explorer_follow_outside_root_requires_explicit_root_change() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let outside = crate::test_support::tempdir().unwrap();
     std::fs::write(outside.path().join("host.txt"), "host").unwrap();
@@ -3727,7 +3727,7 @@ fn explorer_follow_outside_root_requires_explicit_root_change() {
 
 #[test]
 fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let folder = root.path().join("source");
     std::fs::create_dir_all(folder.join("nested")).unwrap();
@@ -3772,7 +3772,7 @@ fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
 
 #[test]
 fn explorer_refresh_keeps_selection_and_shows_folder_failures_while_actions_work() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     let folder = root.path().join("source");
     std::fs::create_dir(&folder).unwrap();
@@ -3824,7 +3824,7 @@ fn explorer_refresh_keeps_selection_and_shows_folder_failures_while_actions_work
 
 #[test]
 fn explorer_type_select_prefix_survives_an_unchanged_refresh() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let root = crate::test_support::tempdir().unwrap();
     for name in ["sea.txt", "soap.txt"] {
         std::fs::write(root.path().join(name), "hello").unwrap();
@@ -3882,7 +3882,7 @@ fn legacy_explorer_preferences_move_to_owner_json_without_losing_workspace_root(
 
 #[test]
 fn workspace_controls_inspect_current_unstaged_and_staged_git_without_writes() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
@@ -4046,7 +4046,7 @@ fn real_git_patch_reaches_the_read_only_diff_view_and_adapts_layout() {
 #[cfg(unix)]
 #[test]
 fn double_clicking_a_symlink_retains_the_canonical_preview_and_persists_it() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let real = root.path().join("real.txt");
     let alias = root.path().join("alias.txt");
@@ -4129,7 +4129,7 @@ fn settle(runtime: &mut rune::Runtime<State>) {
 
 #[test]
 fn root_row_keeps_commands_drops_close_and_parent_and_reveals_controls_on_hover_or_focus() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     std::fs::write(root.path().join("notes.txt"), "notes").unwrap();
     let mut state = state(root.path());
@@ -4243,7 +4243,7 @@ fn root_row_keeps_commands_drops_close_and_parent_and_reveals_controls_on_hover_
 
 #[test]
 fn narrow_explorer_folds_root_controls_into_one_menu_whose_toggles_work() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     // Five controls of 30 pt with 2 pt gaps, the row's chrome and padding,
     // and 32 pt of the root's name: 266 pt. The default 240 pt explorer
     // folds them into the menu.
@@ -4323,7 +4323,7 @@ fn narrow_explorer_folds_root_controls_into_one_menu_whose_toggles_work() {
 
 #[test]
 fn explorer_marks_git_changes_in_place_of_sizes_and_offers_only_relevant_comparisons() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let git = |args: &[&str]| {
         assert!(
@@ -4660,7 +4660,7 @@ fn restored_expanded_folders_load_before_reading_empty_and_keep_their_children()
 
 #[test]
 fn compact_files_overlay_keeps_the_pty_and_prompt_and_returns_focus() {
-    use super::super::tests::{press, runtime_for};
+    use crate::desktop::tests::{press, runtime_for};
     let fixture = crate::test_support::tempdir().unwrap();
     let path = fixture.path().join("notes.txt");
     std::fs::write(&path, "overlay notes").unwrap();
@@ -4816,7 +4816,7 @@ fn compact_files_overlay_keeps_the_pty_and_prompt_and_returns_focus() {
 
 #[test]
 fn diff_lines_carry_plus_and_minus_signs_beside_their_tints_in_both_layouts() {
-    use super::super::tests::runtime_for;
+    use crate::desktop::tests::runtime_for;
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());
     demo(&mut state, true);

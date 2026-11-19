@@ -70,7 +70,7 @@ mod tests {
         state.start_tab(root.into());
         state.toggle_files();
         state.workspace.layout.explorer_width = explorer_width;
-        let mut rt = super::super::tests::runtime_for(state);
+        let mut rt = crate::desktop::tests::runtime_for(state);
         let start = std::time::Instant::now();
         while rt.state.workspace.entries.is_empty() && start.elapsed().as_secs() < 8 {
             rt.update(|s, tx| {
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn settings_controls_are_named_tabs_fieldsets_dropdowns_switches_and_restore_defaults() {
         let root = crate::test_support::tempdir().unwrap();
-        let mut rt = super::super::tests::runtime_for(State::with_root(root.path().into()));
+        let mut rt = crate::desktop::tests::runtime_for(State::with_root(root.path().into()));
         rt.update(|s, tx| s.open_settings(tx));
         settle(&mut rt);
         assert_eq!(role_name(&rt, "settings-tab"), ("tab", "Settings").into());

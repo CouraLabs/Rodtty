@@ -17,20 +17,23 @@ pub(super) fn runtime_for(state: State) -> rune::Runtime<State> {
 /// exercise app-drawn or host-drawn controls regardless of the host they
 /// run on. `Runtime::new` takes a plain function pointer, so the
 /// placement is selected here rather than captured.
-pub(super) fn runtime_for_frame(state: State, placement: frame::Placement) -> rune::Runtime<State> {
+pub(super) fn runtime_for_frame(
+    state: State,
+    placement: window::frame::Placement,
+) -> rune::Runtime<State> {
     fn hosted(state: &State, cx: &mut Cx<State>) -> El {
-        view_with_frame(state, cx, frame::Placement::Hosted)
+        view_with_frame(state, cx, window::frame::Placement::Hosted)
     }
     fn trailing(state: &State, cx: &mut Cx<State>) -> El {
-        view_with_frame(state, cx, frame::Placement::Trailing)
+        view_with_frame(state, cx, window::frame::Placement::Trailing)
     }
     fn native(state: &State, cx: &mut Cx<State>) -> El {
-        view_with_frame(state, cx, frame::Placement::Native)
+        view_with_frame(state, cx, window::frame::Placement::Native)
     }
     let view = match placement {
-        frame::Placement::Hosted => hosted as fn(&State, &mut Cx<State>) -> El,
-        frame::Placement::Trailing => trailing,
-        frame::Placement::Native => native,
+        window::frame::Placement::Hosted => hosted as fn(&State, &mut Cx<State>) -> El,
+        window::frame::Placement::Trailing => trailing,
+        window::frame::Placement::Native => native,
     };
     let mut runtime = rune::Runtime::new(state, view, (1200.0, 700.0), rune::Env::new(true, 1.0));
     runtime.on_key = Some(on_key);
@@ -245,7 +248,7 @@ fn dirty_editor_decision_precedes_each_window_policy_and_quit() {
         for action in [AppAction::CloseWindow, AppAction::Quit] {
             let root = crate::test_support::tempdir().unwrap();
             let mut state = State::with_root(root.path().into());
-            workspace::demo(&mut state, false);
+            demo(&mut state, false);
             state.workspace.tabs[0].edit.insert("draft remains ");
             let draft = state.workspace.tabs[0].edit.text.clone();
             state.save_config(|c| c.behavior.window_close = policy);
@@ -588,10 +591,10 @@ fn idle_terminal_closes_immediately_but_live_commands_offer_cancel() {
 fn mac_hosted_titlebar_keeps_traffic_lights_and_header_clicks() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
-    workspace::demo(&mut state, false);
+    demo(&mut state, false);
     let mut runtime = rune::Runtime::new(
         state,
-        |state, cx| view_with_frame(state, cx, frame::Placement::Hosted),
+        |state, cx| view_with_frame(state, cx, window::frame::Placement::Hosted),
         (640.0, 360.0),
         rune::Env::new(true, 2.0),
     );
@@ -661,7 +664,7 @@ fn mac_hosted_titlebar_keeps_traffic_lights_and_header_clicks() {
 fn right_frame_places_controls_right_and_header_controls_keep_their_clicks() {
     let mut runtime = rune::Runtime::new(
         State::init(),
-        |state, cx| view_with_frame(state, cx, frame::Placement::Trailing),
+        |state, cx| view_with_frame(state, cx, window::frame::Placement::Trailing),
         (1200.0, 700.0),
         rune::Env::new(true, 1.0),
     );
@@ -724,10 +727,10 @@ fn right_frame_places_controls_right_and_header_controls_keep_their_clicks() {
 fn custom_close_keeps_unsaved_editor_until_owner_decides() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().to_owned());
-    workspace::demo(&mut state, false);
+    demo(&mut state, false);
     state.workspace.tabs[0].edit.insert("draft remains ");
     let draft = state.workspace.tabs[0].edit.text.clone();
-    let mut runtime = runtime_for_frame(state, frame::Placement::Trailing);
+    let mut runtime = runtime_for_frame(state, window::frame::Placement::Trailing);
     let (x, y) = runtime.find("window-close").unwrap();
     runtime.pointer_down(x, y);
     assert_eq!(runtime.take_titlebar_action(), None);

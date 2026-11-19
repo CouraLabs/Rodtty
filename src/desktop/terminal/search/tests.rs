@@ -1,5 +1,5 @@
-use super::super::tests::{press, runtime_for};
 use super::*;
+use crate::desktop::tests::{press, runtime_for};
 
 fn screen(rows: u16, cols: u16, bytes: &[u8]) -> vt100::Screen {
     let mut parser = vt100::Parser::new(rows, cols, 1000);

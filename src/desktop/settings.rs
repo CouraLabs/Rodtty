@@ -1394,7 +1394,7 @@ pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
     let mut layers = Vec::new();
     if s.settings
         && !s.application_overlay_open()
-        && workspace::pane_visibility(s, width).2
+        && pane_visibility(s, width).2
         && (s.settings_select.is_some()
             || s.theme_family_picker.is_open()
             || s.font_ui.is_open()

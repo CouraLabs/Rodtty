@@ -1,6 +1,6 @@
-use super::super::tests::runtime_for;
 use super::*;
 use crate::config::{Appearance as Mode, ThemeFamily};
+use crate::desktop::tests::runtime_for;
 
 /// A runtime showing `bytes` as retained terminal output, in `family` Dark.
 fn showing(bytes: &[u8], family: ThemeFamily) -> rune::Runtime<State> {

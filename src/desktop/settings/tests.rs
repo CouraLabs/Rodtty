@@ -778,7 +778,7 @@ fn editor_and_read_only_diff_draw_the_selected_familys_keyword_palette() {
                     s.settings_poll = Instant::now() - Duration::from_secs(1);
                     s.poll_settings();
                     s.workspace.tabs.clear();
-                    workspace::demo(s, diff);
+                    demo(s, diff);
                 });
                 for _ in 0..45 {
                     rt.frame(1.0 / 60.0);
