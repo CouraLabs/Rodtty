@@ -90,14 +90,13 @@ pub(super) fn stepper(
     change: fn(&mut Config, f32),
 ) -> El {
     let step_button = |action: &str, title: &'static str, name: &str, sign: f32| {
-        let name = format!("{name} {subject}");
-        button(a, format!("{action}-{key}"), title, move |s, _| {
-            s.save_config(|c| change(c, sign));
-        })
-        .w(32.0)
-        .px(0.0)
-        .label(name.clone())
-        .help(name)
+        glyph_button(
+            a,
+            format!("{action}-{key}"),
+            title,
+            format!("{name} {subject}"),
+            move |s, _| s.save_config(|c| change(c, sign)),
+        )
     };
     row()
         .gap(6.0)

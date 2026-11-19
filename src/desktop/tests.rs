@@ -17,6 +17,7 @@ pub(super) fn runtime_for(state: State) -> rune::Runtime<State> {
 /// exercise app-drawn or host-drawn controls regardless of the host they
 /// run on. `Runtime::new` takes a plain function pointer, so the
 /// placement is selected here rather than captured.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn runtime_for_frame(
     state: State,
     placement: window::frame::Placement,

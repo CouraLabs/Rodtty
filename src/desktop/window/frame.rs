@@ -93,36 +93,23 @@ pub(crate) fn controls(state: &State, a: &Appearance, placement: Placement) -> E
     if !controls_shown(placement) {
         return el();
     }
-    let minimize = button(a, "window-minimize", "−", |_, tx| tx.minimize())
-        .w(32.0)
-        .px(0.0)
-        .label("Minimize window")
-        .help("Minimize window");
-    let maximize = button(
+    let minimize = glyph_button(a, "window-minimize", "−", "Minimize window", |_, tx| {
+        tx.minimize()
+    });
+    let maximize = glyph_button(
         a,
         "window-maximize",
         if state.window_maximized { "❐" } else { "□" },
+        if state.window_maximized {
+            "Restore window"
+        } else {
+            "Maximize window"
+        },
         |_, tx| tx.toggle_maximized(),
-    )
-    .w(32.0)
-    .px(0.0)
-    .label(if state.window_maximized {
-        "Restore window"
-    } else {
-        "Maximize window"
-    })
-    .help(if state.window_maximized {
-        "Restore window"
-    } else {
-        "Maximize window"
-    });
-    let close = button(a, "window-close", "×", |s, tx| {
+    );
+    let close = glyph_button(a, "window-close", "×", "Close window", |s, tx| {
         s.dispatch(AppAction::CloseWindow, tx)
-    })
-    .w(32.0)
-    .px(0.0)
-    .label("Close window")
-    .help("Close window");
+    });
     row()
         .key("window-controls")
         .no_window_drag()

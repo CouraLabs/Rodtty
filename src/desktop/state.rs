@@ -1,5 +1,8 @@
 use super::*;
 
+// One pending prompt at a time, held once in `State`: boxing the larger
+// operation prompt would only add an allocation per prompt.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Pending {
     Tab(usize),
     Quit,

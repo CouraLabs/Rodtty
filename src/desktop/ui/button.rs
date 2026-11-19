@@ -55,6 +55,33 @@ pub(crate) fn button(
     label: impl Into<String>,
     action: impl Fn(&mut State, &mut Tx) + 'static,
 ) -> El {
+    text_button(a, key, label, false, action)
+}
+
+/// A button showing a symbol (`−`, `□`, `×`) that assistive technology
+/// names `name` instead: the symbol itself stays out of the tree.
+pub(crate) fn glyph_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    glyph: &str,
+    name: impl Into<String>,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let name = name.into();
+    text_button(a, key, glyph, true, action)
+        .w(32.0)
+        .px(0.0)
+        .label(name.clone())
+        .help(name)
+}
+
+fn text_button(
+    a: &Appearance,
+    key: impl Into<String>,
+    label: impl Into<String>,
+    hide_text: bool,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
     let label = label.into();
     let key = key.into();
     let help = match key.as_str() {
@@ -92,13 +119,14 @@ pub(crate) fn button(
             tx.blur();
             action(state, tx);
         })
-        .child(
-            text(label)
+        .child({
+            let text = text(label)
                 .font(ui_label())
                 .color(a.ink())
                 .min_w(0.0)
-                .truncate(),
-        )
+                .truncate();
+            if hide_text { text.a11y_hidden() } else { text }
+        })
 }
 
 pub(crate) fn icon_button(

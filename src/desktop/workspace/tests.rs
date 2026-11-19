@@ -4733,8 +4733,15 @@ fn compact_files_overlay_keeps_the_pty_and_prompt_and_returns_focus() {
             .find(|e| e.key.as_deref() == Some("explorer") && !e.exiting)
             .unwrap()
             .rect;
+        // Platforms that draw their own frame inset the content by its border.
+        let right = 640.0
+            - if crate::desktop::window::frame::borderless() {
+                crate::desktop::window::frame::BORDER
+            } else {
+                0.0
+            };
         assert!(
-            (explorer[0] + explorer[2] - 640.0).abs() < 2.0,
+            (explorer[0] + explorer[2] - right).abs() < 2.0,
             "the overlay is anchored right: {explorer:?}"
         );
         assert_eq!(
