@@ -124,11 +124,14 @@ impl Session {
             pixel_height: 0,
         })?;
         let mut command = CommandBuilder::new(shell);
+        // Brush offers its VT line editor only on Unix, where it can put the
+        // terminal in raw mode. On Windows the minimal backend is the one built.
+        let input_backend = if cfg!(windows) { "minimal" } else { "vt" };
         command.args([
             "--no-config",
             "--noprofile",
             "--input-backend",
-            "vt",
+            input_backend,
             "--rcfile",
         ]);
         command.arg(&profile.rc);
