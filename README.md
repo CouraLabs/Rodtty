@@ -2,6 +2,8 @@
 
 A Rust and Rune desktop terminal for Windows, macOS, and Linux, with a consistent Bash-style shell environment and configurable uutils commands.
 
+Rodtty's shell is built on [Brush](https://github.com/reubeno/brush), a Bash-compatible shell written in Rust by reuben olinsky. Brush's source is part of this repository in [`vendor/brush`](vendor/brush), where Rodtty fixes and extends it; [`vendor/brush/RODTTY-PATCH.md`](vendor/brush/RODTTY-PATCH.md) lists every change from upstream.
+
 The desktop development build includes the terminal, file explorer, UTF-8 editor, and read-only Git diffs. Current validation is recorded in [the desktop implementation report](docs/desktop-implementation.md); the earlier [terminal feasibility report](docs/feasibility-report.md) records the initial milestone. Windows and macOS native runtime checks remain pending. Browser/PWA remote access follows in a later phase.
 
 ## Install
@@ -31,7 +33,7 @@ cargo run --locked --bin rodtty-probe
 cargo run --locked --bin rodtty -- --cwd /path/to/project
 ```
 
-Rune and Brush are pinned to Git revisions; the Rune dependency patches are carried in the root manifest. `Cargo.lock` records the full dependency graph.
+Rune is pinned to a Git revision, with its dependency patches carried in the root manifest. Brush is built from `vendor/brush`. `Cargo.lock` records the full dependency graph.
 
 ## Desktop behavior
 
@@ -213,6 +215,6 @@ Settings offers searchable installed UI and verified monospace terminal family s
 - [Domain glossary](GLOSSARY.md)
 - [Architecture decisions](docs/adr/)
 
-Bundled Geist and Geist Mono are distributed under the [SIL Open Font License](assets/fonts/Geist-OFL.txt). The retained IBM Plex Mono asset has its own [font license](assets/fonts/IBMPlexMono-LICENSE.txt). Application code is MIT licensed.
+Bundled Geist and Geist Mono are distributed under the [SIL Open Font License](assets/fonts/Geist-OFL.txt). The retained IBM Plex Mono asset has its own [font license](assets/fonts/IBMPlexMono-LICENSE.txt). Application code is MIT licensed. Brush is MIT licensed by reuben olinsky; its [license](vendor/brush/LICENSE) stays with its source.
 
 Explorer and editor-tab artwork comes from [vscode-icons](https://github.com/vscode-icons/vscode-icons). Its artwork uses CC BY-SA 4.0, with branded icons retaining their respective copyright licenses; see the [artwork attribution and notices](assets/icons/NOTICE.md). The upstream source-code MIT license does not cover all artwork.

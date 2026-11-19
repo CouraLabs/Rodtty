@@ -21,4 +21,7 @@ lints and tests. Run Brush's tests with `cargo test` from this directory.
 
 Every change to Brush's source is listed here, newest last.
 
-- (none yet)
+- `brush-interactive`, minimal input backend: a line ending in CR LF (how a
+  Windows console ends lines) is read as ending in LF, so the CR doesn't join
+  the command's last word. Before, `cd dir` on Windows looked for `dir\r` and
+  failed with "os error 123".

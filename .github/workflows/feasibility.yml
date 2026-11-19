@@ -31,6 +31,8 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --bins
       - run: cargo test --locked --all-targets -- --test-threads=1
+      - name: Tests of the Brush crates Rodtty patches
+        run: cargo test --locked --manifest-path vendor/brush/Cargo.toml --target-dir target/brush -p brush-interactive --lib
       - name: Real Vim integration
         if: runner.os == 'Linux'
         run: cargo test --locked --test terminal real_vim_accepts_keyboard_input_and_saves_a_file -- --ignored

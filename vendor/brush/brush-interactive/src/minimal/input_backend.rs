@@ -84,6 +84,14 @@ impl MinimalInputBackend {
             .read_line(&mut input)
             .map_err(ShellError::InputError)?;
 
+        // A Windows console ends each line with CR LF. Bash would read the CR
+        // as part of the last word (`cd dir` would look for "dir\r"), so the
+        // line ending becomes a plain LF.
+        if input.ends_with("\r\n") {
+            input.truncate(input.len() - 2);
+            input.push('\n');
+        }
+
         Ok((bytes_read > 0).then_some(input))
     }
 }
@@ -190,5 +198,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(prompts, Vec::<u8>::new());
+    }
+
+    #[tokio::test]
+    async fn a_console_line_ending_is_read_as_a_newline() {
+        assert_reads("cd dir\r\n", "cd dir\n").await;
+        assert_reads("echo 'a\rb'\n", "echo 'a\rb'\n").await;
     }
 }

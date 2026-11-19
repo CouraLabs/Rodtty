@@ -32,12 +32,13 @@ fn cold_workspace_restores_reordered_terminals_in_last_directories_without_old_c
         .wait_for("rodtty:", Duration::from_secs(10))
         .unwrap();
     state.send(b"cd last-directory\r".to_vec());
-    state
-        .active()
-        .unwrap()
-        .wait_for("last-directory$", Duration::from_secs(10))
-        .unwrap();
-    assert_eq!(state.active().unwrap().cwd(), last_directory);
+    // The prompt ends in `$`, or `#` for an elevated Windows user, so wait
+    // for the directory the shell reports instead.
+    let started = std::time::Instant::now();
+    while state.active().unwrap().cwd() != last_directory {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(20));
+    }
     state.send(
         b"printf '\\033]0;OLD APPLICATION\\007'; printf 'OLD_WORKSPACE_%s\\n' OUTPUT\r".to_vec(),
     );

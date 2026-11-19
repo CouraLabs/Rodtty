@@ -16,6 +16,12 @@ Rodtty is one crate. The library holds the platform-neutral core. `src/desktop` 
 | `instance` | The single-instance lock and the reopen hand-off |
 | `bin/shell.rs`, `bin/probe.rs` | `rodtty-shell`, the session shell and command launcher, and `rodtty-probe`, the PTY probe without a UI |
 
+## Vendored crates (`vendor/`)
+
+- `vendor/brush`: Brush, the Bash-compatible shell that `rodtty-shell` runs. It is its own Cargo workspace; `RODTTY-PATCH.md` lists every change from upstream, and `cargo test --manifest-path vendor/brush/Cargo.toml -p <crate>` runs its tests.
+- `vendor/rune`, `vendor/rune-kit`: the UI toolkit, with Rodtty's patches recorded beside them.
+- `vendor/trash`, `vendor/vte`: patched dependencies.
+
 ## Desktop app (`src/desktop/`)
 
 `desktop.rs` declares the modules, runs the app (`run`), and wires its event loop (`setup`, `poll`). All app state lives in one `State` struct (`state.rs`). Each feature adds its own `impl State` block.
