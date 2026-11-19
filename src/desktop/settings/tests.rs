@@ -999,6 +999,7 @@ fn owner_changes_appearance_live_and_reopens_with_saved_choice() {
     assert_canvas(&reopened, "#1e1e2e");
 }
 #[test]
+#[cfg_attr(windows, ignore = "expects a Unix $HOME and an unprivileged $ prompt")]
 fn prompt_style_and_symbol_preview_reset_persist_and_reach_a_running_shell() {
     use crate::prompt::{PromptStyle, PromptSymbol};
     let root = crate::test_support::tempdir().unwrap();

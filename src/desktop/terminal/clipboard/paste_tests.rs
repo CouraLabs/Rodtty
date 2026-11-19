@@ -88,6 +88,7 @@ fn paths_paste_as_single_bash_words_written_like_a_dropped_file() {
 /// escaped absolute paths with nothing submitted; an image-only clipboard
 /// sends a saved PNG's path; the words parse back to the same paths in the real shell.
 #[test]
+#[cfg_attr(windows, ignore = "drives the PTY with Unix stty, head and od")]
 fn every_entry_point_pastes_file_lists_as_quoted_paths_without_submitting() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = shell_state(root.path());
@@ -240,7 +241,7 @@ fn a_pending_paste_is_dropped_when_its_session_or_focus_moves() {
     state.new_tab();
     assert_eq!(state.sessions.len(), 2);
     let mut rt = runtime_for(state);
-    let files = rune::ClipboardContent::default().with_files([PathBuf::from("/tmp/a b")]);
+    let files = rune::ClipboardContent::default().with_files([std::env::temp_dir().join("a b")]);
     let text = rune::ClipboardContent::new("echo hi");
     let target = |rt: &mut rune::Runtime<State>| {
         let mut target = None;

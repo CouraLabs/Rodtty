@@ -1,5 +1,6 @@
 //! Recoverable host removal. Every permanent deletion requires a separate caller decision.
 use super::operations::fingerprint;
+use crate::paths::Canonical as _;
 use anyhow::{Context, Result, bail};
 use std::{fs, path::PathBuf};
 
@@ -21,7 +22,7 @@ impl RemovalPlan {
         let parent = path
             .parent()
             .context("Cannot remove a filesystem root")?
-            .canonicalize()
+            .canonical()
             .context("Open removal parent folder")?;
         let name = path
             .file_name()

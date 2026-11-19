@@ -1,4 +1,5 @@
 use super::*;
+use crate::paths::Canonical as _;
 
 // One pending prompt at a time, held once in `State`: boxing the larger
 // operation prompt would only add an allocation per prompt.
@@ -232,7 +233,7 @@ impl State {
         if !self.config_valid {
             return;
         }
-        let cwd = match cwd.canonicalize() {
+        let cwd = match cwd.canonical() {
             Ok(cwd) if cwd.is_dir() => cwd,
             _ => {
                 self.message = format!("Could not open terminal directory: {}", cwd.display());

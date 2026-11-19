@@ -1,3 +1,4 @@
+use rodtty::paths::Canonical as _;
 use rodtty::{
     files::{Document, MAX_FILE_BYTES, SaveFailure, TextFile, list_directory},
     git::{self, Comparison},
@@ -171,7 +172,7 @@ fn untracked_files_in_new_directories_are_labelled_as_additions() {
     let path = root.path().join("new-folder/café name.txt");
     fs::write(&path, "new text\n").unwrap();
     let status = git::inspect(root.path()).unwrap().unwrap();
-    assert_eq!(status.badge(&path.canonicalize().unwrap()), "??");
+    assert_eq!(status.badge(&path.canonical().unwrap()), "??");
     let result = git::diff(&path, "new text\n", Comparison::Current).unwrap();
     assert!(result.untracked);
     assert!(result.patch.contains("--- /dev/null"));
@@ -216,7 +217,7 @@ fn linked_worktree_is_resolved_from_the_opened_file() {
     let path = worktree.join("tracked.txt");
     fs::write(&path, "linked edits\n").unwrap();
     let status = git::inspect(&worktree).unwrap().unwrap();
-    assert_eq!(status.root, worktree.canonicalize().unwrap());
+    assert_eq!(status.root, worktree.canonical().unwrap());
     assert!(
         git::diff(&path, "linked edits\n", Comparison::Current)
             .unwrap()

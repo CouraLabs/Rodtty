@@ -104,6 +104,9 @@ pub struct Session {
     jobs: PathBuf,
     job_pids: PathBuf,
     profile: PathBuf,
+    /// The shell executable's path. A Windows console titles itself with the
+    /// program it runs, which names no application, so tabs ignore it.
+    shell_title: String,
 }
 
 impl Session {
@@ -232,6 +235,7 @@ impl Session {
             wake();
         });
         Ok(Self {
+            shell_title: shell.to_string_lossy().into_owned(),
             id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             initial_cwd: cwd.to_owned(),
             config,
@@ -380,7 +384,7 @@ impl Session {
     pub fn tab_title(&self) -> String {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let title = &state.parser.callbacks().title;
-        if title.is_empty() {
+        if title.is_empty() || *title == self.shell_title {
             FALLBACK_TAB_TITLE.into()
         } else {
             title.clone()

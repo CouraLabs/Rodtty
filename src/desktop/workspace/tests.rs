@@ -1,4 +1,5 @@
 use super::*;
+use crate::paths::Canonical as _;
 
 fn image_bytes(runtime: &rune::Runtime<State>, page: usize, uv: [f32; 4]) -> Vec<u8> {
     let page = &runtime.images.pages[page];
@@ -3641,13 +3642,13 @@ fn explorer_only_tracks_terminal_location_when_follow_is_enabled() {
     wait(&mut state, |s| !s.workspace.scan_busy);
     assert_eq!(
         state.workspace.directory,
-        Some(root.path().canonicalize().unwrap())
+        Some(root.path().canonical().unwrap())
     );
     state.directory = child.clone();
     state.workspace_poll(&mut Tx::default());
     assert_eq!(
         state.workspace.directory,
-        Some(root.path().canonicalize().unwrap())
+        Some(root.path().canonical().unwrap())
     );
     state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
     state.workspace_poll(&mut Tx::default());
@@ -4363,7 +4364,7 @@ fn explorer_marks_git_changes_in_place_of_sizes_and_offers_only_relevant_compari
                 .as_ref()
                 .is_some_and(|r| r.files.len() == 4)
     });
-    let file = |name: &str| root.path().canonicalize().unwrap().join(name);
+    let file = |name: &str| root.path().canonical().unwrap().join(name);
     let repo = state.workspace.repo.clone().unwrap();
     assert_eq!(repo.change(&file("updated.txt")), Some(Change::Modified));
     assert_eq!(repo.change(&file("added.txt")), Some(Change::Added));

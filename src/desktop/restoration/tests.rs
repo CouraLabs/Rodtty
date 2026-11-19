@@ -117,7 +117,12 @@ fn regular_files_layout_and_terminal_focus_survive_missing_paths_without_drafts(
     let settings_before = std::fs::read(root.join("settings.json")).ok();
     std::fs::remove_file(&last).unwrap();
     drop(state);
-    std::fs::remove_dir(&missing_folder).unwrap();
+    // Windows keeps a folder in use until the shell started there has exited.
+    let started = std::time::Instant::now();
+    while let Err(error) = std::fs::remove_dir(&missing_folder) {
+        assert!(started.elapsed().as_secs() < 10, "{error}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let mut fresh = fixture_state(root.clone());
     fresh.directory = folder.clone();
     fresh.restore_startup();

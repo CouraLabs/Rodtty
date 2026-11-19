@@ -207,6 +207,7 @@ fn shared_terminal_editor_chords_follow_visible_focus_and_text_fields_keep_copy_
     assert!(rt.find("settings-search").is_none());
 }
 #[test]
+#[cfg_attr(windows, ignore = "drives the PTY with Unix stty, head and od")]
 fn runtime_retains_real_pty_interrupt_and_fullscreen_keys_with_custom_binding() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());

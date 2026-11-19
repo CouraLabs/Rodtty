@@ -17,6 +17,7 @@ pub mod config;
 pub mod files;
 pub mod git;
 pub mod instance;
+pub mod paths;
 pub mod profile;
 pub mod prompt;
 pub mod session;

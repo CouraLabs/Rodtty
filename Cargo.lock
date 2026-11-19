@@ -4329,6 +4329,7 @@ dependencies = [
  "brush-shell",
  "crossterm",
  "directories",
+ "dunce",
  "fontique",
  "fs2",
  "nix 0.31.3",

@@ -1,5 +1,6 @@
 //! Background filesystem operations with explicit, version-checked collision decisions.
 use super::{Document, MAX_FILE_BYTES, TextFile};
+use crate::paths::Canonical as _;
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
@@ -69,7 +70,7 @@ impl OperationRequest {
             .target
             .parent()
             .context("Choose a destination folder")?
-            .canonicalize()
+            .canonical()
             .context("Open destination folder")?;
         let name = self
             .target
@@ -85,7 +86,7 @@ impl OperationRequest {
             let original = source
                 .parent()
                 .context("Source has no parent")?
-                .canonicalize()?
+                .canonical()?
                 .join(source.file_name().context("Source has no name")?);
             if original == target {
                 fs::symlink_metadata(source).context("Read source")?;
@@ -111,7 +112,7 @@ impl OperationRequest {
                 let removal_parent = removing
                     .parent()
                     .context("Invalid removal path")?
-                    .canonicalize()?;
+                    .canonical()?;
                 let removal =
                     removal_parent.join(removing.file_name().context("Invalid removal path")?);
                 if target.starts_with(&removal) {
@@ -119,14 +120,14 @@ impl OperationRequest {
                 }
                 // Reject existing aliases into the removal subtree, and do not replace
                 // another open editor's version underneath its buffer.
-                let resolved_target = target.canonicalize().unwrap_or_else(|_| target.clone());
-                let resolved_removal = removing.canonicalize().unwrap_or(removal);
+                let resolved_target = target.canonical().unwrap_or_else(|_| target.clone());
+                let resolved_removal = removing.canonical().unwrap_or(removal);
                 if resolved_target.starts_with(&resolved_removal) {
                     bail!("Choose a Save As location outside the item being deleted.");
                 }
                 if protected
                     .iter()
-                    .any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == resolved_target)
+                    .any(|p| p.canonical().unwrap_or_else(|_| p.clone()) == resolved_target)
                 {
                     bail!(
                         "The Save As destination is open in another editor. Choose a different file."
@@ -140,13 +141,13 @@ impl OperationRequest {
             FileOperation::Copy { source } | FileOperation::Move { source } => {
                 let metadata = fs::symlink_metadata(source).context("Read source")?;
                 if metadata.is_dir()
-                    && parent.starts_with(source.canonicalize().context("Open source folder")?)
+                    && parent.starts_with(source.canonical().context("Open source folder")?)
                 {
                     bail!("A folder cannot be copied into itself or one of its descendants.");
                 }
                 let source_path = source
                     .parent()
-                    .and_then(|p| p.canonicalize().ok())
+                    .and_then(|p| p.canonical().ok())
                     .zip(source.file_name())
                     .map(|(parent, name)| parent.join(name));
                 if source_path.as_ref() == Some(&target) {
@@ -195,7 +196,7 @@ impl OperationRequest {
             && let FileOperation::Copy { source } | FileOperation::Move { source } = &self.operation
         {
             let target_metadata = fs::symlink_metadata(&target)?;
-            if target_metadata.is_dir() && source.canonicalize()?.starts_with(&target) {
+            if target_metadata.is_dir() && source.canonical()?.starts_with(&target) {
                 bail!("A copy cannot replace a folder containing its source. Choose Keep Both.");
             }
         }
@@ -344,7 +345,7 @@ fn same_entry_case_alias(source: &Path, target: &Path) -> Result<bool> {
     #[cfg(not(unix))]
     {
         let _ = (source_metadata, target_metadata);
-        if source.canonicalize()? != target.canonicalize()? {
+        if source.canonical()? != target.canonical()? {
             return Ok(false);
         }
     }

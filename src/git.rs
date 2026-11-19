@@ -1,5 +1,6 @@
 //! Read-only host-Git inspection. Arguments are passed directly, never through a shell.
 use crate::files::{MAX_FILE_BYTES, TextFile};
+use crate::paths::Canonical as _;
 use anyhow::{Context, Result, bail};
 use similar::TextDiff;
 use std::{
@@ -196,7 +197,7 @@ pub fn inspect(directory: &Path) -> Result<Option<Repository>> {
     if raw.ends_with(b"\r") {
         raw = &raw[..raw.len() - 1];
     }
-    let root = bytes_path(raw).canonicalize()?;
+    let root = bytes_path(raw).canonical()?;
     let output = run(
         &root,
         ["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
@@ -370,11 +371,11 @@ pub struct Diff {
 
 pub fn diff(path: &Path, buffer: &str, comparison: Comparison) -> Result<Diff> {
     let normalized = if path.exists() {
-        path.canonicalize()?
+        path.canonical()?
     } else {
         path.parent()
             .context("file has no parent")?
-            .canonicalize()?
+            .canonical()?
             .join(path.file_name().context("file has no name")?)
     };
     let path = normalized.as_path();

@@ -1,3 +1,4 @@
+use crate::paths::Canonical as _;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -325,7 +326,7 @@ pub fn migrate_storage(root: &Path, legacy: &Path) -> Result<()> {
 
 pub fn initial_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = explicit {
-        let path = path.canonicalize().context("invalid startup directory")?;
+        let path = path.canonical().context("invalid startup directory")?;
         if !path.is_dir() {
             bail!("startup path is not a directory: {}", path.display());
         }
@@ -367,7 +368,7 @@ pub fn configured_startup_directory(
 pub fn shell_executable() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("RODTTY_SHELL") {
         return PathBuf::from(path)
-            .canonicalize()
+            .canonical()
             .context("invalid RODTTY_SHELL");
     }
     let path = std::env::current_exe()?
@@ -605,7 +606,7 @@ mod tests {
         let explicit = crate::test_support::tempdir().unwrap();
         assert_eq!(
             initial_directory(Some(explicit.path().to_owned())).unwrap(),
-            explicit.path().canonicalize().unwrap()
+            explicit.path().canonical().unwrap()
         );
     }
 

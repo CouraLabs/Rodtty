@@ -161,6 +161,7 @@ fn copy_on_selection_defaults_on_copies_only_finished_nonempty_drags_and_honors_
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "drives the PTY with Unix stty, head and od")]
 fn terminal_clipboard_actions_reach_real_pty_and_overlay_keeps_input_out() {
     let root = crate::test_support::tempdir().unwrap();
     let mut state = State::with_root(root.path().into());

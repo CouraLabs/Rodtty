@@ -15,6 +15,7 @@
 //! stop signal per directory entry and per line, so a superseded search ends
 //! promptly.
 use super::{MAX_FILE_BYTES, filtered_out};
+use crate::paths::Canonical as _;
 use std::{
     fs,
     io::Read,
@@ -111,7 +112,7 @@ pub fn search(
     let Some(needle) = Needle::new(&query.text) else {
         return summary;
     };
-    let Ok(root) = query.root.canonicalize() else {
+    let Ok(root) = query.root.canonical() else {
         return summary;
     };
     let mut lowered = Lowered::default();

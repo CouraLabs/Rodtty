@@ -1,3 +1,4 @@
+use crate::paths::Canonical as _;
 pub mod operations;
 pub mod removal;
 pub mod search;
@@ -153,7 +154,7 @@ pub enum SaveFailure {
 impl Document {
     pub fn open(path: &Path) -> Result<Self> {
         let path = path
-            .canonicalize()
+            .canonical()
             .with_context(|| format!("Open {}", path.display()))?;
         let saved = read_text(&path)?;
         Ok(Self {
@@ -166,7 +167,7 @@ impl Document {
         let parent = path
             .parent()
             .context("file has no parent directory")?
-            .canonicalize()?;
+            .canonical()?;
         let path = parent.join(path.file_name().context("missing file name")?);
         Ok(Self {
             path,
@@ -246,7 +247,7 @@ pub struct Entry {
 }
 
 pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)> {
-    let root = path.canonicalize()?;
+    let root = path.canonical()?;
     let mut entries = Vec::new();
     for entry in fs::read_dir(&root)? {
         let entry = entry?;

@@ -1,4 +1,5 @@
 //! Helpers shared by unit tests.
+use crate::paths::Canonical as _;
 
 /// A temporary directory whose path is already canonical.
 ///
@@ -9,7 +10,7 @@
 /// reports. Creating them inside the canonical temporary directory keeps the
 /// tests' expectations in the same form the host uses.
 pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
-    let base = std::env::temp_dir().canonicalize()?;
+    let base = std::env::temp_dir().canonical()?;
     tempfile::tempdir_in(base)
 }
 
