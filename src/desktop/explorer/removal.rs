@@ -1,18 +1,16 @@
-mod native;
-use super::*;
+use crate::desktop::*;
 use crate::{
     files::removal::{RemovalOutcome, RemovalPlan},
     work::Job,
 };
-pub(super) use native::check as native_check;
 
-pub(super) struct RemovalState {
+pub(crate) struct RemovalState {
     pub plan: Option<RemovalPlan>,
     pub discarded: Vec<(u64, u64)>,
     pub save_as: Option<u64>,
     pub permanent: bool,
 }
-pub(super) enum RemovalPrompt {
+pub(crate) enum RemovalPrompt {
     Busy,
     Confirm,
     Dirty(u64),
@@ -21,11 +19,11 @@ pub(super) enum RemovalPrompt {
 }
 
 impl State {
-    pub(super) fn removal_background_busy(&self) -> bool {
+    pub(crate) fn removal_background_busy(&self) -> bool {
         self.workspace.operation_busy
             && matches!(self.pending, Some(Pending::Removal(RemovalPrompt::Busy)))
     }
-    pub(super) fn begin_removal(&mut self, tx: &mut Tx) {
+    pub(crate) fn begin_removal(&mut self, tx: &mut Tx) {
         if self.workspace.operation_busy || self.workspace.removal.is_some() {
             return;
         }
@@ -56,7 +54,7 @@ impl State {
             tx.blur();
         }
     }
-    pub(super) fn finish_prepare_removal(
+    pub(crate) fn finish_prepare_removal(
         &mut self,
         id: u64,
         result: Result<RemovalPlan, String>,
@@ -79,7 +77,7 @@ impl State {
             Err(error) => self.removal_failed(error),
         }
     }
-    fn advance_removal(&mut self, permanent: bool, tx: &mut Tx) {
+    pub(crate) fn advance_removal(&mut self, permanent: bool, tx: &mut Tx) {
         if permanent && let Some(removal) = &mut self.workspace.removal {
             removal.permanent = true;
         }
@@ -123,7 +121,7 @@ impl State {
             tx.blur();
         }
     }
-    fn discard_removal_buffer(&mut self, id: u64, tx: &mut Tx) {
+    pub(crate) fn discard_removal_buffer(&mut self, id: u64, tx: &mut Tx) {
         if let Some(tab) = self.workspace.tabs.iter().find(|t| t.id == id)
             && let Some(removal) = self.workspace.removal.as_mut()
         {
@@ -132,7 +130,7 @@ impl State {
         }
         self.advance_removal(false, tx);
     }
-    fn begin_removal_save_as(&mut self, id: u64, tx: &mut Tx) {
+    pub(crate) fn begin_removal_save_as(&mut self, id: u64, tx: &mut Tx) {
         let Some(tab) = self.workspace.tabs.iter().find(|t| t.id == id) else {
             return;
         };
@@ -154,7 +152,7 @@ impl State {
         self.pending = Some(Pending::Removal(RemovalPrompt::SaveAs(id)));
         tx.focus_when_shown("removal-save-as-path", true);
     }
-    fn submit_removal_save_as(&mut self, tx: &mut Tx) {
+    pub(crate) fn submit_removal_save_as(&mut self, tx: &mut Tx) {
         use crate::files::operations::{FileOperation, OperationRequest};
         let Some(Pending::Removal(RemovalPrompt::SaveAs(id))) = self.pending else {
             return;
@@ -198,7 +196,7 @@ impl State {
             self.pending = Some(Pending::Removal(RemovalPrompt::Busy));
         }
     }
-    pub(super) fn finish_removal_save_as(&mut self, document: crate::files::Document, tx: &mut Tx) {
+    pub(crate) fn finish_removal_save_as(&mut self, document: crate::files::Document, tx: &mut Tx) {
         let Some(removal) = &mut self.workspace.removal else {
             return;
         };
@@ -219,7 +217,7 @@ impl State {
         self.invalidate_diff(true);
         self.advance_removal(false, tx);
     }
-    pub(super) fn removal_save_as_failed(&mut self, error: String, tx: &mut Tx) {
+    pub(crate) fn removal_save_as_failed(&mut self, error: String, tx: &mut Tx) {
         let id = self
             .workspace
             .removal
@@ -232,7 +230,7 @@ impl State {
             tx.focus_when_shown("removal-save-as-path", true);
         }
     }
-    pub(super) fn cancel_removal(&mut self, tx: &mut Tx) {
+    pub(crate) fn cancel_removal(&mut self, tx: &mut Tx) {
         if self.workspace.operation_busy {
             return;
         }
@@ -260,7 +258,7 @@ impl State {
         self.pending = None;
         self.message = format!("Removal failed: {error}");
     }
-    pub(super) fn finish_removal(
+    pub(crate) fn finish_removal(
         &mut self,
         id: u64,
         result: Result<RemovalOutcome, String>,
@@ -296,7 +294,7 @@ impl State {
     }
 }
 
-pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
+pub(crate) fn view(s: &State, a: &Appearance) -> Option<El> {
     let Some(Pending::Removal(prompt)) = &s.pending else {
         return None;
     };

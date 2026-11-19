@@ -149,7 +149,7 @@ pub(crate) fn real_diff_preview(state: &mut State) {
 }
 pub(crate) fn file_collision_preview(state: &mut State) {
     workspace_preview(state);
-    file_operations::collision_demo(state);
+    explorer::operations::collision_demo(state);
 }
 /// Tooling-only: Search Files results for "main" in the --cwd folder.
 pub(crate) fn search_files_preview(state: &mut State) {

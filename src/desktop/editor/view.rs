@@ -45,9 +45,9 @@ fn search_content(s: &State, a: &Appearance) -> El {
                 .min_h(0.0)
                 .px(10.0)
                 .pt(8.0)
-                .child(explorer_search::results(s, a)),
+                .child(search::results(s, a)),
         )
-        .child(explorer_search::footer(s, a))
+        .child(search::footer(s, a))
 }
 
 /// The open file: notices, find bar, its edit, preview or diff content, and
@@ -237,7 +237,7 @@ fn edit_content(s: &State, a: &Appearance, tab: &Tab) -> El {
     {
         field = field.text_highlight(
             rune::TextHighlight::new(range.clone(), a.accent().alpha(0.22))
-                .key(explorer_search::search_match_key(id)),
+                .key(search::search_match_key(id)),
         );
     }
     let viewport = col()

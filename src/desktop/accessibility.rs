@@ -578,7 +578,7 @@ mod tests {
                 "window-close-cancel",
             ),
             (
-                Pending::Removal(removal::RemovalPrompt::Confirm),
+                Pending::Removal(explorer::removal::RemovalPrompt::Confirm),
                 "removal-dialog",
                 "alert-dialog",
                 "Move this item to Trash?",
@@ -610,7 +610,7 @@ mod tests {
             assert!(rt.state.pending.is_none(), "{key}: Return cancels");
             assert_eq!(rt.state.sessions.len(), 2);
         }
-        rt.update(|s, _| file_operations::collision_demo(s));
+        rt.update(|s, _| explorer::operations::collision_demo(s));
         settle(&mut rt);
         let n = node(&rt, "operation-dialog");
         assert_eq!(

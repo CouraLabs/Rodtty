@@ -1,8 +1,9 @@
 //! Native window + worker qualification using disposable fixture files only.
-use super::*;
+use crate::desktop::explorer::removal::*;
+use crate::desktop::*;
 use std::time::Duration;
 
-pub(in crate::desktop) fn check(handle: &rune::AppHandle<State>) -> Result<serde_json::Value> {
+pub(crate) fn native_check(handle: &rune::AppHandle<State>) -> Result<serde_json::Value> {
     #[cfg(target_os = "linux")]
     {
         let owner = crate::config::app_root()?;

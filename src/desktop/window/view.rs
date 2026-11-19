@@ -79,7 +79,7 @@ pub(crate) fn view_with_frame(
                 .fill(a.panel())
                 .child(terminal_tabs(state, a).grow(1.0).min_w(0.0))
                 .child(el().grow(0.0))
-                .child(explorer_search::field(
+                .child(search::field(
                     state,
                     a,
                     if width < 880.0 { 140.0 } else { 220.0 },
@@ -264,10 +264,10 @@ pub(crate) fn view_with_frame(
     if let Some(menu) = explorer_menu(state, a) {
         root = root.child(menu);
     }
-    if let Some(dialog) = removal::view(state, a) {
+    if let Some(dialog) = explorer::removal::view(state, a) {
         root = root.child(dialog);
     }
-    if let Some(dialog) = file_operations::view(state, a) {
+    if let Some(dialog) = explorer::operations::view(state, a) {
         root = root.child(dialog);
     }
     if let Some(palette) = window::palette::view(state, a) {

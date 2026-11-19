@@ -149,7 +149,7 @@ pub(crate) struct Workspace {
     pub entries: Vec<Entry>,
     pub(crate) tree: TreeModel<TreeEntry>,
     pub(crate) operation_busy: bool,
-    pub(crate) removal: Option<super::removal::RemovalState>,
+    pub(crate) removal: Option<crate::desktop::explorer::removal::RemovalState>,
     pub(crate) operation_moving: bool,
     pub(crate) operation_result: Option<PathBuf>,
     pub(crate) operation_id: u64,

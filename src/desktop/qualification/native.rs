@@ -7,7 +7,7 @@ pub(crate) fn native_check(
 ) {
     let with_trash = std::env::args().any(|a| a == "--trash-check");
     if std::env::args().any(|a| a == "--restoration-check") {
-        restoration::native_check(handle, report, backend);
+        super::restoration::native_check(handle, report, backend);
         return;
     }
     let with_frame = std::env::args().any(|a| a == "--frame-check");
@@ -59,7 +59,7 @@ pub(crate) fn native_check(
             };
             wait_text("rodtty:")?;
             if std::env::args().any(|a| a == "--clipboard-check") {
-                let mut result = terminal::clipboard::native_check(&handle, &report)?;
+                let mut result = super::clipboard::native_check(&handle, &report)?;
                 result["window_backend"] = backend
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -68,7 +68,7 @@ pub(crate) fn native_check(
                 return Ok(result);
             }
             let trash_evidence = if with_trash {
-                Some(removal::native_check(&handle)?)
+                Some(super::trash::native_check(&handle)?)
             } else {
                 None
             };

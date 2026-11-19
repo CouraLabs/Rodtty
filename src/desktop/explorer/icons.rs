@@ -1,6 +1,6 @@
 //! Offline vscode-icons associations shared by the explorer and editor tabs.
 //! Artwork is kept intact; Rune's SVG feature paints its original colors/gradients.
-use super::file_icon_catalog::ARTWORK;
+use super::icon_catalog::ARTWORK;
 use rune::Icon;
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path, sync::OnceLock};
@@ -12,7 +12,7 @@ struct Associations {
     folders: BTreeMap<String, [String; 4]>,
 }
 
-pub(super) fn resolve(path: &Path, folder: bool, expanded: bool, dark: bool) -> &'static Icon {
+pub(crate) fn resolve(path: &Path, folder: bool, expanded: bool, dark: bool) -> &'static Icon {
     static ASSOCIATIONS: OnceLock<Associations> = OnceLock::new();
     let maps = ASSOCIATIONS.get_or_init(|| {
         serde_json::from_str(asset_str!("icons/mappings.json"))

@@ -335,14 +335,19 @@ pub(crate) fn explorer(s: &State, a: &Appearance, width: f32) -> El {
             // The workspace folder's own row: drawn open, rooted at the folder's
             // name, which truncates before the controls at its trailing edge.
             item = item
-                .icon(file_icons::resolve(&workspace_root_path, true, true, dark))
+                .icon(explorer::icons::resolve(
+                    &workspace_root_path,
+                    true,
+                    true,
+                    dark,
+                ))
                 .trailing(if row.selected {
                     controls.clone()
                 } else {
                     controls.clone().group_opacity(0.0, 1.0)
                 });
         } else if let Some(entry) = &node.entry {
-            item = item.icon(file_icons::resolve(
+            item = item.icon(explorer::icons::resolve(
                 &entry.path,
                 entry.directory,
                 row.expanded == Some(true),

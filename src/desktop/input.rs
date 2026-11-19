@@ -50,7 +50,10 @@ pub(crate) fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return !matches!(
             state.pending,
-            Some(Pending::Operation(_) | Pending::Removal(removal::RemovalPrompt::SaveAs(_)))
+            Some(
+                Pending::Operation(_)
+                    | Pending::Removal(explorer::removal::RemovalPrompt::SaveAs(_))
+            )
         );
     }
     if state.workspace.operation_context.is_some() {

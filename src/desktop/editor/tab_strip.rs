@@ -79,7 +79,7 @@ fn file_tab(s: &State, a: &Appearance, i: usize, tab: &Tab, selected: bool) -> E
         })
         .child(
             rune::icon(
-                file_icons::resolve(&tab.document.path, false, false, a.dark),
+                explorer::icons::resolve(&tab.document.path, false, false, a.dark),
                 16.0,
             )
             .color(a.muted())

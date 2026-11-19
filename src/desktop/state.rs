@@ -5,8 +5,8 @@ pub(crate) enum Pending {
     Quit,
     Window,
     File(workspace::FilePrompt),
-    Operation(file_operations::OperationPrompt),
-    Removal(removal::RemovalPrompt),
+    Operation(explorer::operations::OperationPrompt),
+    Removal(explorer::removal::RemovalPrompt),
 }
 
 pub(crate) struct State {
@@ -57,7 +57,7 @@ pub(crate) struct State {
     pub(crate) settings_poll: std::time::Instant,
     pub(crate) last_valid_config: Config,
     pub(crate) terminal_search: terminal::search::TerminalSearch,
-    pub(crate) explorer_search: explorer_search::ExplorerSearch,
+    pub(crate) explorer_search: search::ExplorerSearch,
     pub(crate) pending: Option<Pending>,
     pub(crate) selection: Option<((u16, u16), (u16, u16))>,
     /// Where the current terminal press started, before it has travelled far
@@ -187,10 +187,9 @@ impl State {
     pub(super) fn application_overlay_open(&self) -> bool {
         self.terminal_context_open
             || self.shortcut_recording.is_some()
-            || self
-                .pending
-                .as_ref()
-                .is_some_and(|p| !matches!(p, Pending::Removal(removal::RemovalPrompt::Busy)))
+            || self.pending.as_ref().is_some_and(|p| {
+                !matches!(p, Pending::Removal(explorer::removal::RemovalPrompt::Busy))
+            })
             || self.palette.is_some()
             || self.workspace_menu
             || self.workspace.operation_context.is_some()

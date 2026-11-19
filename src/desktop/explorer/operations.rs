@@ -1,17 +1,17 @@
-use super::*;
+use crate::desktop::*;
 use crate::files::{
     Entry,
     operations::{Collision, CollisionChoice, FileOperation, OperationOutcome, OperationRequest},
 };
 use crate::work::Job;
 
-pub(super) enum OperationPrompt {
+pub(crate) enum OperationPrompt {
     Input(FileOperation),
     Collision(Collision),
 }
 
 impl State {
-    pub(super) fn selected_entry(&self) -> Option<Entry> {
+    pub(crate) fn selected_entry(&self) -> Option<Entry> {
         let selected = self.workspace.tree.cursor()?;
         self.workspace
             .entries
@@ -20,7 +20,7 @@ impl State {
             .cloned()
     }
 
-    pub(super) fn begin_file_operation(&mut self, operation: FileOperation, tx: &mut Tx) {
+    pub(crate) fn begin_file_operation(&mut self, operation: FileOperation, tx: &mut Tx) {
         let selected = self.selected_entry();
         let copying = matches!(
             operation,
@@ -59,7 +59,7 @@ impl State {
         );
     }
 
-    pub(super) fn submit_file_operation(&mut self, tx: &mut Tx) {
+    pub(crate) fn submit_file_operation(&mut self, tx: &mut Tx) {
         let Some(Pending::Operation(OperationPrompt::Input(operation))) = &self.pending else {
             return;
         };
@@ -91,7 +91,7 @@ impl State {
     }
 
     /// Shared worker/decision flow for creation, copying, renaming, and moving.
-    pub(super) fn start_file_operation(
+    pub(crate) fn start_file_operation(
         &mut self,
         request: OperationRequest,
         decision: Option<(Collision, CollisionChoice)>,
@@ -137,7 +137,9 @@ impl State {
             self.workspace.operation_moving = moving;
             self.workspace.operation_result = None;
             self.pending = if self.workspace.removal.is_some() {
-                Some(Pending::Removal(super::removal::RemovalPrompt::Busy))
+                Some(Pending::Removal(
+                    crate::desktop::explorer::removal::RemovalPrompt::Busy,
+                ))
             } else {
                 None
             };
@@ -166,7 +168,7 @@ impl State {
         self.start_file_operation(collision.request.clone(), Some((collision, choice)), tx);
     }
 
-    pub(super) fn finish_file_operation(
+    pub(crate) fn finish_file_operation(
         &mut self,
         id: u64,
         result: Result<OperationOutcome, String>,
@@ -211,7 +213,7 @@ impl State {
         }
     }
 
-    pub(super) fn file_context_menu(&mut self, press: rune::PointerPress, tx: &mut Tx) {
+    pub(crate) fn file_context_menu(&mut self, press: rune::PointerPress, tx: &mut Tx) {
         if self.workspace.removal.is_some() {
             return;
         }
@@ -252,7 +254,7 @@ fn cancel(s: &mut State, tx: &mut Tx) {
     tx.blur();
 }
 
-pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
+pub(crate) fn view(s: &State, a: &Appearance) -> Option<El> {
     if let Some((x, y)) = s.workspace.operation_context {
         let mut menu = col()
             .key("file-context-menu")
@@ -407,7 +409,7 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
 }
 
 /// Labelled renderer scene, using a temporary sample rather than any owner file.
-pub(super) fn collision_demo(s: &mut State) {
+pub(crate) fn collision_demo(s: &mut State) {
     let Ok(root) = tempfile::Builder::new()
         .prefix("rodtty-copy-preview-")
         .tempdir()

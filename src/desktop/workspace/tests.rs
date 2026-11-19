@@ -1940,7 +1940,7 @@ fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available(
         matches!(
             s.pending,
             Some(Pending::Operation(
-                file_operations::OperationPrompt::Collision(_)
+                explorer::operations::OperationPrompt::Collision(_)
             ))
         )
     });
@@ -2300,7 +2300,7 @@ fn explorer_copy_collision_choices_never_silently_overwrite_open_content() {
             matches!(
                 s.pending,
                 Some(Pending::Operation(
-                    super::super::file_operations::OperationPrompt::Collision(_)
+                    crate::desktop::explorer::operations::OperationPrompt::Collision(_)
                 ))
             )
         });

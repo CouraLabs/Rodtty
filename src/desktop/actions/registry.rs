@@ -1,0 +1,276 @@
+use super::*;
+
+/// Registrations are stable IDs plus visible metadata and an application action. Later
+/// slices can append registrations without changing palette search, input or rendering.
+/// Default bindings follow VS Code's for the same actions on each platform.
+pub(crate) fn register(commands: &mut Vec<Command>) {
+    let app = |linux, mac| {
+        if cfg!(target_os = "macos") {
+            mac
+        } else {
+            linux
+        }
+    };
+    for (id, title, shortcut, action) in [
+        (
+            "trash-file",
+            "Explorer: Move Selected Item to Trash",
+            "",
+            AppAction::TrashFile,
+        ),
+        (
+            "reveal-file-operation",
+            "Explorer: Reveal Last File Operation",
+            "",
+            AppAction::RevealFileOperation,
+        ),
+        (
+            "create-file",
+            "Explorer: New File…",
+            "",
+            AppAction::CreateFile,
+        ),
+        (
+            "create-folder",
+            "Explorer: New Folder…",
+            "",
+            AppAction::CreateFolder,
+        ),
+        (
+            "copy-file",
+            "Explorer: Copy Selected Item To…",
+            "",
+            AppAction::CopyFile,
+        ),
+        (
+            "rename-file",
+            "Explorer: Rename Selected Item…",
+            "",
+            AppAction::RenameFile,
+        ),
+        (
+            "move-file",
+            "Explorer: Move Selected Item To…",
+            "",
+            AppAction::MoveFile,
+        ),
+        (
+            "new-terminal",
+            "Terminal: New Tab",
+            app("Ctrl+Shift+`", "Ctrl+Shift+`"),
+            AppAction::NewTerminal,
+        ),
+        (
+            "end-terminal",
+            "Terminal: End Session",
+            "",
+            AppAction::EndTerminal,
+        ),
+        (
+            "save-file",
+            "File: Save File",
+            app("Ctrl+S", "Cmd+S"),
+            AppAction::SaveEditor(None),
+        ),
+        (
+            "close-editor",
+            "File: Close Editor",
+            app("Ctrl+W", "Cmd+W"),
+            AppAction::CloseEditor(None),
+        ),
+        (
+            "toggle-explorer",
+            "View: Toggle Explorer",
+            app("Ctrl+B", "Cmd+B"),
+            AppAction::ToggleExplorer,
+        ),
+        (
+            "toggle-terminal",
+            "View: Toggle Terminal",
+            app("Ctrl+`", "Ctrl+`"),
+            AppAction::ToggleTerminal,
+        ),
+        (
+            "show-terminal",
+            "View: Return to Terminal",
+            "",
+            AppAction::ShowTerminal,
+        ),
+        (
+            "toggle-editor",
+            "View: Toggle Editor",
+            "",
+            AppAction::ToggleEditor,
+        ),
+        (
+            "find-terminal",
+            "Terminal: Find in Scrollback",
+            app("Ctrl+F", "Cmd+F"),
+            AppAction::FindTerminal,
+        ),
+        (
+            "find-editor",
+            "File: Find in Editor",
+            app("Ctrl+F", "Cmd+F"),
+            AppAction::FindEditor,
+        ),
+        (
+            "replace-editor",
+            "File: Replace in Editor",
+            app("Ctrl+H", "Cmd+Alt+F"),
+            AppAction::ReplaceEditor,
+        ),
+        ("edit-file", "File: Show Editor", "", AppAction::EditFile),
+        (
+            "diff-current",
+            "Git: Compare Current File with HEAD",
+            "",
+            AppAction::Compare(Comparison::Current),
+        ),
+        (
+            "diff-unstaged",
+            "Git: Show Unstaged Changes",
+            "",
+            AppAction::Compare(Comparison::Unstaged),
+        ),
+        (
+            "diff-staged",
+            "Git: Show Staged Changes",
+            "",
+            AppAction::Compare(Comparison::Staged),
+        ),
+        (
+            "copy-terminal",
+            "Terminal: Copy Selection",
+            app("Ctrl+Shift+C", "Cmd+C"),
+            AppAction::CopyTerminal,
+        ),
+        (
+            "paste-terminal",
+            "Terminal: Paste",
+            app("Ctrl+Shift+V", "Cmd+V"),
+            AppAction::PasteTerminal,
+        ),
+        (
+            "explorer-terminal-root",
+            "Explorer: Use Terminal Folder as Root",
+            "",
+            AppAction::ExplorerTerminalRoot,
+        ),
+        (
+            "explorer-reveal",
+            "Explorer: Reveal Terminal Folder",
+            "",
+            AppAction::ExplorerReveal,
+        ),
+        (
+            "explorer-focus",
+            "Explorer: Focus Tree",
+            app("Ctrl+Shift+E", "Cmd+Shift+E"),
+            AppAction::ExplorerFocus,
+        ),
+        (
+            "explorer-collapse",
+            "Explorer: Collapse All Folders",
+            "",
+            AppAction::ExplorerCollapseAll,
+        ),
+        (
+            "explorer-open",
+            "Explorer: Open Selected Item",
+            "",
+            AppAction::ExplorerOpenSelection,
+        ),
+        (
+            "explorer-parent",
+            "Explorer: Open Parent Folder",
+            "",
+            AppAction::ExplorerParent,
+        ),
+        (
+            "explorer-search",
+            "Search: Files and Terminals",
+            app("Ctrl+Shift+F", "Cmd+Shift+F"),
+            AppAction::SearchFiles,
+        ),
+        (
+            "explorer-refresh",
+            "Explorer: Refresh",
+            "",
+            AppAction::RefreshExplorer,
+        ),
+        (
+            "explorer-follow",
+            "Explorer: Toggle Follow Terminal",
+            "",
+            AppAction::ToggleFollow,
+        ),
+        (
+            "explorer-hidden",
+            "Explorer: Toggle Hidden Files",
+            "",
+            AppAction::ToggleHidden,
+        ),
+        (
+            "explorer-ignore",
+            "Explorer: Toggle Ignore Rules",
+            "",
+            AppAction::ToggleIgnore,
+        ),
+        (
+            "settings",
+            "Settings: Open Settings",
+            app("Ctrl+Comma", "Cmd+Comma"),
+            AppAction::Settings,
+        ),
+        (
+            "settings-json",
+            "Settings: Open Settings JSON",
+            "",
+            AppAction::OpenSettingsJson,
+        ),
+        (
+            "settings-close",
+            "Settings: Close Settings Tab",
+            app("Ctrl+W", "Cmd+W"),
+            AppAction::CloseSettings,
+        ),
+        (
+            "close-window",
+            "Window: Close Window",
+            app("Ctrl+Shift+W", "Cmd+Shift+W"),
+            AppAction::CloseWindow,
+        ),
+        (
+            "command-palette",
+            "View: Show Command Palette",
+            app("Ctrl+Shift+P", "Cmd+Shift+P"),
+            AppAction::CommandPalette,
+        ),
+        (
+            "quit",
+            "Application: Quit Rodtty",
+            app("Ctrl+Q", "Cmd+Q"),
+            AppAction::Quit,
+        ),
+    ] {
+        commands.push(Command {
+            id,
+            title,
+            shortcut,
+            action,
+            context: match action {
+                AppAction::CopyTerminal
+                | AppAction::PasteTerminal
+                | AppAction::EndTerminal
+                | AppAction::FindTerminal => ShortcutContext::Terminal,
+                AppAction::SaveEditor(_)
+                | AppAction::CloseEditor(_)
+                | AppAction::FindEditor
+                | AppAction::ReplaceEditor => ShortcutContext::Editor,
+                AppAction::CloseSettings => ShortcutContext::Settings,
+                _ => ShortcutContext::Global,
+            },
+        });
+    }
+}
