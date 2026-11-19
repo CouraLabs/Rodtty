@@ -1,0 +1,86 @@
+name: "caller builtin"
+cases:
+  - name: "caller in function"
+    test_files:
+      - path: script.sh
+        contents: |
+          function outer() {
+              echo "In outer"
+              inner
+          }
+
+          function inner() {
+              echo "In inner"
+
+              echo "[Calling caller 0]"
+              caller 0
+
+              echo "[Calling caller 1]"
+              caller 1
+          }
+    stdin: |
+      source script.sh
+      outer
+
+  - name: "caller no args"
+    known_failure: true # TODO(caller): needs investigation
+    test_files:
+      - path: script.sh
+        contents: |
+          function myfunc() {
+              echo "In myfunc"
+              caller
+          }
+    stdin: |
+      source script.sh
+      myfunc
+
+  - name: "caller no args (nested)"
+    test_files:
+      - path: script.sh
+        contents: |
+          function myfunc() {
+              echo "In myfunc"
+              caller
+          }
+
+          function myouterfunc() {
+              echo "In myouterfunc"
+              myfunc
+          }
+    stdin: |
+      source script.sh
+      myouterfunc
+
+  - name: "caller invalid expr"
+    ignore_stderr: true # Different error messages
+    stdin: |
+      f() { caller x; }
+      f
+
+  - name: "caller out of range"
+    stdin: |
+      caller 100
+
+  - name: "caller with a frame number out of range"
+    ignore_stderr: true
+    stdin: |
+      f() {
+        caller 18446744073709551615; echo "rc=$?"
+        caller 9223372036854775808; echo "rc=$?"
+        caller 9223372036854775807; echo "rc=$?"
+        caller -- -1; echo "rc=$?"
+      }
+      f
+
+  - name: "caller not in function"
+    stdin: |
+      caller
+
+  - name: "caller outside a function fails with status 1 whatever its operand"
+    known_failure: true # TODO(caller): brush checks the operand first and fails a bad one with status 2
+    ignore_stderr: true
+    stdin: |
+      caller notanumber; echo "caller notanumber: $?"
+      caller 18446744073709551615; echo "caller 2^64-1: $?"
+      caller -1; echo "caller -1: $?"

@@ -606,7 +606,6 @@ dependencies = [
 [[package]]
 name = "brush-builtins"
 version = "0.2.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "brush-core",
  "brush-parser",
@@ -630,7 +629,6 @@ dependencies = [
 [[package]]
 name = "brush-core"
 version = "0.5.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -668,7 +666,6 @@ dependencies = [
 [[package]]
 name = "brush-coreutils-builtins"
 version = "0.1.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "uu_cat",
  "uu_cp",
@@ -690,7 +687,6 @@ dependencies = [
 [[package]]
 name = "brush-interactive"
 version = "0.4.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "bon",
  "brush-core",
@@ -707,7 +703,6 @@ dependencies = [
 [[package]]
 name = "brush-parser"
 version = "0.4.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "bon",
  "cached",
@@ -723,7 +718,6 @@ dependencies = [
 [[package]]
 name = "brush-shell"
 version = "0.4.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "brush-builtins",
  "brush-core",
@@ -749,7 +743,6 @@ dependencies = [
 [[package]]
 name = "brush-winnow-args-adapter"
 version = "0.1.0"
-source = "git+https://github.com/reubeno/brush?rev=fbd1eb36158384bbd5ad542445a5324bebefce78#fbd1eb36158384bbd5ad542445a5324bebefce78"
 dependencies = [
  "brush-core",
  "winnow-args",
