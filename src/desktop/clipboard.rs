@@ -50,13 +50,16 @@ pub(super) struct PasteTarget {
 /// What a terminal paste did with the clipboard's content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteOutcome {
-    /// This many file or folder paths, quoted, went to the session.
+    /// This many file or folder paths, escaped as shell words, went to the session.
     Files(usize),
     Text,
     /// The target session or terminal focus changed before the read returned.
     Cancelled,
-    /// The clipboard held only an image, which a terminal cannot take.
-    ImageOnly,
+    /// The clipboard held only an image: it was saved as a PNG file and that
+    /// file's path went to the session, which coding agents attach.
+    Image,
+    /// The clipboard's image could not be saved.
+    ImageFailed,
     /// Nothing the terminal can use.
     Empty,
 }
@@ -84,7 +87,7 @@ impl State {
 
     /// Deliver what the clipboard read found to the session `target` named.
     /// Files and folders win over the text beside them (Finder also offers
-    /// their bare names as text): each becomes a quoted absolute path, joined
+    /// their bare names as text): each becomes an escaped absolute path, joined
     /// by spaces. Nothing is submitted; the shell sees a bracketed paste when
     /// the application asked for one.
     pub(super) fn finish_terminal_paste(
@@ -121,10 +124,17 @@ impl State {
             self.paste(content.text());
             return PasteOutcome::Text;
         }
-        if content.image().is_some() {
-            self.message =
-                "The clipboard holds an image; the terminal pastes only text and files".into();
-            return PasteOutcome::ImageOnly;
+        if let Some(image) = content.image() {
+            return match save_pasted_image(image.png()) {
+                Ok(path) => {
+                    self.paste(&quote_path(&path).unwrap_or_default());
+                    PasteOutcome::Image
+                }
+                Err(error) => {
+                    self.message = format!("Could not save the clipboard image: {error}");
+                    PasteOutcome::ImageFailed
+                }
+            };
         }
         PasteOutcome::Empty
     }
@@ -144,15 +154,41 @@ fn paste_paths(paths: &[std::path::PathBuf]) -> (String, usize, usize) {
     (words.join(" "), words.len(), skipped)
 }
 
-/// One path as a single word for Rodtty's Bash-style shell. Single quotes keep
-/// every character literal, with an embedded `'` written `'\''`, as
-/// `profile::quote` does. A path with control characters uses ANSI-C `$'…'`
-/// quoting instead, so a newline or escape in a file name stays in the word
-/// and never reaches the terminal raw, where it could submit or be stripped.
+/// Saves a pasted image as a PNG in the system temporary folder, for a
+/// terminal program (such as a coding agent) to read by path. The file is
+/// readable only by the owner and stays until the system clears the folder.
+fn save_pasted_image(png: &[u8]) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("rodtty-paste-")
+        .suffix(".png")
+        .tempfile()?;
+    file.write_all(png)?;
+    file.as_file().sync_all()?;
+    let (_, path) = file.keep().map_err(|error| error.error)?;
+    Ok(path)
+}
+
+/// One path as a single word for Rodtty's Bash-style shell, written as
+/// Terminal.app and iTerm write a dropped file, so coding agents recognize it
+/// as a path to attach: as is when every character is plain, otherwise with a
+/// backslash before each space and shell-special ASCII character. A path with
+/// control characters uses ANSI-C `$'…'` quoting instead, so a newline or
+/// escape in a file name stays in the word and never reaches the terminal raw,
+/// where it could submit or be stripped.
 fn quote_path(path: &std::path::Path) -> Option<String> {
     let text = path.to_str()?;
     if !text.chars().any(char::is_control) {
-        return Some(format!("'{}'", text.replace('\'', "'\\''")));
+        let plain =
+            |c: char| !c.is_ascii() || c.is_ascii_alphanumeric() || "/._-+@%:,=".contains(c);
+        let mut word = String::with_capacity(text.len());
+        for c in text.chars() {
+            if !plain(c) {
+                word.push('\\');
+            }
+            word.push(c);
+        }
+        return Some(word);
     }
     let mut word = String::from("$'");
     for c in text.chars() {
@@ -357,7 +393,7 @@ mod tests {
             rt.pointer_up(x, y);
             rt.frame(0.0);
         };
-        click(&mut rt, "terminal-right-click-paste");
+        crate::desktop::settings::choose(&mut rt, "terminal-right-click", "Paste");
         click(&mut rt, "copy-on-selection");
         let saved = Config::load(root.path()).unwrap();
         assert_eq!(
@@ -389,14 +425,7 @@ mod tests {
             s.settings_query.replace_text("clipboard");
         });
         rt.frame(0.0);
-        click(&mut rt, "reset-terminal-right-click");
-        assert!(
-            !Config::load(root.path())
-                .unwrap()
-                .terminal_clipboard
-                .copy_on_selection
-        );
-        click(&mut rt, "reset-copy-on-selection");
+        crate::desktop::settings::restore_tab_defaults(&mut rt, "general");
         assert_eq!(
             Config::load(root.path()).unwrap().terminal_clipboard,
             config::TerminalClipboardPreferences::default()
@@ -727,12 +756,18 @@ mod paste_tests {
     }
 
     #[test]
-    fn paths_quote_as_single_bash_words() {
+    fn paths_paste_as_single_bash_words_written_like_a_dropped_file() {
         let quote = |p: &str| quote_path(Path::new(p)).unwrap();
-        assert_eq!(quote("/tmp/with space"), "'/tmp/with space'");
-        assert_eq!(quote("/tmp/it's"), r"'/tmp/it'\''s'");
-        assert_eq!(quote("/tmp/Olá 世界 🦀"), "'/tmp/Olá 世界 🦀'");
-        assert_eq!(quote(r"C:\Users\o'n"), r"'C:\Users\o'\''n'");
+        assert_eq!(
+            quote("/tmp/shot-1.png"),
+            "/tmp/shot-1.png",
+            "plain paths stay as is"
+        );
+        assert_eq!(quote("/tmp/with space"), r"/tmp/with\ space");
+        assert_eq!(quote("/tmp/it's"), r"/tmp/it\'s");
+        assert_eq!(quote("/tmp/Olá 世界 🦀"), r"/tmp/Olá\ 世界\ 🦀");
+        assert_eq!(quote("/tmp/$(x)&;"), r"/tmp/\$\(x\)\&\;");
+        assert_eq!(quote(r"C:\Users\o'n"), r"C:\\Users\\o\'n");
         assert_eq!(
             quote("/tmp/line\nbreak\t'\\\x1b"),
             r"$'/tmp/line\nbreak\t\'\\\x1b'",
@@ -743,7 +778,7 @@ mod paste_tests {
             PathBuf::from("relative"),
             PathBuf::from("/c"),
         ]);
-        assert_eq!((text.as_str(), pasted, skipped), ("'/a b' '/c'", 2, 1));
+        assert_eq!((text.as_str(), pasted, skipped), (r"/a\ b /c", 2, 1));
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
@@ -753,8 +788,8 @@ mod paste_tests {
     }
 
     /// File lists from each entry point reach a real PTY as one bracketed paste of
-    /// quoted absolute paths with nothing submitted; image-only clipboards send
-    /// nothing; the quoted words parse back to the same paths in the real shell.
+    /// escaped absolute paths with nothing submitted; an image-only clipboard
+    /// sends a saved PNG's path; the words parse back to the same paths in the real shell.
     #[test]
     fn every_entry_point_pastes_file_lists_as_quoted_paths_without_submitting() {
         let root = crate::test_support::tempdir().unwrap();
@@ -794,10 +829,13 @@ mod paste_tests {
             }),
         ];
         let image_only = entries.len();
+        // A pasted image arrives as the path of a saved PNG: `rodtty-paste-`,
+        // six random characters, `.png`, in the system temporary folder.
+        let image_prefix = quote_path(&std::env::temp_dir().join("rodtty-paste-")).unwrap();
         for (round, (name, paste)) in entries.iter().chain([&entries[0]]).enumerate() {
             let expected = if round == image_only {
                 board.set_content(rune::ClipboardContent::default().with_image(image()));
-                b"Z".to_vec()
+                format!("\x1b[200~{image_prefix}XXXXXX.png\x1b[201~Z").into_bytes()
             } else {
                 // Finder offers the bare names as text beside the files; files win.
                 board.set_content(
@@ -841,13 +879,26 @@ mod paste_tests {
                 .unwrap()
                 .wait_for(&format!("CAPTURED_{round}"), Duration::from_secs(15))
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert_eq!(
-                String::from_utf8_lossy(&std::fs::read(&capture).unwrap()),
-                String::from_utf8_lossy(&expected),
-                "{name} (round {round})"
-            );
+            let captured = String::from_utf8_lossy(&std::fs::read(&capture).unwrap()).into_owned();
             if round == image_only {
-                assert!(rt.state.message.contains("image"), "{}", rt.state.message);
+                let path = captured
+                    .strip_prefix("\x1b[200~")
+                    .and_then(|rest| rest.strip_suffix("\x1b[201~Z"))
+                    .unwrap_or_else(|| panic!("image paste is one bracketed path: {captured:?}"));
+                assert!(
+                    path.starts_with(&image_prefix) && path.ends_with(".png"),
+                    "{path:?}"
+                );
+                assert_eq!(path.len(), image_prefix.len() + 10);
+                // The plain temporary path needs no escapes, so it names the file.
+                assert_eq!(std::fs::read(path).unwrap(), image().png());
+                std::fs::remove_file(path).unwrap();
+            } else {
+                assert_eq!(
+                    captured,
+                    String::from_utf8_lossy(&expected),
+                    "{name} (round {round})"
+                );
             }
         }
         // The pasted words are the paths themselves to the real shell.
@@ -951,7 +1002,7 @@ mod paste_tests {
             s.active = 0;
         });
         assert_eq!(finish(&mut rt, t, &text), PasteOutcome::Cancelled);
-        // Image-only and empty clipboards do nothing.
+        // An image-only clipboard pastes a saved file's path; an empty one does nothing.
         let t = target(&mut rt);
         assert_eq!(
             finish(
@@ -959,7 +1010,7 @@ mod paste_tests {
                 t,
                 &rune::ClipboardContent::default().with_image(image())
             ),
-            PasteOutcome::ImageOnly
+            PasteOutcome::Image
         );
         assert_eq!(
             finish(&mut rt, t, &rune::ClipboardContent::default()),

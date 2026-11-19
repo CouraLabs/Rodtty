@@ -92,9 +92,20 @@ struct State {
     generations: Vec<u64>,
     settings: bool,
     settings_open: bool,
+    /// Whether the editor pane's Search tab exists, and whether it shows.
+    search_tab_open: bool,
+    search_tab: bool,
     settings_query: TextEdit,
+    /// The Settings page's selected tab.
+    settings_tab: settings::Tab,
+    /// The Settings dropdown whose list is open, by key.
+    settings_select: Option<&'static str>,
+    /// The Settings tab whose Restore Defaults is asking for confirmation.
+    settings_reset_confirm: Option<settings::Tab>,
     shortcut_recording: Option<shortcuts::Recording>,
     behavior_directory: TextEdit,
+    /// The Startup folder setting's Specified folder field.
+    startup_directory: TextEdit,
     theme_family_picker: rune_kit::ComboboxState,
     settings_error: Option<String>,
     settings_seen: Option<Vec<u8>>,
@@ -125,17 +136,28 @@ impl State {
 
     fn with_root(root: PathBuf) -> Self {
         let loaded = Config::load(&root);
-        let directory = config::initial_directory(
-            std::env::args()
-                .skip_while(|a| a != "--cwd")
-                .nth(1)
-                .map(PathBuf::from),
-        )
-        .unwrap_or_else(|_| root.clone());
+        let explicit = std::env::args()
+            .skip_while(|a| a != "--cwd")
+            .nth(1)
+            .map(PathBuf::from);
+        // `--cwd` wins; otherwise the Startup folder setting, then the home folder.
+        let configured = explicit
+            .is_none()
+            .then(|| loaded.as_ref().ok())
+            .flatten()
+            .and_then(|c| config::configured_startup_directory(&c.behavior));
+        let (directory, startup_warning) = match configured {
+            Some(Ok(path)) => (path, None),
+            other => (
+                config::initial_directory(explicit).unwrap_or_else(|_| root.clone()),
+                other.and_then(Result::err),
+            ),
+        };
         let message = loaded
             .as_ref()
             .err()
             .map(|error| format!("Could not load Settings JSON: {error:#}"))
+            .or(startup_warning)
             .unwrap_or_default();
         let config_valid = loaded.is_ok();
         let mut commands = Vec::new();
@@ -170,6 +192,18 @@ impl State {
                     })
                     .unwrap_or_default(),
             ),
+            startup_directory: TextEdit::new(
+                loaded
+                    .as_ref()
+                    .ok()
+                    .map(|c| {
+                        c.behavior
+                            .startup_specified_directory
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .unwrap_or_default(),
+            ),
             last_valid_config: loaded.as_ref().cloned().unwrap_or_default(),
             config: loaded.unwrap_or_default(),
             config_valid,
@@ -180,7 +214,12 @@ impl State {
             generations: Vec::new(),
             settings: false,
             settings_open: false,
+            search_tab_open: false,
+            search_tab: false,
             settings_query: TextEdit::new(""),
+            settings_tab: Default::default(),
+            settings_select: None,
+            settings_reset_confirm: None,
             shortcut_recording: None,
             theme_family_picker: Default::default(),
             settings_error: (!config_valid).then(|| message.clone()),
@@ -538,6 +577,9 @@ fn button_with(
         .center()
         .radius(5.0)
         .fill(a.panel())
+        // A thin, dimmed outline marks a text button as pressable, so it
+        // never reads as a plain label.
+        .border(1.0, a.button_border())
         .hover(a.hover_bg())
         .press(a.pressed())
         .on_press_tx(move |state: &mut State, tx| {
@@ -823,6 +865,44 @@ fn footer_message(state: &State, a: &Appearance) -> El {
         )
 }
 
+/// The strip along the window's bottom: app identity, the active terminal's
+/// folder and the latest action's message. The owner can hide it in Settings.
+fn app_footer(state: &State, a: &Appearance, cwd: &std::path::Path) -> El {
+    row()
+        .key("app-footer")
+        .w_full()
+        // A one-point frame on every side keeps the footer off the window edge.
+        .padding(1.0)
+        .fill(a.bg())
+        .child(
+            row()
+                .key("app-footer-content")
+                .w_full()
+                .h(25.0_f32.max(ui_label().size * 1.5 + 4.0))
+                .px(10.0)
+                .gap(10.0)
+                .center_y()
+                .fill(a.panel())
+                .child(
+                    text(concat!("Rodtty ", env!("CARGO_PKG_VERSION")))
+                        .key("footer-app-name")
+                        .font(ui_style(13.0, 700.0))
+                        .color(a.ink())
+                        .shrink(),
+                )
+                .child(
+                    text(tilde_path(cwd))
+                        .key("footer-path")
+                        .font(ui_label())
+                        .color(a.muted())
+                        .truncate()
+                        .min_w(0.0)
+                        .grow(1.0),
+                )
+                .child(footer_message(state, a)),
+        )
+}
+
 fn view(state: &State, cx: &mut Cx<State>) -> El {
     view_with_frame(state, cx, frame::placement())
 }
@@ -883,6 +963,11 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
                 .fill(a.panel())
                 .child(terminal_tabs(state, a).grow(1.0).min_w(0.0))
                 .child(el().grow(0.0))
+                .child(explorer_search::field(
+                    state,
+                    a,
+                    if width < 880.0 { 140.0 } else { 220.0 },
+                ))
                 .child(
                     icon_button(
                         a,
@@ -965,41 +1050,9 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
             .map(Session::cwd)
             .unwrap_or_else(|| state.directory.clone())
     };
-    root = root.child(
-        row()
-            .key("app-footer")
-            .w_full()
-            // A one-point frame on every side keeps the footer off the window edge.
-            .padding(1.0)
-            .fill(a.bg())
-            .child(
-                row()
-                    .key("app-footer-content")
-                    .w_full()
-                    .h(25.0_f32.max(ui_label().size * 1.5 + 4.0))
-                    .px(10.0)
-                    .gap(10.0)
-                    .center_y()
-                    .fill(a.panel())
-                    .child(
-                        text(concat!("Rodtty ", env!("CARGO_PKG_VERSION")))
-                            .key("footer-app-name")
-                            .font(ui_style(13.0, 700.0))
-                            .color(a.ink())
-                            .shrink(),
-                    )
-                    .child(
-                        text(tilde_path(&cwd))
-                            .key("footer-path")
-                            .font(ui_label())
-                            .color(a.muted())
-                            .truncate()
-                            .min_w(0.0)
-                            .grow(1.0),
-                    )
-                    .child(footer_message(state, a)),
-            ),
-    );
+    if state.config.show_footer {
+        root = root.child(app_footer(state, a, &cwd));
+    }
     if matches!(state.pending, Some(Pending::Tab(_) | Pending::Quit)) {
         let (title, message, confirm) = match state.pending {
             Some(Pending::Quit) => (
@@ -1107,12 +1160,28 @@ fn view_with_frame(state: &State, cx: &mut Cx<State>, placement: frame::Placemen
     if let Some(recorder) = shortcuts::recorder(state, a) {
         root = root.child(recorder);
     }
-    root = root.children(fonts::overlays(state, a, width));
     // No root `on_paste`: with one, Rune would take the primary paste chord
     // itself and hand over only text. Without it the chord reaches `on_key`,
     // whose shortcut dispatches `PasteTerminal` to the one terminal paste
     // handler; focused text fields still paste on their own.
     root.children(settings::overlays(state, a, width))
+}
+
+/// The control character Ctrl plus `c` types, as xterm sends it: Ctrl+A to
+/// Ctrl+Z are 1 to 26, Ctrl+Space and Ctrl+@ are NUL, Ctrl+[ \ ] ^ _ are 27
+/// to 31 and Ctrl+? is DEL.
+fn control_byte(c: char) -> Option<u8> {
+    match c.to_ascii_lowercase() {
+        c @ 'a'..='z' => Some(c as u8 - b'a' + 1),
+        ' ' | '@' | '2' => Some(0),
+        '[' | '3' => Some(0x1b),
+        '\\' | '4' => Some(0x1c),
+        ']' | '5' => Some(0x1d),
+        '^' | '6' => Some(0x1e),
+        '_' | '-' | '7' => Some(0x1f),
+        '?' | '8' => Some(0x7f),
+        _ => None,
+    }
 }
 
 pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
@@ -1130,6 +1199,21 @@ pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>>
         }
     };
     let sequence = match &event.key {
+        // macOS names Ctrl+C by the key's own character, `Text("c")` with
+        // Ctrl held, where other platforms send `Command('c')`: both are the
+        // control character, or Ctrl+C would type "c" and never interrupt.
+        Key::Text(value) if event.mods.ctrl && !event.mods.cmd => {
+            let mut chars = value.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                return None;
+            };
+            let byte = control_byte(c)?;
+            return Some(if event.mods.alt {
+                vec![0x1b, byte]
+            } else {
+                vec![byte]
+            });
+        }
         Key::Text(value) => {
             if event.mods.alt {
                 format!("\x1b{value}")
@@ -1488,7 +1572,7 @@ fn settings_preview(state: &mut State) {
 }
 fn behavior_preview(state: &mut State) {
     settings_preview(state);
-    state.settings_query.replace_text("Behavior");
+    state.settings_tab = settings::Tab::General;
 }
 fn real_diff_preview(state: &mut State) {
     preview(state);
@@ -1505,6 +1589,7 @@ fn search_files_preview(state: &mut State) {
     tree_preview(state);
     state.explorer_search.open = true;
     state.explorer_search.query = rune::TextEdit::new("main");
+    state.show_search_tab();
     let started = std::time::Instant::now();
     while state.explorer_search.summary.is_none() && started.elapsed().as_secs() < 10 {
         state.poll_explorer_search(&mut Tx::default());
@@ -1532,6 +1617,9 @@ fn diff_preview(state: &mut State) {
     preview(state);
     workspace::demo(state, true);
 }
+
+/// The app icon, rendered from `assets/app-icon/rodtty.svg`.
+const APP_ICON: &[u8] = include_bytes!("../assets/app-icon/rodtty-1024.png");
 
 pub fn run() -> Result<()> {
     if std::env::args().any(|arg| arg == "--paths") {
@@ -1606,6 +1694,11 @@ pub fn run() -> Result<()> {
         min_size: Some((640.0, 360.0)),
         ..AppSpec::new("Rodtty", (1080.0, 720.0), State::init, view)
     };
+    // The Dock and app-switcher icon on macOS, and the window and taskbar icon
+    // on Windows, for unbundled runs as well as packaged ones.
+    if let Err(error) = rune::set_app_icon(APP_ICON) {
+        eprintln!("rodtty: {error}");
+    }
     let backend = Arc::new(std::sync::Mutex::new(String::new()));
     let backend_slot = backend.clone();
     let mut app = App::new(spec)
@@ -2470,16 +2563,6 @@ mod tests {
                 runtime.resolve_popup(Some("close")).unwrap();
                 runtime.frame(0.0);
             }
-            "shortcut" => press(
-                runtime,
-                Key::Command('w'),
-                rune::Mods {
-                    ctrl: !cfg!(target_os = "macos"),
-                    cmd: true,
-                    shift: true,
-                    ..Default::default()
-                },
-            ),
             "remapped" => press(runtime, Key::Function(9), Default::default()),
             "menu" => {
                 click(runtime, "workspace-menu");
@@ -2516,7 +2599,9 @@ mod tests {
         ] {
             for running in [false, true] {
                 for entry in [
-                    "button", "middle", "context", "shortcut", "remapped", "menu", "palette",
+                    // End Session has no default binding, as in VS Code;
+                    // "remapped" presses one the owner assigned.
+                    "button", "middle", "context", "remapped", "menu", "palette",
                 ] {
                     let root = crate::test_support::tempdir().unwrap();
                     let mut state = State::with_root(root.path().into());
@@ -2563,6 +2648,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn startup_folder_setting_chooses_the_first_terminal_folder() {
+        let root = crate::test_support::tempdir().unwrap();
+        let folder = crate::test_support::tempdir().unwrap();
+        let home = directories::BaseDirs::new().unwrap().home_dir().to_owned();
+        assert_eq!(State::with_root(root.path().into()).directory, home);
+        let mut config = Config::default();
+        config.behavior.startup_directory = config::StartupDirectory::Specified;
+        config.behavior.startup_specified_directory = folder.path().into();
+        config.save(root.path()).unwrap();
+        let state = State::with_root(root.path().into());
+        assert_eq!(state.directory, folder.path());
+        assert!(state.message.is_empty());
+        config.behavior.startup_specified_directory = folder.path().join("missing");
+        config.save(root.path()).unwrap();
+        let state = State::with_root(root.path().into());
+        assert_eq!(state.directory, home);
+        assert!(state.message.contains("Startup folder is unavailable"));
     }
 
     #[test]
@@ -3606,6 +3711,23 @@ mod tests {
             },
         };
         assert_eq!(encode_key(&event, false), Some(vec![3]));
+        // macOS reports Ctrl+letter as the letter's text with Ctrl held.
+        let ctrl = |text: &str, alt: bool| KeyEvent {
+            key: Key::Text(text.into()),
+            mods: rune::Mods {
+                ctrl: true,
+                alt,
+                ..Default::default()
+            },
+        };
+        assert_eq!(encode_key(&ctrl("c", false), false), Some(vec![3]));
+        assert_eq!(encode_key(&ctrl("C", false), false), Some(vec![3]));
+        assert_eq!(encode_key(&ctrl("d", false), false), Some(vec![4]));
+        assert_eq!(encode_key(&ctrl("z", false), false), Some(vec![26]));
+        assert_eq!(encode_key(&ctrl("[", false), false), Some(vec![0x1b]));
+        assert_eq!(encode_key(&ctrl(" ", false), false), Some(vec![0]));
+        assert_eq!(encode_key(&ctrl("a", true), false), Some(vec![0x1b, 1]));
+        assert_eq!(encode_key(&ctrl("é", false), false), None);
         let arrow = KeyEvent {
             key: Key::Up,
             mods: Default::default(),

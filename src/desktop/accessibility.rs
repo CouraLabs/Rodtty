@@ -218,7 +218,7 @@ mod tests {
         // close button, then the next tab.
         focus(&mut rt, "tab-0");
         let mut order = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             rt.key(KeyEvent {
                 key: Key::Tab,
                 mods: Default::default(),
@@ -239,6 +239,7 @@ mod tests {
                 "tab-1",
                 "terminal-close-1",
                 "new-tab",
+                "explorer-search-query",
                 "files"
             ]
         );
@@ -355,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_controls_are_named_radios_switches_comboboxes_and_resets() {
+    fn settings_controls_are_named_tabs_fieldsets_dropdowns_switches_and_restore_defaults() {
         let root = crate::test_support::tempdir().unwrap();
         let mut rt = super::super::tests::runtime_for(State::with_root(root.path().into()));
         rt.update(|s, tx| s.open_settings(tx));
@@ -365,93 +366,147 @@ mod tests {
             role_name(&rt, "settings-search"),
             ("text-input", "Search settings").into()
         );
-        for (key, role, name) in [
-            ("settings-section-Terminal", "group", "Terminal"),
-            ("prompt-style-classic", "radio-button", "Classic"),
-            ("prompt-style-two_line", "radio-button", "Two-line"),
-            ("prompt-symbol-dollar", "radio-button", "Dollar sign $"),
-            ("prompt-symbol-chevron", "radio-button", "Chevron ›"),
-            ("reset-prompt-style", "button", "Reset prompt style"),
-            ("reset-prompt-symbol", "button", "Reset prompt symbol"),
-            ("font-ui-value-trigger", "combo-box", "UI font family"),
+        assert_eq!(
+            role_name(&rt, "settings-tabs"),
+            ("tab-list", "Settings sections").into()
+        );
+        let quit = if cfg!(target_os = "macos") {
+            "Cmd+Q"
+        } else {
+            "Ctrl+Q"
+        };
+        let quit = format!("Application: Quit Rodtty shortcut: {quit}");
+        for (tab, controls) in [
             (
-                "font-terminal-value-trigger",
-                "combo-box",
-                "Terminal font family",
-            ),
-            ("reset-ui-font-family", "button", "Reset UI font family"),
-            (
-                "reset-terminal-font-family",
-                "button",
-                "Reset terminal font family",
-            ),
-            ("theme-family-value-trigger", "combo-box", "Theme family"),
-            ("less-ui-font-size", "button", "Decrease UI font size"),
-            ("reset-ui-font-size", "button", "Reset UI font size"),
-            ("appearance-system", "radio-button", "System"),
-            (
-                "startup-restore",
-                "radio-button",
-                "Restore terminal arrangement",
-            ),
-            ("history", "switch", "History"),
-            ("reset-history", "button", "Reset history"),
-            ("settings-explorer-hidden", "switch", "Show hidden files"),
-            ("utility-cat", "check-box", "cat"),
-            ("reset-utility-cat", "button", "Reset cat"),
-            (
-                "record-quit",
-                "button",
-                "Application: Quit Rodtty shortcut: Cmd+Q",
+                "general",
+                vec![
+                    ("settings-page-tab-general", "tab", "General"),
+                    ("settings-group-window", "group", "Window"),
+                    ("window-close-trigger", "combo-box", "Window close"),
+                    ("terminal-startup-trigger", "combo-box", "Terminal startup"),
+                    ("history", "switch", "Save command history"),
+                    ("copy-on-selection", "switch", "Copy on selection"),
+                    (
+                        "less-scrollback",
+                        "button",
+                        "Decrease scrollback by 1000 lines",
+                    ),
+                    ("autosave-trigger", "combo-box", "Autosave"),
+                    ("settings-explorer-hidden", "switch", "Show hidden files"),
+                    ("reset-tab-general", "button", "Restore General defaults"),
+                ],
             ),
             (
-                "reset-shortcut-quit",
-                "button",
-                "Reset Application: Quit Rodtty shortcut",
+                "appearance",
+                vec![
+                    ("settings-section-Appearance", "group", "Appearance"),
+                    ("settings-group-terminal-text", "group", "Terminal"),
+                    ("font-ui-value-trigger", "combo-box", "UI font family"),
+                    (
+                        "font-terminal-value-trigger",
+                        "combo-box",
+                        "Terminal font family",
+                    ),
+                    ("theme-family-value-trigger", "combo-box", "Theme family"),
+                    ("appearance-trigger", "combo-box", "Appearance"),
+                    ("prompt-style-trigger", "combo-box", "Prompt style"),
+                    ("prompt-symbol-trigger", "combo-box", "Prompt symbol"),
+                    ("less-ui-font-size", "button", "Decrease UI font size"),
+                    (
+                        "more-terminal-line-height",
+                        "button",
+                        "Increase terminal line height",
+                    ),
+                    ("show-footer", "switch", "Show footer"),
+                    (
+                        "reset-tab-appearance",
+                        "button",
+                        "Restore Appearance defaults",
+                    ),
+                ],
+            ),
+            (
+                "commands",
+                vec![
+                    ("utility-cat", "switch", "cat"),
+                    ("reset-tab-commands", "button", "Restore Commands defaults"),
+                ],
+            ),
+            (
+                "shortcuts",
+                vec![
+                    ("record-quit", "button", quit.as_str()),
+                    (
+                        "reset-tab-shortcuts",
+                        "button",
+                        "Restore Shortcuts defaults",
+                    ),
+                ],
             ),
         ] {
-            let (r, n, _) = read(&rt, key);
-            assert_eq!((r.as_str(), n.as_str()), (role, name), "{key}");
+            act(&mut rt, &format!("settings-page-tab-{tab}"));
+            settle(&mut rt);
+            assert!(
+                read(&rt, &format!("settings-page-tab-{tab}"))
+                    .2
+                    .contains(&"selected".into()),
+                "{tab} is the selected tab"
+            );
+            for (key, role, name) in controls {
+                let (r, n, _) = read(&rt, key);
+                assert_eq!((r.as_str(), n.as_str()), (role, name), "{key}");
+            }
+            if tab == "commands" {
+                assert!(checked(&rt, "utility-cat"));
+            }
+            assert_every_control_is_named(&rt, tab);
         }
-        assert!(checked(&rt, "prompt-style-classic"));
-        assert!(!checked(&rt, "prompt-style-powerline"));
-        assert!(checked(&rt, "prompt-symbol-dollar"));
-        assert!(checked(&rt, "history"));
-        assert!(checked(&rt, "utility-cat"));
-        // The radios' sets are named by their headings.
-        let tree = rt.accessibility_json();
-        for name in [
-            "Prompt style",
-            "Prompt symbol",
-            "Appearance",
-            "Window close",
-            "Autosave",
-        ] {
-            assert!(radio_group_named(&tree, name), "missing radio group {name}");
-        }
-        assert_every_control_is_named(&rt, "settings");
 
-        act(&mut rt, "prompt-style-powerline");
+        // Return opens a dropdown and chooses its focused option.
+        act(&mut rt, "settings-page-tab-appearance");
+        settle(&mut rt);
+        assert_eq!(node(&rt, "prompt-style-trigger")["value"], "Classic");
+        focus(&mut rt, "prompt-style-trigger");
+        press(&mut rt, Key::Enter);
+        settle(&mut rt);
+        assert_eq!(rt.state.settings_select, Some("prompt-style"));
+        rt.key(KeyEvent {
+            key: Key::Down,
+            mods: Default::default(),
+        });
+        rt.frame(0.0);
+        press(&mut rt, Key::Enter);
+        settle(&mut rt);
+        assert_eq!(rt.state.settings_select, None, "choosing closes the list");
         assert_eq!(
             rt.state.config.prompt.style,
-            crate::prompt::PromptStyle::Powerline
+            crate::prompt::PromptStyle::Directory
         );
-        assert!(checked(&rt, "prompt-style-powerline"));
-        assert!(!checked(&rt, "prompt-style-classic"));
-        focus(&mut rt, "prompt-symbol-chevron");
+        assert_eq!(node(&rt, "prompt-style-trigger")["value"], "Directory");
+        // Return asks to restore the tab's defaults, and again confirms it.
+        focus(&mut rt, "reset-tab-appearance");
         press(&mut rt, Key::Enter);
+        settle(&mut rt);
         assert_eq!(
-            rt.state.config.prompt.symbol,
-            crate::prompt::PromptSymbol::Chevron
+            role_name(&rt, "confirm-reset-tab"),
+            ("button", "Restore Appearance defaults").into()
         );
-        focus(&mut rt, "reset-prompt-symbol");
-        press(&mut rt, Key::Text(" ".into()));
-        assert_eq!(rt.state.config.prompt.symbol, Default::default());
+        focus(&mut rt, "confirm-reset-tab");
+        press(&mut rt, Key::Enter);
+        settle(&mut rt);
+        assert_eq!(rt.state.config.prompt.style, Default::default());
+        // Return flips a switch.
+        act(&mut rt, "settings-page-tab-general");
+        settle(&mut rt);
+        assert!(checked(&rt, "history"));
         focus(&mut rt, "history");
         press(&mut rt, Key::Enter);
+        settle(&mut rt);
         assert!(!rt.state.config.history, "Return flips a switch");
         assert!(!checked(&rt, "history"));
         // Return opens a font family picker as Space does.
+        act(&mut rt, "settings-page-tab-appearance");
+        settle(&mut rt);
         focus(&mut rt, "font-ui-value-trigger");
         press(&mut rt, Key::Enter);
         settle(&mut rt);
@@ -459,15 +514,6 @@ mod tests {
             rt.state.font_ui.is_open(),
             "Return opens the UI font family picker"
         );
-    }
-
-    fn radio_group_named(n: &serde_json::Value, name: &str) -> bool {
-        (n["role"] == "radio-group" && n["name"] == name)
-            || n["children"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|c| radio_group_named(c, name))
     }
 
     #[test]
@@ -491,9 +537,13 @@ mod tests {
         settle(&mut rt);
         let (role, name, states) = read(&rt, "explorer-search-query");
         assert!(role.ends_with("input"), "{role}");
-        assert_eq!(name, "Search Files");
+        assert_eq!(name, "Search");
         assert!(states.contains(&"focused".into()));
-        assert_eq!(read(&rt, "explorer-search-close").1, "Close search");
+        // A query opens the Search tab, whose close button is named.
+        press(&mut rt, Key::Text("x".into()));
+        settle(&mut rt);
+        assert_eq!(read(&rt, "search-tab").1, "Search");
+        assert_eq!(read(&rt, "search-close").1, "Close Search tab");
         assert_every_control_is_named(&rt, "search");
     }
 

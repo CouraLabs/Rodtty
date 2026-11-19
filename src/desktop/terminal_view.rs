@@ -91,13 +91,15 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
                     style.weight = 600.0;
                 }
                 style.italic = cell.italic();
+                // Letter spacing widens the cell; the glyph sits centered in it.
+                let spacing = metrics.spacing;
                 grid = grid.child(
                     text(content)
                         .key(format!("terminal-cell-{r}-{start}"))
                         .font(style)
                         .color(fg)
-                        .absolute(start as f32 * cw, r as f32 * ch)
-                        .size(width + 1.0, ch),
+                        .absolute(start as f32 * cw + spacing / 2.0, r as f32 * ch)
+                        .size(width + 1.0 + spacing.abs(), ch),
                 );
             }
             if cell.underline() {

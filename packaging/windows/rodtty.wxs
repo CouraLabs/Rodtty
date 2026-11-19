@@ -1,0 +1,56 @@
+<!--
+  Rodtty MSI, built with WiX Toolset v5:
+    wix build packaging/windows/rodtty.wxs -arch x64 -d Version=0.1.0
+      -d BinDir=target\x86_64-pc-windows-msvc\release -d Root=. -o dist\Rodtty.msi
+
+  Keep UpgradeCode unchanged forever: it is how new versions replace old ones.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Rodtty"
+      Manufacturer="CouraLabs"
+      Version="$(var.Version)"
+      UpgradeCode="806E1FAE-0E2D-4C87-8089-B5B671116A88"
+      Scope="perMachine"
+      Compressed="yes">
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Rodtty is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="Rodtty.ico" SourceFile="$(var.Root)\assets\app-icon\rodtty.ico" />
+    <Property Id="ARPPRODUCTICON" Value="Rodtty.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/CouraLabs/Rodtty" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/CouraLabs/Rodtty/blob/main/docs/install.md" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Rodtty" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- rodtty.exe finds rodtty-shell.exe beside itself, so both share INSTALLFOLDER. -->
+    <ComponentGroup Id="Files" Directory="INSTALLFOLDER">
+      <Component>
+        <File Id="RodttyExe" Source="$(var.BinDir)\rodtty.exe" KeyPath="yes">
+          <Shortcut
+              Id="StartMenuShortcut"
+              Directory="ProgramMenuFolder"
+              Name="Rodtty"
+              Description="Terminal with a file explorer, editor, and Git diffs"
+              Icon="Rodtty.ico"
+              Advertise="yes" />
+        </File>
+      </Component>
+      <Component>
+        <File Id="RodttyShellExe" Source="$(var.BinDir)\rodtty-shell.exe" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Id="License" Source="$(var.Root)\LICENSE" Name="LICENSE.txt" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="Files" />
+    </Feature>
+  </Package>
+</Wix>

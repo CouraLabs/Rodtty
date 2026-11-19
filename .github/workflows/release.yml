@@ -1,0 +1,308 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds every package and publishes a GitHub Release.
+# Running the workflow by hand builds the packages as artifacts without publishing.
+# Setup, secrets, and the release checklist: docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      msi-version: ${{ steps.v.outputs.msi-version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: v
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          publish=false
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+              exit 1
+            fi
+            publish=true
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section"
+            exit 1
+          fi
+          [[ "$version" == *-* ]] && prerelease=true || prerelease=false
+          {
+            echo "version=$version"
+            echo "msi-version=${version%%-*}"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    outputs:
+      notarized: ${{ steps.package.outputs.notarized }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: cargo build --locked --release --bin rodtty --bin rodtty-shell --target aarch64-apple-darwin --target x86_64-apple-darwin
+      - name: Smoke test
+        run: target/aarch64-apple-darwin/release/rodtty --list-utilities
+      - name: Import signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -base64 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+      - id: package
+        name: Package
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE" ]]; then unset APPLE_SIGNING_IDENTITY; fi
+          scripts/package/macos.sh "${{ needs.version.outputs.version }}" \
+            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release
+          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]]; then
+            echo "notarized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarized=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS app is ad-hoc signed and not notarized; add the Apple secrets to fix."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
+      # Built on Ubuntu 22.04 so the binaries run on glibc 2.35 and newer.
+      - run: cargo build --locked --release --bin rodtty --bin rodtty-shell
+      - name: Smoke test
+        run: target/release/rodtty --list-utilities
+      - run: scripts/package/linux.sh "${{ needs.version.outputs.version }}" "${{ matrix.arch }}" target/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # Static CRT, so users don't need the Visual C++ redistributable.
+      RUSTFLAGS: -C target-feature=+crt-static
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      MSI: Rodtty-${{ needs.version.outputs.version }}-windows-${{ matrix.arch }}.msi
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --locked --release --bin rodtty --bin rodtty-shell --target ${{ matrix.target }}
+      - name: Smoke test
+        run: target/${{ matrix.target }}/release/rodtty.exe --list-utilities
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: |
+          dotnet tool install --global wix --version 5.0.2
+          echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
+      - name: Build MSI
+        run: |
+          mkdir -p dist
+          wix build packaging/windows/rodtty.wxs -arch ${{ matrix.arch }} \
+            -d Version=${{ needs.version.outputs.msi-version }} \
+            -d BinDir=target/${{ matrix.target }}/release -d Root=. \
+            -o "dist/$MSI"
+      - id: unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}-unsigned
+          path: dist/${{ env.MSI }}
+          if-no-files-found: error
+      - name: Sign with SignPath
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+      - if: env.SIGNPATH_API_TOKEN == ''
+        run: echo "::warning::Windows MSI is unsigned; SmartScreen will warn users. See docs/releasing.md."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: dist/${{ env.MSI }}
+          if-no-files-found: error
+
+  release:
+    needs: [version, macos, linux, windows]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "{macos,linux-*,windows-x64,windows-arm64}"
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Release notes
+        run: |
+          awk -v v="${{ needs.version.outputs.version }}" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          printf '\nInstall instructions: [docs/install.md](https://github.com/%s/blob/%s/docs/install.md)\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=()
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "Rodtty ${{ needs.version.outputs.version }}" --notes-file notes.md "${flags[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/*
+
+  homebrew:
+    needs: [version, macos, release]
+    if: needs.version.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - if: env.HOMEBREW_TAP_TOKEN == ''
+        run: echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew tap update."
+      - if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          repository: CouraLabs/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - if: env.HOMEBREW_TAP_TOKEN != ''
+        name: Update tap
+        run: |
+          scripts/package/homebrew.sh "${{ needs.version.outputs.version }}" dist tap "${{ needs.macos.outputs.notarized }}"
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/rodtty.rb Formula/rodtty.rb
+          git commit -m "rodtty ${{ needs.version.outputs.version }}"
+          git push
+
+  winget:
+    needs: [version, release]
+    if: needs.version.outputs.prerelease == 'false'
+    runs-on: windows-latest
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - if: env.WINGET_TOKEN == ''
+        run: echo "::warning::WINGET_TOKEN is not set; skipping the winget submission."
+      - if: env.WINGET_TOKEN != ''
+        name: Submit update to winget-pkgs
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          $base = "https://github.com/${{ github.repository }}/releases/download/v$version"
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe update CouraLabs.Rodtty --version $version `
+            --urls "$base/Rodtty-$version-windows-x64.msi|x64" "$base/Rodtty-$version-windows-arm64.msi|arm64" `
+            --submit --token $env:WINGET_TOKEN

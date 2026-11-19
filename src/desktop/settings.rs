@@ -8,6 +8,7 @@ impl State {
         self.workspace.explorer_revealed = false;
         self.settings_open = true;
         self.settings = true;
+        self.search_tab = false;
         self.workspace.layout.editor = true;
         self.workspace.set_terminal_focus(false);
         tx.focus_when_shown("settings-search", true);
@@ -45,6 +46,12 @@ impl State {
             Ok(config) => {
                 self.behavior_directory
                     .replace_text(config.behavior.specified_directory.to_string_lossy());
+                self.startup_directory.replace_text(
+                    config
+                        .behavior
+                        .startup_specified_directory
+                        .to_string_lossy(),
+                );
                 let prompt_changed = self.config.prompt != config.prompt;
                 self.config = config.clone();
                 self.last_valid_config = config;
@@ -67,12 +74,376 @@ impl State {
     }
 }
 
-fn matches(s: &State, section: &str, name: &str) -> bool {
-    let query = s.settings_query.text.trim().to_lowercase();
-    format!("{section} {name}").to_lowercase().contains(&query)
+/// The Settings page's tabs. Appearance holds everything that changes how
+/// Rodtty looks; General holds the rest, grouped into fieldsets. A search
+/// looks through every tab at once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Tab {
+    #[default]
+    General,
+    Appearance,
+    Shortcuts,
+    Commands,
 }
 
+impl Tab {
+    pub(super) const ALL: [Tab; 4] = [Tab::General, Tab::Appearance, Tab::Shortcuts, Tab::Commands];
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Tab::General => "General",
+            Tab::Appearance => "Appearance",
+            Tab::Shortcuts => "Shortcuts",
+            Tab::Commands => "Commands",
+        }
+    }
+    fn key(self) -> &'static str {
+        match self {
+            Tab::General => "general",
+            Tab::Appearance => "appearance",
+            Tab::Shortcuts => "shortcuts",
+            Tab::Commands => "commands",
+        }
+    }
+    /// Other words a search finds the tab by, such as the sections' former names.
+    fn aliases(self) -> &'static str {
+        match self {
+            Tab::General => "Behavior",
+            Tab::Appearance => "Theme",
+            Tab::Shortcuts => "Keyboard Shortcuts",
+            Tab::Commands => "Bundled Commands",
+        }
+    }
+}
+
+fn query(s: &State) -> String {
+    s.settings_query.text.trim().to_lowercase()
+}
+
+/// Whether the search query occurs in the tab's names followed by `words`.
+fn matches(s: &State, tab: Tab, words: &str) -> bool {
+    format!("{} {} {words}", tab.label(), tab.aliases())
+        .to_lowercase()
+        .contains(&query(s))
+}
+
+type Build = fn(&State, &Appearance, &mut Vec<El>) -> El;
+
+/// One setting: its name and explanation on the left, its control on the
+/// right, and optionally content under both (a preview or a follow-up field).
+struct Setting {
+    key: &'static str,
+    label: &'static str,
+    description: &'static str,
+    /// What a search matches besides the tab's names, fieldset and label.
+    words: &'static str,
+    control: Build,
+    below: Option<Build>,
+}
+
+/// A titled group of settings within a tab.
+struct Fieldset {
+    tab: Tab,
+    key: &'static str,
+    title: &'static str,
+    settings: &'static [Setting],
+    /// Rows built from data, already filtered by the search, for the lists
+    /// of shortcuts and bundled commands.
+    rows: Option<fn(&State, &Appearance) -> Vec<El>>,
+}
+
+impl Fieldset {
+    fn shown_settings(&self, s: &State) -> Vec<&Setting> {
+        self.settings
+            .iter()
+            .filter(|setting| {
+                if query(s).is_empty() {
+                    s.settings_tab == self.tab
+                } else {
+                    matches(
+                        s,
+                        self.tab,
+                        &format!("{} {} {}", self.title, setting.label, setting.words),
+                    )
+                }
+            })
+            .collect()
+    }
+    fn shown_rows(&self, s: &State, a: &Appearance) -> Vec<El> {
+        match self.rows {
+            Some(rows) if !query(s).is_empty() || s.settings_tab == self.tab => rows(s, a),
+            _ => Vec::new(),
+        }
+    }
+}
+
+const fn setting(key: &'static str, label: &'static str, control: Build) -> Setting {
+    Setting {
+        key,
+        label,
+        description: "",
+        words: "",
+        control,
+        below: None,
+    }
+}
+
+const FIELDSETS: &[Fieldset] = &[
+    Fieldset {
+        tab: Tab::General,
+        key: "window",
+        title: "Window",
+        settings: &[
+            Setting {
+                words: "window close keep sessions running ask each time quit Rodtty",
+                ..setting("window-close", "When the window closes", window_close)
+            },
+            Setting {
+                description: "Applies after Quit or restart; reopening a running host keeps its sessions. The file explorer always starts hidden.",
+                words: "startup launch restore workspace one single fresh terminal",
+                ..setting("terminal-startup", "On launch", terminal_startup)
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::General,
+        key: "terminal",
+        title: "Terminal",
+        settings: &[
+            Setting {
+                description: "Where the first terminal opens when no saved terminals are restored, and where missing saved folders fall back. Applies at the next launch.",
+                words: "startup starting default folder directory home specified launch first terminal",
+                below: Some(startup_specified_directory),
+                ..setting("startup-directory", "Startup folder", startup_directory)
+            },
+            Setting {
+                description: "The first terminal opens in the startup folder.",
+                words: "new terminal directory active explorer specified folder",
+                below: Some(specified_directory),
+                ..setting(
+                    "new-terminal-directory",
+                    "New terminal directory",
+                    new_terminal_directory,
+                )
+            },
+            Setting {
+                words: "terminal tab close confirm running commands always confirm close immediately",
+                ..setting(
+                    "terminal-tab-close",
+                    "Closing a terminal tab",
+                    terminal_tab_close,
+                )
+            },
+            Setting {
+                words: "clipboard right click context menu paste",
+                ..setting("terminal-right-click", "Right-click", right_click)
+            },
+            Setting {
+                description: "A finished selection is copied to the clipboard.",
+                words: "clipboard copy on selection",
+                ..setting("copy-on-selection", "Copy on selection", copy_on_selection)
+            },
+            Setting {
+                description: "Applies to new terminal sessions.",
+                words: "history save shell commands",
+                ..setting("history", "Save command history", history)
+            },
+            Setting {
+                description: "Lines kept per session; applies to new terminal sessions.",
+                words: "scrollback retained lines",
+                ..setting("scrollback", "Scrollback", scrollback)
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::General,
+        key: "editor",
+        title: "Editor",
+        settings: &[
+            Setting {
+                words: "autosave explicit save after delay editor focus loss",
+                ..setting("autosave", "Autosave", autosave)
+            },
+            Setting {
+                description: "How long After Delay waits once you stop typing.",
+                words: "autosave delay milliseconds",
+                ..setting("autosave-delay", "Autosave delay", autosave_delay)
+            },
+            Setting {
+                description: "Otherwise single click previews a file; double click or editing keeps it open.",
+                words: "single click keeps open file preview editor tabs",
+                ..setting(
+                    "single-click-keeps-open",
+                    "Single click keeps files open",
+                    single_click,
+                )
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::General,
+        key: "files",
+        title: "Files",
+        settings: &[
+            Setting {
+                words: "explorer confirm deletion move trash remove files",
+                ..setting(
+                    "settings-confirm-deletion",
+                    "Confirm moving files to Trash",
+                    |s, a, _| file_switch(s, a, AppAction::ToggleDeletionConfirmation),
+                )
+            },
+            Setting {
+                description: "Expands the explorer to the active terminal's folder.",
+                words: "explorer",
+                ..setting("settings-explorer-follow", "Follow Terminal", |s, a, _| {
+                    file_switch(s, a, AppAction::ToggleFollow)
+                })
+            },
+            Setting {
+                words: "explorer",
+                ..setting(
+                    "settings-explorer-hidden",
+                    "Show hidden files",
+                    |s, a, _| file_switch(s, a, AppAction::ToggleHidden),
+                )
+            },
+            Setting {
+                words: "explorer",
+                ..setting(
+                    "settings-explorer-ignore",
+                    "Respect Git ignore rules",
+                    |s, a, _| file_switch(s, a, AppAction::ToggleIgnore),
+                )
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::Appearance,
+        key: "theme",
+        title: "Theme",
+        settings: &[
+            Setting {
+                words: THEME_SEARCH,
+                ..setting("theme-family", "Theme family", |s, a, layers| {
+                    family_picker(s, a, layers)
+                })
+            },
+            Setting {
+                description: "System follows the host's light or dark mode.",
+                words: THEME_SEARCH,
+                below: Some(theme_previews),
+                ..setting("appearance", "Appearance", appearance)
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::Appearance,
+        key: "interface",
+        title: "Interface",
+        settings: &[
+            Setting {
+                words: "ui installed preview",
+                below: Some(|s, a, _| fonts::family_notes(s, a, false)),
+                ..setting("ui-font-family", "Font family", |s, a, layers| {
+                    fonts::family_picker(s, a, false, layers)
+                })
+            },
+            Setting {
+                words: "ui text",
+                ..setting("ui-font-size", "Font size", |s, a, _| font_size(s, a, "ui"))
+            },
+            Setting {
+                description: "The strip along the bottom of the window with the app name, the terminal's folder and the latest message.",
+                words: "show hide footer status bar app name folder path messages",
+                ..setting("show-footer", "Show footer", show_footer)
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::Appearance,
+        key: "terminal-text",
+        title: "Terminal",
+        settings: &[
+            Setting {
+                description: "The editor uses the same family.",
+                words: "terminal monospace installed preview",
+                below: Some(|s, a, _| fonts::family_notes(s, a, true)),
+                ..setting("terminal-font-family", "Font family", |s, a, layers| {
+                    fonts::family_picker(s, a, true, layers)
+                })
+            },
+            Setting {
+                words: "terminal text",
+                ..setting("terminal-font-size", "Font size", |s, a, _| {
+                    font_size(s, a, "terminal")
+                })
+            },
+            Setting {
+                description: "Row height as a multiple of the font size.",
+                words: "row",
+                ..setting("terminal-line-height", "Line height", line_height)
+            },
+            Setting {
+                description: "Points added to each character cell.",
+                words: "character width tracking",
+                ..setting("terminal-letter-spacing", "Letter spacing", letter_spacing)
+            },
+            Setting {
+                description: "Applies to running Rodtty shells at their next prompt, unless the shell sets its own PS1.",
+                words: "classic directory rodtty powerline two-line ps1",
+                below: Some(prompt_style_preview),
+                ..setting("prompt-style", "Prompt style", prompt_style)
+            },
+            Setting {
+                words: "dollar chevron triangle ps1",
+                below: Some(prompt_symbol_preview),
+                ..setting("prompt-symbol", "Prompt symbol", prompt_symbol)
+            },
+        ],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::Appearance,
+        key: "editor-text",
+        title: "Editor",
+        settings: &[Setting {
+            words: "editor text",
+            ..setting("editor-font-size", "Font size", |s, a, _| {
+                font_size(s, a, "editor")
+            })
+        }],
+        rows: None,
+    },
+    Fieldset {
+        tab: Tab::Shortcuts,
+        key: "keyboard-shortcuts",
+        title: "Keyboard shortcuts",
+        settings: &[],
+        rows: Some(shortcuts::rows),
+    },
+    Fieldset {
+        tab: Tab::Commands,
+        key: "bundled-commands",
+        title: "Bundled commands",
+        settings: &[],
+        rows: Some(bundled_commands),
+    },
+];
+
+const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Rosé Pine Dawn Moon Kanagawa Lotus Wave Everforest Light Dark System palette";
+
 pub(super) fn content(s: &State, a: &Appearance) -> El {
+    page(s, a, &mut Vec::new())
+}
+
+fn page(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    let searching = !query(s).is_empty();
     let mut page = col()
         .key("settings-page")
         .w_full()
@@ -118,7 +489,8 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
                     })
                     .shrink(),
                 ),
-        );
+        )
+        .child(tab_strip(s, a, searching));
     if let Some(error) = &s.settings_error {
         page = page.child(
             text(error)
@@ -133,831 +505,50 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .gap(12.0)
+        .gap(16.0)
         .scroll(rune::ScrollSpec {
             stick_bottom: false,
         });
     let mut count = 0;
-    for section in [
-        "Appearance",
-        "Behavior",
-        "Keyboard Shortcuts",
-        "Terminal",
-        "Editor",
-        "Files",
-        "Bundled Commands",
-    ] {
-        let visible = if section == "Appearance" {
-            matches(s, section, THEME_SEARCH)
-                || matches(
-                    s,
-                    section,
-                    "font size ui font family terminal font family installed monospace preview",
-                )
-        } else if section == "Keyboard Shortcuts" {
-            s.commands.iter().any(|c| {
-                matches(
-                    s,
-                    section,
-                    &format!("{} {} {}", c.id, c.title, s.shortcut_label(c.id)),
-                )
-            })
-        } else if section == "Behavior" {
-            matches(
-                s,
-                section,
-                "single click keeps open file preview editor tabs",
-            ) || matches(
-                s,
-                section,
-                "window close keep sessions running ask each time quit Rodtty",
-            ) || matches(
-                s,
-                section,
-                "terminal tab close confirm running commands always confirm close immediately",
-            ) || matches(
-                s,
-                section,
-                "new terminal directory active explorer specified folder",
-            ) || matches(
-                s,
-                section,
-                "startup restore workspace one single fresh terminal",
-            )
-        } else if section == "Terminal" {
-            matches(s, section, PROMPT_STYLE_SEARCH)
-                || matches(s, section, PROMPT_SYMBOL_SEARCH)
-                || matches(s, section, "history save shell commands")
-                || matches(s, section, "scrollback retained lines")
-                || matches(
-                    s,
-                    section,
-                    "clipboard right click context menu paste copy on selection",
-                )
-                || matches(s, section, "font size")
-        } else if section == "Editor" {
-            matches(s, section, "font size")
-                || matches(
-                    s,
-                    section,
-                    "autosave explicit save after delay editor focus loss milliseconds",
-                )
-        } else if section == "Files" {
-            matches(
-                s,
-                section,
-                "explorer follow terminal show hidden files respect ignore rules confirm deletion trash",
-            )
-        } else if section == "Bundled Commands" {
-            profile::utility_names()
-                .iter()
-                .any(|name| matches(s, section, name))
-        } else {
-            matches(s, section, "")
-        };
-        if !visible {
+    for tab in Tab::ALL {
+        let mut fieldsets = Vec::new();
+        for fieldset in FIELDSETS.iter().filter(|f| f.tab == tab) {
+            let mut rows: Vec<El> = fieldset
+                .shown_settings(s)
+                .into_iter()
+                .map(|setting| setting_row(s, a, setting, layers))
+                .collect();
+            rows.extend(fieldset.shown_rows(s, a));
+            if !rows.is_empty() {
+                fieldsets.push(fieldset_box(a, fieldset, rows));
+            }
+        }
+        if fieldsets.is_empty() {
             continue;
         }
         count += 1;
-        let mut group = col()
-            .key(format!("settings-section-{section}"))
+        let mut section = col()
+            .key(format!("settings-section-{}", tab.label()))
             .role("group")
-            .label(section)
+            .label(tab.label())
             .w_full()
-            .gap(8.0)
-            .px(14.0)
-            .py(12.0)
-            .radius(8.0)
-            .fill(a.panel())
-            .border(1.0, a.kit().c.border_base)
-            .child(
-                text(section)
+            .gap(16.0);
+        // The selected tab names its own page; results from a search are
+        // headed by the tab they belong to.
+        if searching {
+            section = section.child(
+                text(tab.label())
                     .role("heading")
                     .level(2)
                     .font(ui_style(13.0, 600.0))
                     .color(a.accent()),
             );
-        let target = match section {
-            "Appearance" => Some("ui"),
-            "Terminal" => Some("terminal"),
-            "Editor" => Some("editor"),
-            _ => None,
-        };
-        if let Some(target) = target.filter(|_| matches(s, section, "font size")) {
-            let size = match target {
-                "ui" => s.config.fonts.ui_size,
-                "terminal" => s.config.fonts.terminal_size,
-                _ => s.config.fonts.editor_size,
-            };
-            let sizes = col().w_full().gap(6.0).child(
-                text(format!(
-                    "{} font size: {size}px",
-                    if target == "ui" { "UI" } else { target }
-                ))
-                .font(ui_label())
-                .color(a.ink()),
-            );
-            let mut buttons = row().gap(6.0).scroll_x();
-            let subject = format!("{} font size", if target == "ui" { "UI" } else { target });
-            for (action, title, delta, name) in [
-                ("less", "−", -1.0, "Decrease"),
-                ("more", "+", 1.0, "Increase"),
-                ("reset", "Reset", 0.0, "Reset"),
-            ] {
-                let name = format!("{name} {subject}");
-                buttons = buttons.child(
-                    button(
-                        a,
-                        format!("{action}-{target}-font-size"),
-                        title,
-                        move |s, _| {
-                            s.save_config(|c| {
-                                let defaults = config::FontPreferences::default();
-                                let (size, default) = match target {
-                                    "ui" => (&mut c.fonts.ui_size, defaults.ui_size),
-                                    "terminal" => {
-                                        (&mut c.fonts.terminal_size, defaults.terminal_size)
-                                    }
-                                    _ => (&mut c.fonts.editor_size, defaults.editor_size),
-                                };
-                                *size = if delta == 0.0 {
-                                    default
-                                } else {
-                                    (*size + delta).clamp(8.0, 32.0)
-                                };
-                            });
-                        },
-                    )
-                    .label(name.clone())
-                    .help(name),
-                );
-            }
-            group = group.child(sizes.child(buttons));
         }
-        match section {
-            "Editor"
-                if matches(
-                    s,
-                    section,
-                    "autosave explicit save after delay editor focus loss milliseconds",
-                ) =>
-            {
-                use config::AutosavePolicy;
-                let mut choices = row()
-                    .role("radiogroup")
-                    .label("Autosave")
-                    .gap(6.0)
-                    .scroll_x();
-                for (id, title, policy) in [
-                    ("explicit", "Explicit Save", AutosavePolicy::Explicit),
-                    ("after-delay", "After Delay", AutosavePolicy::AfterDelay),
-                    (
-                        "editor-focus-loss",
-                        "Editor Focus Loss",
-                        AutosavePolicy::EditorFocusLoss,
-                    ),
-                ] {
-                    let on = s.config.autosave.policy == policy;
-                    choices = choices.child(state_button(
-                        a,
-                        format!("autosave-{id}"),
-                        format!("{}{title}", if on { "✓ " } else { "" }),
-                        "radio",
-                        title,
-                        on,
-                        move |s, _| {
-                            s.save_config(|c| c.autosave.policy = policy);
-                        },
-                    ));
-                }
-                group = group
-                    .child(text("Autosave").font(ui_label()).color(a.ink()))
-                    .child(choices)
-                    .child(button(
-                        a,
-                        "reset-autosave-policy",
-                        "Reset autosave policy",
-                        |s, _| {
-                            s.save_config(|c| c.autosave.policy = AutosavePolicy::default());
-                        },
-                    ))
-                    .child(
-                        text(format!("Autosave delay: {} ms", s.config.autosave.delay_ms))
-                            .font(ui_label())
-                            .color(a.ink()),
-                    )
-                    .child(
-                        row()
-                            .gap(6.0)
-                            .child(
-                                button(a, "less-autosave-delay", "− 100 ms", |s, _| {
-                                    s.save_config(|c| {
-                                        c.autosave.delay_ms =
-                                            c.autosave.delay_ms.saturating_sub(100).max(100)
-                                    });
-                                })
-                                .label("Decrease autosave delay by 100 ms")
-                                .help("Decrease autosave delay by 100 ms"),
-                            )
-                            .child(
-                                button(a, "more-autosave-delay", "+ 100 ms", |s, _| {
-                                    s.save_config(|c| {
-                                        c.autosave.delay_ms =
-                                            (c.autosave.delay_ms + 100).min(60_000)
-                                    });
-                                })
-                                .label("Increase autosave delay by 100 ms")
-                                .help("Increase autosave delay by 100 ms"),
-                            )
-                            .child(
-                                button(a, "reset-autosave-delay", "Reset delay", |s, _| {
-                                    s.save_config(|c| {
-                                        c.autosave.delay_ms =
-                                            config::AutosavePreferences::default().delay_ms
-                                    });
-                                })
-                                .label("Reset autosave delay")
-                                .help("Reset autosave delay"),
-                            )
-                            .child(button(a, "reset-autosave", "Reset Autosave", |s, _| {
-                                s.save_config(|c| c.autosave = Default::default());
-                            })),
-                    );
-            }
-            "Keyboard Shortcuts" => {
-                group = group.child(shortcuts::list(s, a));
-            }
-            "Behavior" => {
-                if matches(
-                    s,
-                    section,
-                    "startup restore workspace one single fresh terminal",
-                ) {
-                    use crate::config::TerminalStartup;
-                    group = group.child(text("Terminal startup").font(ui_label()).color(a.muted()));
-                    let mut choices = radio_group("Terminal startup", 8.0);
-                    for (key, title, choice) in [
-                        (
-                            "startup-restore",
-                            "Restore terminal arrangement",
-                            TerminalStartup::RestoreWorkspace,
-                        ),
-                        (
-                            "startup-single-fresh",
-                            "One fresh terminal",
-                            TerminalStartup::SingleFresh,
-                        ),
-                    ] {
-                        choices = choices.child(
-                            radio_button(
-                                a,
-                                key,
-                                title,
-                                s.config.behavior.terminal_startup == choice,
-                                move |s, _| {
-                                    s.save_config(|c| c.behavior.terminal_startup = choice);
-                                },
-                            )
-                            .w_full(),
-                        );
-                    }
-                    group = group.child(choices).child(button(a, "reset-terminal-startup", "Reset terminal startup", |s, _| {
-                        s.save_config(|c| c.behavior.terminal_startup = TerminalStartup::default());
-                    })).child(text("Applies after Quit or restart. Reopening a running host keeps its sessions. One fresh terminal uses the new-terminal directory choice; first launch keeps the startup directory.").font(ui_label()).color(a.muted()).wrap());
-                }
-                if matches(
-                    s,
-                    section,
-                    "single click keeps open file preview editor tabs",
-                ) {
-                    group = group
-                    .child(switch_button(
-                        a,
-                        "single-click-keeps-open",
-                        "Single click keeps files open",
-                        s.config.single_click_keeps_open,
-                        |s, _| {
-                            s.save_config(|c| c.single_click_keeps_open = !c.single_click_keeps_open);
-                        },
-                    ))
-                    .child(button(a, "reset-single-click-keeps-open", "Reset", |s, _| {
-                        s.save_config(|c| {
-                            c.single_click_keeps_open = Config::default().single_click_keeps_open;
-                        });
-                    }).label("Reset single click keeps files open").help("Reset single click keeps files open"))
-                    .child(
-                        text("By default, single click previews a file; double click or editing keeps it open.")
-                            .font(ui_label())
-                            .color(a.muted())
-                            .wrap(),
-                    );
-                }
-                use crate::config::WindowClosePolicy as Window;
-                if matches(
-                    s,
-                    section,
-                    "window close keep sessions running ask each time quit Rodtty",
-                ) {
-                    group = group.child(text("Window close").font(ui_label()).color(a.muted()));
-                    let mut choices = radio_group("Window close", 8.0);
-                    for (key, label, policy) in [
-                        (
-                            "window-close-keep",
-                            "Keep sessions running",
-                            Window::KeepSessionsRunning,
-                        ),
-                        ("window-close-ask", "Ask each time", Window::AskEachTime),
-                        ("window-close-quit", "Quit Rodtty", Window::QuitRodtty),
-                    ] {
-                        choices = choices.child(
-                            radio_button(
-                                a,
-                                key,
-                                label,
-                                s.config.behavior.window_close == policy,
-                                move |s, _| {
-                                    s.save_config(|c| c.behavior.window_close = policy);
-                                },
-                            )
-                            .w_full(),
-                        );
-                    }
-                    group = group.child(choices).child(button(
-                        a,
-                        "reset-window-close",
-                        "Reset window close",
-                        |s, _| {
-                            s.save_config(|c| c.behavior.window_close = Window::default());
-                        },
-                    ));
-                }
-                use crate::config::{
-                    NewTerminalDirectory as Directory, TerminalClosePolicy as Terminal,
-                };
-                if matches(
-                    s,
-                    section,
-                    "terminal tab close confirm running commands always confirm close immediately",
-                ) {
-                    group =
-                        group.child(text("Terminal tab close").font(ui_label()).color(a.muted()));
-                    let mut choices = radio_group("Terminal tab close", 8.0);
-                    for (key, label, policy) in [
-                        (
-                            "terminal-close-running",
-                            "Confirm when commands are running",
-                            Terminal::ConfirmRunning,
-                        ),
-                        (
-                            "terminal-close-always",
-                            "Always confirm",
-                            Terminal::AlwaysConfirm,
-                        ),
-                        (
-                            "terminal-close-immediate",
-                            "Close immediately",
-                            Terminal::CloseImmediately,
-                        ),
-                    ] {
-                        choices = choices.child(
-                            radio_button(
-                                a,
-                                key,
-                                label,
-                                s.config.behavior.terminal_tab_close == policy,
-                                move |s, _| {
-                                    s.save_config(|c| c.behavior.terminal_tab_close = policy);
-                                },
-                            )
-                            .w_full(),
-                        );
-                    }
-                    group = group.child(choices).child(button(
-                        a,
-                        "reset-terminal-close",
-                        "Reset terminal tab close",
-                        |s, _| {
-                            s.save_config(|c| c.behavior.terminal_tab_close = Terminal::default());
-                        },
-                    ));
-                }
-                if matches(
-                    s,
-                    section,
-                    "new terminal directory active explorer specified folder",
-                ) {
-                    group = group.child(
-                        text("New terminal directory")
-                            .font(ui_label())
-                            .color(a.muted()),
-                    );
-                    let mut choices = radio_group("New terminal directory", 8.0);
-                    for (key, label, policy) in [
-                        (
-                            "new-directory-active",
-                            "Active terminal directory",
-                            Directory::Active,
-                        ),
-                        (
-                            "new-directory-explorer",
-                            "Explorer folder",
-                            Directory::Explorer,
-                        ),
-                        (
-                            "new-directory-specified",
-                            "Specified folder",
-                            Directory::Specified,
-                        ),
-                    ] {
-                        choices = choices.child(
-                            radio_button(
-                                a,
-                                key,
-                                label,
-                                s.config.behavior.new_terminal_directory == policy,
-                                move |s, _| {
-                                    s.save_config(|c| c.behavior.new_terminal_directory = policy);
-                                },
-                            )
-                            .w_full(),
-                        );
-                    }
-                    group = group
-                        .child(choices)
-                        .child(button(a, "reset-new-directory", "Reset new terminal directory", |s, _| {
-                            s.save_config(|c| c.behavior.new_terminal_directory = Directory::default());
-                        }))
-                        .child(text_input(&s.behavior_directory, ui_label())
-                            .caret(a.accent(), a.selection()).key("specified-directory")
-                            .label("Specified terminal folder").single_line().w_full().px(8.0).py(5.0).color(a.ink())
-                            .placeholder("Absolute folder path", a.muted())
-                            .border(1.0, a.kit().c.border_base)
-                            .radius(6.0)
-                            .on_edit(|s: &mut State| &mut s.behavior_directory)
-                            .on_input_change(|s: &mut State, _| {
-                                let path = PathBuf::from(&s.behavior_directory.text);
-                                s.save_config(|c| c.behavior.specified_directory = path);
-                            }))
-                        .child(button(a, "reset-specified-directory", "Reset specified folder", |s, _| {
-                            s.behavior_directory.replace_text("");
-                            s.save_config(|c| c.behavior.specified_directory = PathBuf::new());
-                        }))
-                        .child(text("The first terminal keeps the startup directory. These choices apply to new tabs.").font(ui_label()).color(a.muted()).wrap());
-                }
-            }
-            "Appearance" if matches(s, section, THEME_SEARCH) => {
-                use crate::config::Appearance as Mode;
-                group = group
-                    .child(text("Theme family").font(ui_label()).color(a.muted()))
-                    .child(family_picker(s, a, &mut Vec::new()))
-                    .child(button(a, "reset-theme-family", "Reset family", |s, _| {
-                        s.save_config(|c| c.theme_family = Config::default().theme_family);
-                    }));
-                let mut choices = row()
-                    .role("radiogroup")
-                    .label("Appearance")
-                    .gap(6.0)
-                    .scroll_x();
-                for (key, label, mode) in [
-                    ("light", "Light", Mode::Light),
-                    ("dark", "Dark", Mode::Dark),
-                    ("system", "System", Mode::System),
-                ] {
-                    choices = choices.child(
-                        button(a, format!("appearance-{key}"), label, move |s, _| {
-                            s.save_config(|c| c.appearance = mode)
-                        })
-                        .role("radio")
-                        .checked(s.config.appearance == mode)
-                        .border(
-                            1.0,
-                            if s.config.appearance == mode {
-                                a.accent()
-                            } else {
-                                a.panel()
-                            },
-                        ),
-                    );
-                }
-                group = group
-                    .child(choices)
-                    .child(
-                        text(format!("{} · applies immediately", a.name))
-                            .font(ui_label())
-                            .color(a.muted())
-                            .wrap(),
-                    )
-                    .child(palette_preview(s.config.theme_family, Mode::Light))
-                    .child(palette_preview(s.config.theme_family, Mode::Dark))
-                    .child(button(a, "reset-appearance", "Reset appearance", |s, _| {
-                        s.save_config(|c| c.appearance = Config::default().appearance);
-                    }))
-                    .child(
-                        text(a.notes)
-                            .font(ui_label())
-                            .color(a.muted())
-                            .wrap_anywhere(),
-                    );
-            }
-            "Appearance" | "Editor" => {}
-            "Terminal" => {
-                if matches(s, section, PROMPT_STYLE_SEARCH) {
-                    group = group.child(prompt_style_row(s, a));
-                }
-                if matches(s, section, PROMPT_SYMBOL_SEARCH) {
-                    group = group.child(prompt_symbol_row(s, a));
-                }
-                if matches(
-                    s,
-                    section,
-                    "clipboard right click context menu paste copy on selection",
-                ) {
-                    use crate::config::TerminalRightClick;
-                    group =
-                        group.child(text("Terminal clipboard").font(ui_label()).color(a.muted()));
-                    let mut choices = radio_group("Terminal right-click", 8.0);
-                    for (key, label, value) in [
-                        (
-                            "terminal-right-click-menu",
-                            "Right-click: context menu",
-                            TerminalRightClick::ContextMenu,
-                        ),
-                        (
-                            "terminal-right-click-paste",
-                            "Right-click: paste",
-                            TerminalRightClick::Paste,
-                        ),
-                    ] {
-                        choices = choices.child(
-                            radio_button(
-                                a,
-                                key,
-                                label,
-                                s.config.terminal_clipboard.right_click == value,
-                                move |s, _| {
-                                    s.save_config(|c| c.terminal_clipboard.right_click = value);
-                                },
-                            )
-                            .w_full(),
-                        );
-                    }
-                    group = group.child(choices).child(button(
-                        a,
-                        "reset-terminal-right-click",
-                        "Reset right-click",
-                        |s, _| {
-                            s.save_config(|c| {
-                                c.terminal_clipboard.right_click = Default::default()
-                            });
-                        },
-                    ));
-                    group = group
-                        .child(
-                            switch_button(
-                                a,
-                                "copy-on-selection",
-                                "Copy on selection",
-                                s.config.terminal_clipboard.copy_on_selection,
-                                |s, _| {
-                                    s.save_config(|c| {
-                                        c.terminal_clipboard.copy_on_selection =
-                                            !c.terminal_clipboard.copy_on_selection
-                                    });
-                                },
-                            )
-                            .w_full(),
-                        )
-                        .child(button(
-                            a,
-                            "reset-copy-on-selection",
-                            "Reset copy on selection",
-                            |s, _| {
-                                s.save_config(|c| {
-                                    c.terminal_clipboard.copy_on_selection =
-                                        config::TerminalClipboardPreferences::default()
-                                            .copy_on_selection
-                                });
-                            },
-                        ));
-                }
-                if matches(s, section, "history save shell commands") {
-                    group = group.child(
-                        row()
-                            .gap(6.0)
-                            .center_y()
-                            .child(switch_button(
-                                a,
-                                "history",
-                                "History",
-                                s.config.history,
-                                |s, _| {
-                                    s.save_config(|config| config.history = !config.history);
-                                },
-                            ))
-                            .child(
-                                button(a, "reset-history", "Reset", |s, _| {
-                                    s.save_config(|config| {
-                                        config.history = Config::default().history
-                                    });
-                                })
-                                .label("Reset history")
-                                .help("Reset history"),
-                            ),
-                    );
-                }
-                if matches(s, section, "scrollback retained lines") {
-                    group = group.child(
-                        row()
-                            .gap(6.0)
-                            .center_y()
-                            .scroll_x()
-                            .child(
-                                text(format!("Scrollback: {} lines", s.config.scrollback))
-                                    .font(ui_label())
-                                    .color(a.ink()),
-                            )
-                            .child(
-                                button(a, "less-scrollback", "− 1000", |s, _| {
-                                    s.save_config(|config| {
-                                        config.scrollback =
-                                            config.scrollback.saturating_sub(1000).max(100)
-                                    });
-                                })
-                                .label("Decrease scrollback by 1000 lines")
-                                .help("Decrease scrollback by 1000 lines"),
-                            )
-                            .child(
-                                button(a, "more-scrollback", "+ 1000", |s, _| {
-                                    s.save_config(|config| {
-                                        config.scrollback = (config.scrollback + 1000).min(100_000)
-                                    });
-                                })
-                                .label("Increase scrollback by 1000 lines")
-                                .help("Increase scrollback by 1000 lines"),
-                            )
-                            .child(
-                                button(a, "reset-scrollback", "Reset", |s, _| {
-                                    s.save_config(|config| {
-                                        config.scrollback = Config::default().scrollback
-                                    });
-                                })
-                                .label("Reset scrollback")
-                                .help("Reset scrollback"),
-                            ),
-                    );
-                }
-                group = group.child(
-                    text(
-                        "Prompt choices apply to running Rodtty shells at their next prompt, unless the shell sets its own PS1. Command, history, and scrollback choices apply to new terminal sessions.",
-                    )
-                    .font(ui_label())
-                    .color(a.muted())
-                    .wrap(),
-                );
-            }
-            "Files" => {
-                for (key, title, enabled, action) in [
-                    (
-                        "settings-confirm-deletion",
-                        "Confirm moving files to Trash",
-                        s.config.explorer.confirm_deletion,
-                        AppAction::ToggleDeletionConfirmation,
-                    ),
-                    (
-                        "settings-explorer-follow",
-                        "Follow Terminal",
-                        s.config.explorer.follow_terminal,
-                        AppAction::ToggleFollow,
-                    ),
-                    (
-                        "settings-explorer-hidden",
-                        "Show hidden files",
-                        s.config.explorer.show_hidden,
-                        AppAction::ToggleHidden,
-                    ),
-                    (
-                        "settings-explorer-ignore",
-                        "Respect Git ignore rules",
-                        s.config.explorer.respect_ignore,
-                        AppAction::ToggleIgnore,
-                    ),
-                ] {
-                    if matches(s, section, title)
-                        || (key == "settings-confirm-deletion"
-                            && matches(s, section, "confirm deletion move trash remove files"))
-                    {
-                        group = group.child(
-                            row()
-                                .gap(6.0)
-                                .center_y()
-                                .child(switch_button(a, key, title, enabled, move |s, tx| {
-                                    s.dispatch(action, tx)
-                                }))
-                                .child(
-                                    button(a, format!("reset-{key}"), "Reset", move |s, _| {
-                                        s.save_config(|config| {
-                                            let defaults = Config::default().explorer;
-                                            match action {
-                                                AppAction::ToggleDeletionConfirmation => {
-                                                    config.explorer.confirm_deletion =
-                                                        defaults.confirm_deletion
-                                                }
-                                                AppAction::ToggleFollow => {
-                                                    config.explorer.follow_terminal =
-                                                        defaults.follow_terminal
-                                                }
-                                                AppAction::ToggleHidden => {
-                                                    config.explorer.show_hidden =
-                                                        defaults.show_hidden
-                                                }
-                                                AppAction::ToggleIgnore => {
-                                                    config.explorer.respect_ignore =
-                                                        defaults.respect_ignore
-                                                }
-                                                _ => unreachable!(),
-                                            }
-                                        });
-                                    })
-                                    .label(format!("Reset {title}"))
-                                    .help(format!("Reset {title}")),
-                                ),
-                        );
-                    }
-                }
-                group = group.child(button(
-                    a,
-                    "reset-explorer-preferences",
-                    "Reset file preferences",
-                    |s, _| {
-                        s.save_config(|config| config.explorer = Default::default());
-                    },
-                ));
-            }
-            "Bundled Commands" => {
-                for name in profile::utility_names() {
-                    if !matches(s, section, &name) {
-                        continue;
-                    }
-                    let enabled = !s.config.disabled.contains(&name);
-                    let reset = name.clone();
-                    let name_reset = name.clone();
-                    group = group.child(
-                        row()
-                            .gap(6.0)
-                            .center_y()
-                            .child(state_button(
-                                a,
-                                format!("utility-{name}"),
-                                format!("{} {name}", if enabled { "✓" } else { "−" }),
-                                "checkbox",
-                                name.clone(),
-                                enabled,
-                                move |s, _| {
-                                    s.save_config(|config| {
-                                        if config.disabled.contains(&name) {
-                                            config.disabled.retain(|n| n != &name);
-                                        } else {
-                                            config.disabled.push(name.clone());
-                                        }
-                                    });
-                                },
-                            ))
-                            .child(
-                                button(
-                                    a,
-                                    format!("reset-utility-{reset}"),
-                                    "Reset",
-                                    move |s, _| {
-                                        s.save_config(|config| {
-                                            config.disabled.retain(|n| n != &reset)
-                                        });
-                                    },
-                                )
-                                .label(format!("Reset {name_reset}"))
-                                .help(format!("Reset {name_reset}")),
-                            ),
-                    );
-                }
-            }
-            _ => {
-                group = group.child(
-                    text("No configurable preferences in this section yet.")
-                        .font(ui_label())
-                        .color(a.muted())
-                        .wrap(),
-                );
-            }
+        if !searching {
+            section = section.child(restore_defaults(s, a, tab));
         }
-        if section == "Appearance"
-            && matches(
-                s,
-                section,
-                "ui font family terminal font family installed monospace preview",
-            )
-        {
-            group = group.child(fonts::selectors(s, a));
-        }
-        list = list.child(group);
+        section = section.children(fieldsets);
+        list = list.child(section);
     }
     if count == 0 {
         list = list.child(
@@ -969,7 +560,784 @@ pub(super) fn content(s: &State, a: &Appearance) -> El {
     page.child(list)
 }
 
-const THEME_SEARCH: &str = "theme family Catppuccin Latte Mocha Dracula Alucard Tokyo Night Nord Gruvbox medium One Dark Pro Rodtty adaptation Light Owl Ayu Solarized Rosé Pine Dawn Moon Kanagawa Lotus Wave Everforest Light Dark System palette";
+/// The row of tabs under the search field. While a search shows results from
+/// every tab, none is selected; choosing one clears the search.
+fn tab_strip(s: &State, a: &Appearance, searching: bool) -> El {
+    let mut strip = row()
+        .key("settings-tabs")
+        .role("tablist")
+        .label("Settings sections")
+        .w_full()
+        .gap(4.0)
+        .padding(3.0)
+        .radius(8.0)
+        .fill(a.panel())
+        .border(1.0, a.kit().c.border_base)
+        // Wrap onto a second line in a narrow pane so no tab is out of view.
+        .flex_wrap();
+    for (position, tab) in Tab::ALL.into_iter().enumerate() {
+        let selected = !searching && s.settings_tab == tab;
+        let key = format!("settings-page-tab-{}", tab.key());
+        pressable(&key);
+        strip = strip.child(
+            el().key(key)
+                .role("tab")
+                .label(tab.label())
+                .focus_selected(selected)
+                .position_in_set(position + 1, Tab::ALL.len())
+                .focusable(true)
+                .no_window_drag()
+                .focus_ring(2.0, 1.0, a.accent())
+                .h(26.0_f32.max(ui_label().size * 1.5 + 6.0))
+                .px(12.0)
+                .center()
+                .radius(6.0)
+                .fill(if selected {
+                    a.hover_bg()
+                } else {
+                    Color::TRANSPARENT
+                })
+                .border(
+                    1.0,
+                    if selected {
+                        a.button_border()
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                )
+                .hover(a.hover_bg())
+                .press(a.pressed())
+                .on_press_tx(move |s: &mut State, tx| {
+                    tx.blur();
+                    s.settings_tab = tab;
+                    s.settings_select = None;
+                    s.settings_reset_confirm = None;
+                    s.settings_query.replace_text("");
+                })
+                .child(
+                    text(tab.label())
+                        .font(if selected {
+                            ui_style(ui_label().size, 600.0)
+                        } else {
+                            ui_label()
+                        })
+                        .color(if selected { a.ink() } else { a.muted() })
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    strip
+}
+
+/// A fieldset: its title above a bordered box of rows divided by thin rules.
+fn fieldset_box(a: &Appearance, fieldset: &Fieldset, rows: Vec<El>) -> El {
+    let divider = || {
+        el().w_full()
+            .h(1.0)
+            .fill(a.kit().c.border_base.mix(a.panel(), 0.5))
+            .a11y_hidden()
+    };
+    let mut body = col()
+        .w_full()
+        .px(14.0)
+        .py(2.0)
+        .radius(8.0)
+        .fill(a.panel())
+        .border(1.0, a.kit().c.border_base);
+    for (i, row) in rows.into_iter().enumerate() {
+        if i > 0 {
+            body = body.child(divider());
+        }
+        body = body.child(row);
+    }
+    col()
+        .key(format!("settings-group-{}", fieldset.key))
+        .role("group")
+        .label(fieldset.title)
+        .w_full()
+        .gap(6.0)
+        .child(
+            text(fieldset.title)
+                .role("heading")
+                .level(3)
+                .font(ui_style(12.0, 600.0))
+                .color(a.muted())
+                .pl(2.0),
+        )
+        .child(body)
+}
+
+/// A setting's line: label and description on the left, its control on the
+/// right, wrapping below them when the pane is too narrow for both.
+fn setting_row(s: &State, a: &Appearance, setting: &Setting, layers: &mut Vec<El>) -> El {
+    let mut name = col()
+        .grow(1.0)
+        .shrink()
+        .min_w(160.0)
+        .gap(2.0)
+        .child(text(setting.label).font(ui_label()).color(a.ink()).wrap());
+    if !setting.description.is_empty() {
+        name = name.child(
+            text(setting.description)
+                .font(ui_style(12.0, 400.0))
+                .color(a.muted())
+                .wrap(),
+        );
+    }
+    let mut line = col()
+        .key(format!("{}-setting", setting.key))
+        .w_full()
+        .py(10.0)
+        .gap(8.0)
+        .child(
+            row()
+                .key(format!("{}-row", setting.key))
+                .w_full()
+                .gap(12.0)
+                .flex_wrap()
+                .center_y()
+                .child(name)
+                .child((setting.control)(s, a, layers)),
+        );
+    if let Some(below) = setting.below {
+        line = line.child(below(s, a, layers));
+    }
+    line
+}
+
+/// A row for data-driven lists, such as one bundled command.
+fn plain_row(a: &Appearance, key: String, label: &str, control: El) -> El {
+    row()
+        .key(key)
+        .w_full()
+        .py(8.0)
+        .gap(12.0)
+        .center_y()
+        .child(
+            text(label)
+                .font(ui_label())
+                .color(a.ink())
+                .grow(1.0)
+                .shrink()
+                .min_w(0.0),
+        )
+        .child(control)
+}
+
+/// The tab's one reset, above its fieldsets: a button that asks before
+/// restoring every setting on the tab to its default.
+fn restore_defaults(s: &State, a: &Appearance, tab: Tab) -> El {
+    let mut line = row()
+        .key(format!("restore-defaults-{}", tab.key()))
+        .w_full()
+        .gap(8.0)
+        .flex_wrap()
+        .center_y();
+    if s.settings_reset_confirm == Some(tab) {
+        line = line
+            .child(
+                text(format!(
+                    "Restore every {} setting to its default?",
+                    tab.label()
+                ))
+                .font(ui_label())
+                .color(a.ink())
+                .wrap()
+                .shrink()
+                .min_w(0.0),
+            )
+            .child(
+                button(a, "confirm-reset-tab", "Restore Defaults", move |s, tx| {
+                    s.settings_reset_confirm = None;
+                    s.reset_settings_tab(tab, tx);
+                })
+                .label(format!("Restore {} defaults", tab.label())),
+            )
+            .child(button(a, "cancel-reset-tab", "Cancel", |s, _| {
+                s.settings_reset_confirm = None;
+            }));
+    } else {
+        line = line.child(el().grow(1.0)).child(
+            button(
+                a,
+                format!("reset-tab-{}", tab.key()),
+                "Restore Defaults",
+                move |s, _| s.settings_reset_confirm = Some(tab),
+            )
+            .label(format!("Restore {} defaults", tab.label()))
+            .help(format!(
+                "Restore every {} setting to its default",
+                tab.label()
+            )),
+        );
+    }
+    line
+}
+
+impl State {
+    /// Every preference shown on `tab`, back to its default.
+    fn reset_settings_tab(&mut self, tab: Tab, tx: &mut Tx) {
+        let defaults = Config::default();
+        match tab {
+            Tab::General => {
+                self.behavior_directory.replace_text("");
+                self.startup_directory.replace_text("");
+                self.save_config(|c| {
+                    let extra = std::mem::take(&mut c.behavior.extra);
+                    c.behavior = defaults.behavior;
+                    c.behavior.extra = extra;
+                    c.terminal_clipboard = defaults.terminal_clipboard;
+                    c.history = defaults.history;
+                    c.scrollback = defaults.scrollback;
+                    c.autosave = defaults.autosave;
+                    c.single_click_keeps_open = defaults.single_click_keeps_open;
+                    c.explorer = defaults.explorer;
+                });
+            }
+            Tab::Appearance => {
+                self.save_config(|c| {
+                    c.theme_family = defaults.theme_family;
+                    c.appearance = defaults.appearance;
+                    c.fonts = defaults.fonts;
+                    c.prompt = defaults.prompt;
+                    c.show_footer = defaults.show_footer;
+                });
+                let (sans, mono) = self.font_families();
+                tx.set_font_families(sans, mono);
+            }
+            Tab::Shortcuts => self.save_config(|c| c.shortcuts.clear()),
+            Tab::Commands => self.save_config(|c| c.disabled.clear()),
+        }
+    }
+}
+
+/// An on/off setting drawn as a switch, named for assistive technology.
+fn toggle(
+    a: &Appearance,
+    key: impl Into<String>,
+    name: &str,
+    on: bool,
+    flip: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let key = key.into();
+    pressable(&key);
+    rune_kit::Switch::new(on)
+        .label(name)
+        .hide_label()
+        .on_toggle_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.blur();
+            flip(s, tx);
+        })
+        .build(a.kit())
+        .key(key)
+        .no_window_drag()
+        .help(name)
+}
+
+/// A dropdown choosing one of `options`, saved through `set` as it is chosen.
+/// One dropdown is open at a time; its list is drawn as an overlay layer.
+#[allow(clippy::too_many_arguments)]
+fn choice<T: Copy + PartialEq + 'static>(
+    s: &State,
+    a: &Appearance,
+    layers: &mut Vec<El>,
+    key: &'static str,
+    name: &str,
+    options: Vec<(String, T)>,
+    current: T,
+    set: fn(&mut Config, T),
+) -> El {
+    let labels: Vec<&str> = options.iter().map(|(label, _)| label.as_str()).collect();
+    let shown = options
+        .iter()
+        .find(|(_, value)| *value == current)
+        .map(|(label, _)| label.clone());
+    // Return opens the dropdown and chooses its focused option, as Space does.
+    pressable(&format!("{key}-trigger"));
+    for i in 0..options.len() {
+        pressable(&format!("option{i}"));
+    }
+    let select = rune_kit::Select::new(key, &labels)
+        .label(name)
+        .current(shown.as_deref())
+        .appearance(rune_kit::SelectAppearance::Field)
+        .width(240.0)
+        .open(s.settings_select == Some(key))
+        .on_toggle(move |s: &mut State| {
+            s.theme_family_picker.close();
+            s.font_ui.close();
+            s.font_terminal.close();
+            s.settings_select = if s.settings_select == Some(key) {
+                None
+            } else {
+                Some(key)
+            };
+        })
+        .on_close(move |s: &mut State| {
+            if s.settings_select == Some(key) {
+                s.settings_select = None;
+            }
+        })
+        .on_choose(move |s: &mut State, label: &str, _: &mut Tx| {
+            s.settings_select = None;
+            if let Some(&(_, value)) = options.iter().find(|(l, _)| l == label) {
+                s.save_config(|c| set(c, value));
+            }
+        });
+    select.build(a.kit(), layers).shrink().min_w(0.0)
+}
+
+fn labels<T: Copy>(options: &[(&str, T)]) -> Vec<(String, T)> {
+    options.iter().map(|&(l, v)| (l.to_owned(), v)).collect()
+}
+
+/// A value between decrease and increase buttons keyed `less-{key}` and
+/// `more-{key}`. `change` gets -1 or 1.
+fn stepper(
+    a: &Appearance,
+    key: &str,
+    subject: &str,
+    shown: String,
+    change: fn(&mut Config, f32),
+) -> El {
+    let step_button = |action: &str, title: &'static str, name: &str, sign: f32| {
+        let name = format!("{name} {subject}");
+        button(a, format!("{action}-{key}"), title, move |s, _| {
+            s.save_config(|c| change(c, sign));
+        })
+        .w(32.0)
+        .px(0.0)
+        .label(name.clone())
+        .help(name)
+    };
+    row()
+        .gap(6.0)
+        .center_y()
+        .child(step_button("less", "−", "Decrease", -1.0))
+        .child(
+            text(shown)
+                .key(format!("{key}-value"))
+                .font(ui_label())
+                .color(a.ink())
+                .min_w(72.0),
+        )
+        .child(step_button("more", "+", "Increase", 1.0))
+}
+
+/// `value` moved by `delta`, kept to one decimal place and inside `range`.
+fn step(value: f32, delta: f32, (min, max): (f32, f32)) -> f32 {
+    (((value + delta) * 10.0).round() / 10.0).clamp(min, max)
+}
+
+fn window_close(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::WindowClosePolicy as Window;
+    choice(
+        s,
+        a,
+        layers,
+        "window-close",
+        "Window close",
+        labels(&[
+            ("Keep sessions running", Window::KeepSessionsRunning),
+            ("Ask each time", Window::AskEachTime),
+            ("Quit Rodtty", Window::QuitRodtty),
+        ]),
+        s.config.behavior.window_close,
+        |c, v| c.behavior.window_close = v,
+    )
+}
+
+fn terminal_startup(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::TerminalStartup;
+    choice(
+        s,
+        a,
+        layers,
+        "terminal-startup",
+        "Terminal startup",
+        labels(&[
+            (
+                "Restore terminal arrangement",
+                TerminalStartup::RestoreWorkspace,
+            ),
+            ("One fresh terminal", TerminalStartup::SingleFresh),
+        ]),
+        s.config.behavior.terminal_startup,
+        |c, v| c.behavior.terminal_startup = v,
+    )
+}
+
+fn new_terminal_directory(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::NewTerminalDirectory as Directory;
+    choice(
+        s,
+        a,
+        layers,
+        "new-terminal-directory",
+        "New terminal directory",
+        labels(&[
+            ("Active terminal directory", Directory::Active),
+            ("Explorer folder", Directory::Explorer),
+            ("Specified folder", Directory::Specified),
+        ]),
+        s.config.behavior.new_terminal_directory,
+        |c, v| c.behavior.new_terminal_directory = v,
+    )
+}
+
+/// The folder for Specified folder, shown only while that choice is made.
+fn specified_directory(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    if s.config.behavior.new_terminal_directory != crate::config::NewTerminalDirectory::Specified {
+        return el();
+    }
+    text_input(&s.behavior_directory, ui_label())
+        .caret(a.accent(), a.selection())
+        .key("specified-directory")
+        .label("Specified terminal folder")
+        .single_line()
+        .w_full()
+        .px(8.0)
+        .py(5.0)
+        .color(a.ink())
+        .placeholder("Absolute folder path", a.muted())
+        .border(1.0, a.kit().c.border_base)
+        .radius(6.0)
+        .on_edit(|s: &mut State| &mut s.behavior_directory)
+        .on_input_change(|s: &mut State, _| {
+            let path = PathBuf::from(&s.behavior_directory.text);
+            s.save_config(|c| c.behavior.specified_directory = path);
+        })
+}
+
+fn startup_directory(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::StartupDirectory as Directory;
+    choice(
+        s,
+        a,
+        layers,
+        "startup-directory",
+        "Startup folder",
+        labels(&[
+            ("Home folder", Directory::Home),
+            ("Specified folder", Directory::Specified),
+        ]),
+        s.config.behavior.startup_directory,
+        |c, v| c.behavior.startup_directory = v,
+    )
+}
+
+/// The folder for the Startup folder's Specified folder, shown only while chosen.
+fn startup_specified_directory(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    if s.config.behavior.startup_directory != crate::config::StartupDirectory::Specified {
+        return el();
+    }
+    text_input(&s.startup_directory, ui_label())
+        .caret(a.accent(), a.selection())
+        .key("startup-specified-directory")
+        .label("Specified startup folder")
+        .single_line()
+        .w_full()
+        .px(8.0)
+        .py(5.0)
+        .color(a.ink())
+        .placeholder("Absolute folder path", a.muted())
+        .border(1.0, a.kit().c.border_base)
+        .radius(6.0)
+        .on_edit(|s: &mut State| &mut s.startup_directory)
+        .on_input_change(|s: &mut State, _| {
+            let path = PathBuf::from(&s.startup_directory.text);
+            s.save_config(|c| c.behavior.startup_specified_directory = path);
+        })
+}
+
+fn terminal_tab_close(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::TerminalClosePolicy as Terminal;
+    choice(
+        s,
+        a,
+        layers,
+        "terminal-tab-close",
+        "Terminal tab close",
+        labels(&[
+            (
+                "Confirm when commands are running",
+                Terminal::ConfirmRunning,
+            ),
+            ("Always confirm", Terminal::AlwaysConfirm),
+            ("Close immediately", Terminal::CloseImmediately),
+        ]),
+        s.config.behavior.terminal_tab_close,
+        |c, v| c.behavior.terminal_tab_close = v,
+    )
+}
+
+fn right_click(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::TerminalRightClick;
+    choice(
+        s,
+        a,
+        layers,
+        "terminal-right-click",
+        "Terminal right-click",
+        labels(&[
+            ("Context menu", TerminalRightClick::ContextMenu),
+            ("Paste", TerminalRightClick::Paste),
+        ]),
+        s.config.terminal_clipboard.right_click,
+        |c, v| c.terminal_clipboard.right_click = v,
+    )
+}
+
+fn copy_on_selection(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    toggle(
+        a,
+        "copy-on-selection",
+        "Copy on selection",
+        s.config.terminal_clipboard.copy_on_selection,
+        |s, _| {
+            s.save_config(|c| {
+                c.terminal_clipboard.copy_on_selection = !c.terminal_clipboard.copy_on_selection
+            })
+        },
+    )
+}
+
+fn history(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    toggle(
+        a,
+        "history",
+        "Save command history",
+        s.config.history,
+        |s, _| s.save_config(|c| c.history = !c.history),
+    )
+}
+
+fn scrollback(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    stepper(
+        a,
+        "scrollback",
+        "scrollback by 1000 lines",
+        format!("{} lines", s.config.scrollback),
+        |c, sign| {
+            c.scrollback = if sign < 0.0 {
+                c.scrollback.saturating_sub(1000).max(100)
+            } else {
+                (c.scrollback + 1000).min(100_000)
+            }
+        },
+    )
+}
+
+fn autosave(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use config::AutosavePolicy;
+    choice(
+        s,
+        a,
+        layers,
+        "autosave",
+        "Autosave",
+        labels(&[
+            ("Explicit Save", AutosavePolicy::Explicit),
+            ("After Delay", AutosavePolicy::AfterDelay),
+            ("Editor Focus Loss", AutosavePolicy::EditorFocusLoss),
+        ]),
+        s.config.autosave.policy,
+        |c, v| c.autosave.policy = v,
+    )
+}
+
+fn autosave_delay(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    stepper(
+        a,
+        "autosave-delay",
+        "autosave delay by 100 ms",
+        format!("{} ms", s.config.autosave.delay_ms),
+        |c, sign| {
+            c.autosave.delay_ms = if sign < 0.0 {
+                c.autosave.delay_ms.saturating_sub(100).max(100)
+            } else {
+                (c.autosave.delay_ms + 100).min(60_000)
+            }
+        },
+    )
+}
+
+fn single_click(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    toggle(
+        a,
+        "single-click-keeps-open",
+        "Single click keeps files open",
+        s.config.single_click_keeps_open,
+        |s, _| s.save_config(|c| c.single_click_keeps_open = !c.single_click_keeps_open),
+    )
+}
+
+/// A file explorer preference's switch; its action keeps the explorer in step.
+fn file_switch(s: &State, a: &Appearance, action: AppAction) -> El {
+    let e = &s.config.explorer;
+    let (key, name, on) = match action {
+        AppAction::ToggleDeletionConfirmation => (
+            "settings-confirm-deletion",
+            "Confirm moving files to Trash",
+            e.confirm_deletion,
+        ),
+        AppAction::ToggleFollow => (
+            "settings-explorer-follow",
+            "Follow Terminal",
+            e.follow_terminal,
+        ),
+        AppAction::ToggleHidden => (
+            "settings-explorer-hidden",
+            "Show hidden files",
+            e.show_hidden,
+        ),
+        _ => (
+            "settings-explorer-ignore",
+            "Respect Git ignore rules",
+            e.respect_ignore,
+        ),
+    };
+    toggle(a, key, name, on, move |s, tx| s.dispatch(action, tx))
+}
+
+fn appearance(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
+    use crate::config::Appearance as Mode;
+    choice(
+        s,
+        a,
+        layers,
+        "appearance",
+        "Appearance",
+        labels(&[
+            ("Light", Mode::Light),
+            ("Dark", Mode::Dark),
+            ("System", Mode::System),
+        ]),
+        s.config.appearance,
+        |c, v| c.appearance = v,
+    )
+}
+
+fn theme_previews(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    use crate::config::Appearance as Mode;
+    col()
+        .w_full()
+        .gap(8.0)
+        .child(
+            text(format!("{} · applies immediately", a.name))
+                .font(ui_style(12.0, 400.0))
+                .color(a.muted())
+                .wrap(),
+        )
+        .child(palette_preview(s.config.theme_family, Mode::Light))
+        .child(palette_preview(s.config.theme_family, Mode::Dark))
+        .child(
+            text(a.notes)
+                .font(ui_style(12.0, 400.0))
+                .color(a.muted())
+                .wrap_anywhere(),
+        )
+}
+
+fn show_footer(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    toggle(
+        a,
+        "show-footer",
+        "Show footer",
+        s.config.show_footer,
+        |s, _| s.save_config(|c| c.show_footer = !c.show_footer),
+    )
+}
+
+/// The UI, terminal or editor font size.
+fn font_size(s: &State, a: &Appearance, target: &'static str) -> El {
+    let fonts = &s.config.fonts;
+    let (size, subject, change): (f32, &str, fn(&mut Config, f32)) = match target {
+        "ui" => (fonts.ui_size, "UI font size", |c, d| {
+            c.fonts.ui_size = (c.fonts.ui_size + d).clamp(8.0, 32.0)
+        }),
+        "terminal" => (fonts.terminal_size, "terminal font size", |c, d| {
+            c.fonts.terminal_size = (c.fonts.terminal_size + d).clamp(8.0, 32.0)
+        }),
+        _ => (fonts.editor_size, "editor font size", |c, d| {
+            c.fonts.editor_size = (c.fonts.editor_size + d).clamp(8.0, 32.0)
+        }),
+    };
+    stepper(
+        a,
+        &format!("{target}-font-size"),
+        subject,
+        format!("{size}px"),
+        change,
+    )
+}
+
+fn line_height(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    stepper(
+        a,
+        "terminal-line-height",
+        "terminal line height",
+        format!("{:.1}×", s.config.fonts.terminal_line_height),
+        |c, sign| {
+            let f = &mut c.fonts;
+            f.terminal_line_height = step(
+                f.terminal_line_height,
+                0.1 * sign,
+                config::TERMINAL_LINE_HEIGHT,
+            );
+        },
+    )
+}
+
+fn letter_spacing(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
+    stepper(
+        a,
+        "terminal-letter-spacing",
+        "terminal letter spacing",
+        format!("{:+.1}px", s.config.fonts.terminal_letter_spacing),
+        |c, sign| {
+            let f = &mut c.fonts;
+            f.terminal_letter_spacing = step(
+                f.terminal_letter_spacing,
+                0.5 * sign,
+                config::TERMINAL_LETTER_SPACING,
+            );
+        },
+    )
+}
+
+fn bundled_commands(s: &State, a: &Appearance) -> Vec<El> {
+    profile::utility_names()
+        .into_iter()
+        .filter(|name| {
+            if query(s).is_empty() {
+                s.settings_tab == Tab::Commands
+            } else {
+                matches(s, Tab::Commands, name)
+            }
+        })
+        .map(|name| {
+            let enabled = !s.config.disabled.contains(&name);
+            let key = format!("utility-{name}");
+            let flip = name.clone();
+            plain_row(
+                a,
+                format!("{key}-row"),
+                &name,
+                toggle(a, key, &name, enabled, move |s, _| {
+                    let name = flip.clone();
+                    s.save_config(move |config| {
+                        if config.disabled.contains(&name) {
+                            config.disabled.retain(|n| n != &name);
+                        } else {
+                            config.disabled.push(name);
+                        }
+                    });
+                }),
+            )
+        })
+        .collect()
+}
 
 fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     use crate::config::ThemeFamily;
@@ -1002,13 +1370,14 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
         |s: &mut State| {
             s.font_ui.close();
             s.font_terminal.close();
+            s.settings_select = None;
             &mut s.theme_family_picker
         },
     )
     .label("Theme family")
     .current(Some(s.config.theme_family.label()))
     .search_placeholder("Search theme families")
-    .width(280.0)
+    .width(240.0)
     .max_height(256.0)
     .on_choose(|s, label, _| {
         if let Some(&family) = ThemeFamily::ALL.iter().find(|f| f.label() == label) {
@@ -1016,120 +1385,96 @@ fn family_picker(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
         }
     })
     .build(a.kit(), layers)
-    .w(280.0)
+    .shrink()
+    .min_w(0.0)
 }
 
+/// The open dropdown's or picker's list, drawn above the page.
 pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
     let mut layers = Vec::new();
     if s.settings
         && !s.application_overlay_open()
         && workspace::pane_visibility(s, width).2
-        && matches(s, "Appearance", THEME_SEARCH)
+        && (s.settings_select.is_some()
+            || s.theme_family_picker.is_open()
+            || s.font_ui.is_open()
+            || s.font_terminal.is_open())
     {
-        let _ = family_picker(s, a, &mut layers);
+        let _ = page(s, a, &mut layers);
     }
     layers
 }
 
-const PROMPT_STYLE_SEARCH: &str = "prompt style classic directory rodtty powerline two-line ps1";
-const PROMPT_SYMBOL_SEARCH: &str = "prompt symbol dollar chevron triangle ps1";
-
-fn prompt_style_row(s: &State, a: &Appearance) -> El {
+fn prompt_style(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     use crate::prompt::PromptStyle;
-    let current = s.config.prompt.style;
-    let mut choices = row()
-        .role("radiogroup")
-        .label("Prompt style")
-        .w_full()
-        .gap(6.0)
-        // Wrap rather than clip the last choice when Settings is narrow.
-        .flex_wrap();
-    for &style in PromptStyle::ALL {
-        choices = choices.child(radio_button(
-            a,
-            format!("prompt-style-{}", style.key()),
-            style.label(),
-            current == style,
-            move |s, _| s.save_config(|c| c.prompt.style = style),
-        ));
-    }
+    let options = PromptStyle::ALL
+        .iter()
+        .map(|&style| (style.label().to_owned(), style))
+        .collect();
+    choice(
+        s,
+        a,
+        layers,
+        "prompt-style",
+        "Prompt style",
+        options,
+        s.config.prompt.style,
+        |c, v| c.prompt.style = v,
+    )
+}
+
+fn prompt_style_preview(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
     let mut preview = col()
         .key("prompt-style-preview")
         .gap(4.0)
         .child(prompt_preview(s.config.prompt, false, a));
-    if current.reports_status() {
-        preview = preview.child(
-            text("After a failed command:")
-                .font(ui_label())
-                .color(a.muted()),
-        );
-        preview = preview.child(prompt_preview(s.config.prompt, true, a));
+    if s.config.prompt.style.reports_status() {
+        preview = preview
+            .child(
+                text("After a failed command:")
+                    .font(ui_style(12.0, 400.0))
+                    .color(a.muted()),
+            )
+            .child(prompt_preview(s.config.prompt, true, a));
     }
-    col()
-        .key("prompt-style")
-        .w_full()
-        .gap(6.0)
-        .child(text("Prompt style").font(ui_label()).color(a.muted()))
-        .child(choices)
-        .child(preview)
-        .child(button(
-            a,
-            "reset-prompt-style",
-            "Reset prompt style",
-            |s, _| {
-                s.save_config(|c| c.prompt.style = Default::default());
-            },
-        ))
+    preview
 }
 
-fn prompt_symbol_row(s: &State, a: &Appearance) -> El {
+fn prompt_symbol(s: &State, a: &Appearance, layers: &mut Vec<El>) -> El {
     use crate::prompt::PromptSymbol;
+    let options = PromptSymbol::ALL
+        .iter()
+        .map(|&symbol| (symbol_name(symbol), symbol))
+        .collect();
+    choice(
+        s,
+        a,
+        layers,
+        "prompt-symbol",
+        "Prompt symbol",
+        options,
+        s.config.prompt.symbol,
+        |c, v| c.prompt.symbol = v,
+    )
+}
+
+/// The line holding the symbol, as drawn after success and, when the style
+/// reports it, after failure.
+fn prompt_symbol_preview(s: &State, a: &Appearance, _: &mut Vec<El>) -> El {
     let prefs = s.config.prompt;
-    let mut choices = row()
-        .role("radiogroup")
-        .label("Prompt symbol")
-        .w_full()
-        .gap(6.0)
-        // Wrap rather than clip the last choice when Settings is narrow.
-        .flex_wrap();
-    for &symbol in PromptSymbol::ALL {
-        let on = prefs.symbol == symbol;
-        choices = choices.child(state_button(
-            a,
-            format!("prompt-symbol-{}", symbol.key()),
-            format!("{} {}", if on { "●" } else { "○" }, symbol.glyph()),
-            "radio",
-            symbol_name(symbol),
-            on,
-            move |s, _| s.save_config(|c| c.prompt.symbol = symbol),
-        ));
-    }
-    // The line holding the symbol, as drawn after success and, when the
-    // style reports it, after failure.
-    let mut preview = row().key("prompt-symbol-preview").gap(12.0).scroll_x();
     let last_line = |failed| {
         let lines = prefs.preview(failed, PREVIEW_DIRECTORY);
         prompt_line(lines.last().map(Vec::as_slice).unwrap_or_default(), a)
     };
-    preview = preview.child(last_line(false));
+    let mut preview = row()
+        .key("prompt-symbol-preview")
+        .gap(12.0)
+        .scroll_x()
+        .child(last_line(false));
     if prefs.style.reports_status() {
         preview = preview.child(last_line(true));
     }
-    col()
-        .key("prompt-symbol")
-        .w_full()
-        .gap(6.0)
-        .child(text("Prompt symbol").font(ui_label()).color(a.muted()))
-        .child(choices)
-        .child(preview)
-        .child(button(
-            a,
-            "reset-prompt-symbol",
-            "Reset prompt symbol",
-            |s, _| {
-                s.save_config(|c| c.prompt.symbol = Default::default());
-            },
-        ))
+    preview
 }
 
 /// A prompt symbol's spoken name: a screen reader may skip or misread the
@@ -1214,6 +1559,53 @@ fn palette_preview(family: crate::config::ThemeFamily, mode: crate::config::Appe
         .child(swatches)
 }
 
+/// Tests: restores every setting on the tab keyed `tab` (`general`,
+/// `appearance`, …) through its Restore Defaults button and confirmation.
+#[cfg(test)]
+pub(super) fn restore_tab_defaults(rt: &mut rune::Runtime<State>, tab: &str) {
+    for key in [
+        format!("settings-page-tab-{tab}"),
+        format!("reset-tab-{tab}"),
+        "confirm-reset-tab".to_owned(),
+    ] {
+        let (x, y) = rt
+            .find(&key)
+            .unwrap_or_else(|| panic!("missing control {key}"));
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+    }
+}
+
+/// Tests: opens the dropdown keyed `key` and chooses its option `label`, as a
+/// pointer would.
+#[cfg(test)]
+pub(super) fn choose(rt: &mut rune::Runtime<State>, key: &str, label: &str) {
+    let press = |rt: &mut rune::Runtime<State>, (x, y): (f32, f32)| {
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..45 {
+            rt.frame(1.0 / 60.0);
+        }
+    };
+    let trigger = rt
+        .find(&format!("{key}-trigger"))
+        .unwrap_or_else(|| panic!("missing dropdown {key}"));
+    press(rt, trigger);
+    let option = rt
+        .elements()
+        .into_iter()
+        .find(|e| !e.exiting && e.role == "option" && e.label.as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("dropdown {key} has no option {label}"))
+        .rect;
+    press(
+        rt,
+        (option[0] + option[2] * 0.5, option[1] + option[3] * 0.5),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,11 +1652,11 @@ mod tests {
         );
     }
     #[test]
-    fn prompt_choices_wrap_inside_a_narrow_settings_pane_instead_of_clipping() {
+    fn prompt_dropdowns_and_resets_fit_inside_a_narrow_settings_pane() {
         use crate::desktop::fonts::BUNDLED;
         let _families = rune::text::with_families("Geist", "Geist Mono");
-        // The default 1080 pt workspace gives Settings about 450 pt, where the
-        // five prompt styles used to run past the section and clip "Two-line".
+        // The default 1080 pt workspace gives Settings about 450 pt; each
+        // dropdown and its reset share a line there or wrap, never clipped.
         for (size, share) in [((1080.0, 720.0), 0.42), ((1200.0, 800.0), 0.24)] {
             let root = crate::test_support::tempdir().unwrap();
             let mut state = State::with_root(root.path().into());
@@ -1292,17 +1684,9 @@ mod tests {
                     .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
                     .unwrap_or_else(|| panic!("missing {key}"))
             };
-            let section = rect("settings-section-Terminal").rect;
+            let section = rect("settings-section-Appearance").rect;
             let right = |r: [f32; 4]| r[0] + r[2];
-            let keys = crate::prompt::PromptStyle::ALL
-                .iter()
-                .map(|style| format!("prompt-style-{}", style.key()))
-                .chain(
-                    crate::prompt::PromptSymbol::ALL
-                        .iter()
-                        .map(|symbol| format!("prompt-symbol-{}", symbol.key())),
-                );
-            for key in keys {
+            for key in ["prompt-style-trigger", "prompt-symbol-trigger"] {
                 let e = rect(&key);
                 assert!(
                     right(e.rect) <= right(section) + 0.5,
@@ -1318,7 +1702,164 @@ mod tests {
         }
     }
     #[test]
-    fn file_preferences_reset_individually_without_changing_other_choices() {
+    fn terminal_line_height_and_letter_spacing_resize_the_cell_grid_and_reset() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        open_settings(&mut rt);
+        rt.update(|s, _| s.settings_query.replace_text("line height"));
+        rt.frame(0.0);
+        let cell = |rt: &rune::Runtime<State>| {
+            let m = rt.state.terminal_metrics;
+            (m.width, m.height)
+        };
+        let (width, height) = cell(&rt);
+        for _ in 0..8 {
+            click(&mut rt, "more-terminal-line-height");
+        }
+        let saved = Config::load(root.path()).unwrap().fonts;
+        assert_eq!(saved.terminal_line_height, 2.0);
+        let (_, taller) = cell(&rt);
+        assert!(
+            (taller - height * 2.0 / 1.2).abs() <= 1.0,
+            "rows grow with line height: {height} -> {taller}"
+        );
+        rt.update(|s, _| s.settings_query.replace_text("letter spacing"));
+        rt.frame(0.0);
+        for _ in 0..4 {
+            click(&mut rt, "more-terminal-letter-spacing");
+        }
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .fonts
+                .terminal_letter_spacing,
+            2.0
+        );
+        let (wider, _) = cell(&rt);
+        assert!(
+            (wider - width - 2.0).abs() <= 0.5,
+            "cells widen by the spacing: {width} -> {wider}"
+        );
+        assert!(rt.find("settings-group-terminal-text").is_some());
+        restore_tab_defaults(&mut rt, "appearance");
+        let saved = Config::load(root.path()).unwrap().fonts;
+        assert_eq!(
+            (saved.terminal_line_height, saved.terminal_letter_spacing),
+            (1.2, 0.0)
+        );
+        // Restoring defaults also reloads the font families, which changes
+        // this headless runtime's fallback advance; the row and spacing return.
+        assert_eq!(cell(&rt).1, height);
+        assert_eq!(rt.state.terminal_metrics.spacing, 0.0);
+        // Values stop at their limits rather than producing an invalid file.
+        rt.update(|s, _| s.settings_query.replace_text("letter spacing"));
+        rt.frame(0.0);
+        for _ in 0..30 {
+            click(&mut rt, "less-terminal-letter-spacing");
+        }
+        assert_eq!(
+            Config::load(root.path())
+                .unwrap()
+                .fonts
+                .terminal_letter_spacing,
+            -2.0
+        );
+        rt.update(|s, _| s.settings_query.replace_text("letter spacing"));
+        rt.frame(0.0);
+        assert!(rt.find("less-terminal-letter-spacing").is_some());
+        assert!(rt.find("less-terminal-line-height").is_none());
+        assert!(rt.find("less-terminal-font-size").is_none());
+        for invalid in [
+            r#"{"fonts":{"terminal_line_height":0.5}}"#,
+            r#"{"fonts":{"terminal_letter_spacing":11}}"#,
+        ] {
+            std::fs::write(root.path().join("settings.json"), invalid).unwrap();
+            assert!(Config::load(root.path()).is_err(), "{invalid} is rejected");
+        }
+    }
+
+    #[test]
+    fn owner_hides_the_footer_from_appearance_and_restores_it_with_the_tab_defaults() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        assert!(rt.find("app-footer").is_some(), "shown by default");
+        open_settings(&mut rt);
+        rt.update(|s, _| s.settings_query.replace_text("footer"));
+        rt.frame(0.0);
+        click(&mut rt, "show-footer");
+        assert!(rt.find("app-footer").is_none());
+        assert!(!Config::load(root.path()).unwrap().show_footer);
+        assert!(
+            runtime(root.path()).find("app-footer").is_none(),
+            "stays hidden on reopen"
+        );
+        restore_tab_defaults(&mut rt, "appearance");
+        assert!(rt.find("app-footer").is_some());
+        assert!(Config::load(root.path()).unwrap().show_footer);
+    }
+
+    #[test]
+    fn an_open_dropdown_list_is_at_least_as_wide_as_its_field() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        open_settings(&mut rt);
+        click(&mut rt, "window-close-trigger");
+        let rect = |key: &str| {
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .rect
+        };
+        let field = rect("window-close-trigger");
+        let list = rect("window-close-content");
+        assert!(
+            list[2] >= field[2] - 0.5,
+            "list {list:?} narrower than field {field:?}"
+        );
+        assert!(
+            (list[0] + list[2] - field[0] - field[2]).abs() < 0.5,
+            "the list lines up with the field's edge"
+        );
+    }
+
+    #[test]
+    fn tabs_show_one_group_at_a_time_and_search_spans_every_tab() {
+        let root = crate::test_support::tempdir().unwrap();
+        let mut rt = runtime(root.path());
+        open_settings(&mut rt);
+        assert!(
+            rt.find("window-close-trigger").is_some(),
+            "General opens first"
+        );
+        assert!(rt.find("appearance-trigger").is_none());
+        assert!(
+            rt.find("autosave-trigger").is_some(),
+            "General holds the editor's behavior"
+        );
+        click(&mut rt, "settings-page-tab-appearance");
+        assert!(rt.find("appearance-trigger").is_some());
+        assert!(rt.find("window-close-trigger").is_none());
+        rt.update(|s, _| s.settings_query.replace_text("font size"));
+        rt.frame(0.0);
+        for key in [
+            "less-ui-font-size",
+            "less-terminal-font-size",
+            "less-editor-font-size",
+        ] {
+            assert!(rt.find(key).is_some(), "search finds {key} in its tab");
+        }
+        click(&mut rt, "settings-page-tab-general");
+        assert!(
+            rt.state.settings_query.text.is_empty(),
+            "a tab clears the search"
+        );
+        assert!(rt.find("autosave-trigger").is_some());
+        assert!(rt.find("less-ui-font-size").is_none());
+    }
+
+    #[test]
+    fn file_switches_flip_individually_and_general_restores_their_defaults() {
         let root = crate::test_support::tempdir().unwrap();
         let mut config = Config::default();
         config.explorer.confirm_deletion = false;
@@ -1328,25 +1869,26 @@ mod tests {
         config.save(root.path()).unwrap();
         let mut rt = runtime(root.path());
         open_settings(&mut rt);
+        // Each switch flips only its own preference.
         for (query, control, expected) in [
             (
                 "Trash",
-                "reset-settings-confirm-deletion",
+                "settings-confirm-deletion",
                 [true, true, true, false],
             ),
             (
                 "Follow Terminal",
-                "reset-settings-explorer-follow",
+                "settings-explorer-follow",
                 [true, false, true, false],
             ),
             (
                 "hidden files",
-                "reset-settings-explorer-hidden",
+                "settings-explorer-hidden",
                 [true, false, false, false],
             ),
             (
                 "ignore rules",
-                "reset-settings-explorer-ignore",
+                "settings-explorer-ignore",
                 [true, false, false, true],
             ),
         ] {
@@ -1365,10 +1907,28 @@ mod tests {
                     saved.respect_ignore
                 ],
                 expected,
+                "{control}"
             );
             assert_eq!(rt.state.workspace.layout.follow, expected[1]);
             assert_eq!(rt.state.workspace.layout.hidden, expected[2]);
         }
+        rt.update(|s, _| s.settings_query.replace_text("hidden files"));
+        rt.frame(0.0);
+        click(&mut rt, "settings-explorer-hidden");
+        rt.update(|s, tx| {
+            s.workspace_poll(tx);
+        });
+        assert!(rt.state.workspace.layout.hidden);
+        // General's Restore Defaults brings every file preference back.
+        restore_tab_defaults(&mut rt, "general");
+        rt.update(|s, tx| {
+            s.workspace_poll(tx);
+        });
+        assert_eq!(
+            Config::load(root.path()).unwrap().explorer,
+            crate::config::ExplorerPreferences::default()
+        );
+        assert!(!rt.state.workspace.layout.hidden);
     }
 
     #[test]
@@ -1379,7 +1939,7 @@ mod tests {
         open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("terminal tab close"));
         rt.frame(0.0);
-        click(&mut rt, "terminal-close-always");
+        choose(&mut rt, "terminal-tab-close", "Always confirm");
         assert_eq!(
             Config::load(root.path())
                 .unwrap()
@@ -1387,7 +1947,7 @@ mod tests {
                 .terminal_tab_close,
             TerminalClosePolicy::AlwaysConfirm
         );
-        click(&mut rt, "terminal-close-immediate");
+        choose(&mut rt, "terminal-tab-close", "Close immediately");
         assert_eq!(
             Config::load(root.path())
                 .unwrap()
@@ -1395,17 +1955,9 @@ mod tests {
                 .terminal_tab_close,
             TerminalClosePolicy::CloseImmediately
         );
-        click(&mut rt, "reset-terminal-close");
-        assert_eq!(
-            Config::load(root.path())
-                .unwrap()
-                .behavior
-                .terminal_tab_close,
-            TerminalClosePolicy::ConfirmRunning
-        );
         rt.update(|s, _| s.settings_query.replace_text("new terminal directory"));
         rt.frame(0.0);
-        click(&mut rt, "new-directory-explorer");
+        choose(&mut rt, "new-terminal-directory", "Explorer folder");
         assert_eq!(
             Config::load(root.path())
                 .unwrap()
@@ -1413,7 +1965,7 @@ mod tests {
                 .new_terminal_directory,
             NewTerminalDirectory::Explorer
         );
-        click(&mut rt, "new-directory-specified");
+        choose(&mut rt, "new-terminal-directory", "Specified folder");
         click(&mut rt, "specified-directory");
         rt.key(KeyEvent {
             key: Key::Text(root.path().display().to_string()),
@@ -1427,22 +1979,48 @@ mod tests {
                 .specified_directory,
             root.path()
         );
-        click(&mut rt, "reset-new-directory");
+        rt.update(|s, _| s.settings_query.replace_text("startup folder"));
+        rt.frame(0.0);
+        assert!(
+            rt.find("startup-specified-directory").is_none(),
+            "the startup folder field shows only for Specified folder"
+        );
+        choose(&mut rt, "startup-directory", "Specified folder");
+        click(&mut rt, "startup-specified-directory");
+        rt.key(KeyEvent {
+            key: Key::Text(root.path().display().to_string()),
+            mods: Default::default(),
+        });
+        rt.frame(0.0);
+        let behavior = Config::load(root.path()).unwrap().behavior;
         assert_eq!(
-            Config::load(root.path())
-                .unwrap()
-                .behavior
-                .new_terminal_directory,
+            behavior.startup_directory,
+            crate::config::StartupDirectory::Specified
+        );
+        assert_eq!(behavior.startup_specified_directory, root.path());
+        // General's Restore Defaults resets the tab close and directory
+        // choices and empties the specified folders.
+        restore_tab_defaults(&mut rt, "general");
+        let behavior = Config::load(root.path()).unwrap().behavior;
+        assert_eq!(
+            behavior.terminal_tab_close,
+            TerminalClosePolicy::ConfirmRunning
+        );
+        assert_eq!(
+            behavior.new_terminal_directory,
             NewTerminalDirectory::Active
         );
-        click(&mut rt, "reset-specified-directory");
+        assert!(behavior.specified_directory.as_os_str().is_empty());
+        assert!(rt.state.behavior_directory.text.is_empty());
+        assert_eq!(
+            behavior.startup_directory,
+            crate::config::StartupDirectory::Home
+        );
+        assert!(behavior.startup_specified_directory.as_os_str().is_empty());
+        assert!(rt.state.startup_directory.text.is_empty());
         assert!(
-            Config::load(root.path())
-                .unwrap()
-                .behavior
-                .specified_directory
-                .as_os_str()
-                .is_empty()
+            rt.find("specified-directory").is_none(),
+            "the folder field shows only for Specified folder"
         );
         let mut external = Config::load(root.path()).unwrap();
         external.behavior.new_terminal_directory = NewTerminalDirectory::Specified;
@@ -1466,7 +2044,7 @@ mod tests {
         open_settings(&mut rt);
         rt.update(|s, _| s.settings_query.replace_text("window close"));
         rt.frame(0.0);
-        click(&mut rt, "window-close-ask");
+        choose(&mut rt, "window-close", "Ask each time");
         assert_eq!(
             Config::load(root.path()).unwrap().behavior.window_close,
             crate::config::WindowClosePolicy::AskEachTime
@@ -1477,7 +2055,7 @@ mod tests {
         rt.frame(0.0);
         assert!(rt.find("window-close-choice").is_some());
         click(&mut rt, "window-close-cancel");
-        click(&mut rt, "reset-window-close");
+        restore_tab_defaults(&mut rt, "general");
         assert_eq!(
             Config::load(root.path()).unwrap().behavior.window_close,
             crate::config::WindowClosePolicy::KeepSessionsRunning
@@ -1496,7 +2074,7 @@ mod tests {
         click(&mut runtime, "theme-family-trigger");
         click(&mut runtime, "theme-family-option-Dracula");
         assert_canvas(&runtime, "#282a36");
-        click(&mut runtime, "appearance-light");
+        choose(&mut runtime, "appearance", "Light");
         assert_canvas(&runtime, "#fffbeb");
         let reopened = self::runtime(root.path());
         assert_canvas(&reopened, "#fffbeb");
@@ -1508,7 +2086,7 @@ mod tests {
     }
 
     #[test]
-    fn all_families_apply_both_previews_live_system_json_and_independent_resets() {
+    fn all_families_apply_both_previews_live_system_json_and_restore_defaults() {
         let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime(root.path());
         open_settings(&mut rt);
@@ -1622,11 +2200,8 @@ mod tests {
                     "missing preview {name}"
                 );
             }
-            for (control, value, canvas) in [
-                ("appearance-light", "light", light),
-                ("appearance-dark", "dark", dark),
-            ] {
-                click(&mut rt, control);
+            for (control, value, canvas) in [("Light", "light", light), ("Dark", "dark", dark)] {
+                choose(&mut rt, "appearance", control);
                 assert_canvas(&rt, canvas);
                 let saved: serde_json::Value = serde_json::from_slice(
                     &std::fs::read(root.path().join("settings.json")).unwrap(),
@@ -1636,7 +2211,7 @@ mod tests {
                 assert_eq!(saved["appearance"], value);
                 assert_canvas(&runtime(root.path()), canvas);
             }
-            click(&mut rt, "appearance-system");
+            choose(&mut rt, "appearance", "System");
             for size in [(640.0, 360.0), (1440.0, 900.0)] {
                 rt.set_viewport(size, 1.0);
                 for (host_dark, canvas) in [(false, light), (true, dark), (false, light)] {
@@ -1661,13 +2236,14 @@ mod tests {
                 rt.frame(1.0 / 60.0);
             }
             assert_canvas(&rt, light);
-            click(&mut rt, "reset-appearance");
+            choose(&mut rt, "appearance", "System");
             assert_canvas(&rt, dark);
             assert_eq!(
                 Config::load(root.path()).unwrap().theme_family.label(),
-                label
+                label,
+                "brightness changes keep the family"
             );
-            click(&mut rt, "reset-theme-family");
+            restore_tab_defaults(&mut rt, "appearance");
             assert_canvas(&rt, "#1e1e2e");
             assert_eq!(
                 Config::load(root.path()).unwrap().appearance,
@@ -1861,7 +2437,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_changes_and_resets_independent_live_font_sizes() {
+    fn owner_changes_independent_live_font_sizes_and_restores_defaults() {
         let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         open_settings(&mut runtime);
@@ -1892,9 +2468,7 @@ mod tests {
         assert_eq!(saved["fonts"]["ui_size"], 14.0);
         assert_eq!(saved["fonts"]["terminal_size"], 15.0);
         assert_eq!(saved["fonts"]["editor_size"], 15.0);
-        click(&mut runtime, "reset-ui-font-size");
-        click(&mut runtime, "reset-terminal-font-size");
-        click(&mut runtime, "reset-editor-font-size");
+        restore_tab_defaults(&mut runtime, "appearance");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
@@ -1913,7 +2487,8 @@ mod tests {
         }
         assert_canvas(&runtime, "#eff1f5");
         open_settings(&mut runtime);
-        click(&mut runtime, "appearance-dark");
+        click(&mut runtime, "settings-page-tab-appearance");
+        choose(&mut runtime, "appearance", "Dark");
         runtime.set_system_dark(true);
         runtime.frame(0.0);
         runtime.set_system_dark(false);
@@ -1921,13 +2496,13 @@ mod tests {
             runtime.frame(1.0 / 60.0);
         }
         assert_canvas(&runtime, "#1e1e2e");
-        click(&mut runtime, "appearance-light");
+        choose(&mut runtime, "appearance", "Light");
         runtime.set_system_dark(true);
         for _ in 0..45 {
             runtime.frame(1.0 / 60.0);
         }
         assert_canvas(&runtime, "#eff1f5");
-        click(&mut runtime, "reset-appearance");
+        choose(&mut runtime, "appearance", "System");
         assert_canvas(&runtime, "#1e1e2e");
         runtime.set_system_dark(false);
         for _ in 0..45 {
@@ -1940,7 +2515,7 @@ mod tests {
         );
         runtime.update(|s, _| s.settings_query.replace_text("latte"));
         runtime.frame(0.0);
-        assert!(runtime.find("appearance-system").is_some());
+        assert!(runtime.find("appearance-trigger").is_some());
     }
     #[test]
     fn switching_appearance_recolors_ansi_but_preserves_extended_output_and_selection() {
@@ -1980,7 +2555,8 @@ mod tests {
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
         assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
         open_settings(&mut runtime);
-        click(&mut runtime, "appearance-light");
+        click(&mut runtime, "settings-page-tab-appearance");
+        choose(&mut runtime, "appearance", "Light");
         assert_eq!(cell_background(&runtime, 0), rgb("#d20f39"));
         assert_eq!(cell_background(&runtime, 1), rgb("#ff0000"));
         assert_eq!(cell_background(&runtime, 2), rgb("#0c2238"));
@@ -1992,40 +2568,26 @@ mod tests {
         assert_eq!(runtime.state.selection, Some(((1, 0), (1, 5))));
     }
     #[test]
-    fn owner_selects_persists_and_resets_autosave_preferences() {
+    fn owner_selects_persists_and_restores_autosave_preferences() {
         let root = crate::test_support::tempdir().unwrap();
         let mut runtime = runtime(root.path());
         open_settings(&mut runtime);
         runtime.update(|s, _| s.settings_query.replace_text("autosave"));
         runtime.frame(0.0);
-        click(&mut runtime, "autosave-after-delay");
+        choose(&mut runtime, "autosave", "After Delay");
         click(&mut runtime, "less-autosave-delay");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
         assert_eq!(saved["autosave"]["policy"], "after_delay");
         assert_eq!(saved["autosave"]["delay_ms"], 900);
-        click(&mut runtime, "autosave-editor-focus-loss");
+        choose(&mut runtime, "autosave", "Editor Focus Loss");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
         assert_eq!(saved["autosave"]["policy"], "editor_focus_loss");
-        click(&mut runtime, "reset-autosave-delay");
-        let saved = Config::load(root.path()).unwrap();
-        assert_eq!(
-            saved.autosave.policy,
-            crate::config::AutosavePolicy::EditorFocusLoss
-        );
-        assert_eq!(saved.autosave.delay_ms, 1000);
-        click(&mut runtime, "less-autosave-delay");
-        click(&mut runtime, "reset-autosave-policy");
-        let saved = Config::load(root.path()).unwrap();
-        assert_eq!(
-            saved.autosave.policy,
-            crate::config::AutosavePolicy::Explicit
-        );
-        assert_eq!(saved.autosave.delay_ms, 900);
-        click(&mut runtime, "reset-autosave");
+        assert_eq!(saved["autosave"]["delay_ms"], 900, "the delay stays");
+        restore_tab_defaults(&mut runtime, "general");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
                 .unwrap();
@@ -2038,9 +2600,10 @@ mod tests {
         let root = crate::test_support::tempdir().unwrap();
         let mut runtime = self::runtime(root.path());
         open_settings(&mut runtime);
-        click(&mut runtime, "appearance-light");
+        click(&mut runtime, "settings-page-tab-appearance");
+        choose(&mut runtime, "appearance", "Light");
         assert_canvas(&runtime, "#eff1f5");
-        click(&mut runtime, "appearance-dark");
+        choose(&mut runtime, "appearance", "Dark");
         assert_canvas(&runtime, "#1e1e2e");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.path().join("settings.json")).unwrap())
@@ -2126,8 +2689,8 @@ mod tests {
             "default Classic $ preview"
         );
 
-        click(&mut rt, "prompt-style-two_line");
-        click(&mut rt, "prompt-symbol-chevron");
+        choose(&mut rt, "prompt-style", "Two-line");
+        choose(&mut rt, "prompt-symbol", "Chevron ›");
         let saved = Config::load(root.path()).unwrap().prompt;
         assert_eq!(saved.style, PromptStyle::TwoLine);
         assert_eq!(saved.symbol, PromptSymbol::Chevron);
@@ -2136,13 +2699,13 @@ mod tests {
         terminal(&rt).send(b"\r".to_vec()).unwrap();
         wait_prompt(&mut rt, "› ");
 
-        click(&mut rt, "reset-prompt-style");
+        choose(&mut rt, "prompt-style", "Classic");
         let saved = Config::load(root.path()).unwrap().prompt;
         assert_eq!(saved.style, PromptStyle::Classic);
         assert_eq!(
             saved.symbol,
             PromptSymbol::Chevron,
-            "resets are independent"
+            "the choices are independent"
         );
         assert!(labelled(&rt, "rodtty:~/project› "));
         terminal(&rt).send(b"\r".to_vec()).unwrap();
@@ -2161,8 +2724,7 @@ mod tests {
         terminal(&rt).send(b"\r".to_vec()).unwrap();
         wait_prompt(&mut rt, "Rodtty › ");
 
-        click(&mut rt, "reset-prompt-symbol");
-        click(&mut rt, "reset-prompt-style");
+        restore_tab_defaults(&mut rt, "appearance");
         assert_eq!(
             Config::load(root.path()).unwrap().prompt,
             Default::default()
@@ -2192,20 +2754,19 @@ mod tests {
             runtime.state.message,
             runtime.state.config.history
         );
-        click(&mut runtime, "reset-history");
-        assert!(Config::load(root.path()).unwrap().history);
-        runtime.update(|s, _| s.settings_query.replace_text("cat"));
-        runtime.frame(1.0 / 60.0);
-        click(&mut runtime, "utility-cat");
-        assert_eq!(Config::load(root.path()).unwrap().disabled, ["cat"]);
-        click(&mut runtime, "reset-utility-cat");
-        assert!(Config::load(root.path()).unwrap().disabled.is_empty());
         runtime.update(|s, _| s.settings_query.replace_text("scrollback"));
         runtime.frame(1.0 / 60.0);
         click(&mut runtime, "more-scrollback");
         assert_eq!(Config::load(root.path()).unwrap().scrollback, 11_000);
-        click(&mut runtime, "reset-scrollback");
-        assert_eq!(Config::load(root.path()).unwrap().scrollback, 10_000);
+        restore_tab_defaults(&mut runtime, "general");
+        let saved = Config::load(root.path()).unwrap();
+        assert!(saved.history);
+        assert_eq!(saved.scrollback, 10_000);
+        click(&mut runtime, "settings-page-tab-commands");
+        click(&mut runtime, "utility-cat");
+        assert_eq!(Config::load(root.path()).unwrap().disabled, ["cat"]);
+        restore_tab_defaults(&mut runtime, "commands");
+        assert!(Config::load(root.path()).unwrap().disabled.is_empty());
         click(&mut runtime, "open-settings-json");
         let start = Instant::now();
         while runtime.state.workspace.tabs.is_empty() && start.elapsed() < Duration::from_secs(5) {
@@ -2297,7 +2858,7 @@ mod tests {
             s.settings_query.replace_text("history");
         });
         runtime.frame(1.0 / 60.0);
-        click(&mut runtime, "reset-history");
+        click(&mut runtime, "history");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{invalid JSON");
         assert!(!runtime.state.config.history);
         std::fs::write(&path, r#"{"history":false,"future":{"choice":7}}"#).unwrap();
@@ -2306,7 +2867,7 @@ mod tests {
             poll(s, 0.0, tx);
         });
         runtime.frame(1.0 / 60.0);
-        click(&mut runtime, "reset-history");
+        click(&mut runtime, "history");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["history"], true);

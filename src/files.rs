@@ -243,8 +243,6 @@ pub struct Entry {
     pub name: String,
     pub directory: bool,
     pub missing: bool,
-    /// Bytes on disk for a regular file; `None` for folders and missing files.
-    pub size: Option<u64>,
 }
 
 pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)> {
@@ -257,11 +255,10 @@ pub fn list_directory(path: &Path, hidden: bool) -> Result<(PathBuf, Vec<Entry>)
             continue;
         }
         let path = entry.path();
-        // Follows symlinks, as `is_dir` did, so a linked file shows its target's size.
+        // Follows symlinks, so a link to a folder lists as a folder.
         let metadata = fs::metadata(&path).ok();
         entries.push(Entry {
             directory: metadata.as_ref().is_some_and(fs::Metadata::is_dir),
-            size: metadata.filter(fs::Metadata::is_file).map(|m| m.len()),
             path,
             name,
             missing: false,

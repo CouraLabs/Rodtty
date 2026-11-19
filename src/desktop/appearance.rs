@@ -301,6 +301,11 @@ impl Appearance {
     pub fn active_fill(&self) -> Color {
         self.accent().alpha(self.active_alpha)
     }
+    /// A text button's thin outline: the fields' border, dimmed toward the
+    /// panel so it frames the control without competing with its label.
+    pub fn button_border(&self) -> Color {
+        self.kit.c.border_base.mix(self.panel(), 0.35)
+    }
     pub fn hover_bg(&self) -> Color {
         self.kit.c.layer_02
     }
@@ -313,6 +318,9 @@ impl Appearance {
     }
     pub fn danger(&self) -> Color {
         self.kit.c.danger.fg
+    }
+    pub fn success(&self) -> Color {
+        self.kit.c.success.fg
     }
     pub fn warning_bg(&self) -> Color {
         self.kit.c.warning.bg

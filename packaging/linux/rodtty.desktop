@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Rodtty
+GenericName=Terminal
+Comment=Terminal with a file explorer, editor, and Git diffs
+Exec=rodtty
+Icon=rodtty
+Terminal=false
+Categories=System;TerminalEmulator;Development;
+Keywords=terminal;shell;editor;git;
+StartupNotify=true
+StartupWMClass=rodtty

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     files::{Document, Entry, SaveFailure, TextFile},
-    git::{Comparison, Repository},
+    git::{Change, Comparison, Repository},
     work::{Event, Job, Layout, WindowGeometry, Worker},
 };
 use rune_kit::{
@@ -62,6 +62,9 @@ pub(super) struct TreeEntry {
     entry: Option<Entry>,
     label: String,
     badge: String,
+    /// How the file differs from HEAD, and its changed line counts.
+    change: Option<Change>,
+    lines: Option<(u32, u32)>,
     /// The synthetic workspace-root row: a folder that exists in the tree but
     /// not in `entries`, labelled with the current folder's own name.
     root: bool,
@@ -131,7 +134,7 @@ pub(super) struct Workspace {
     /// The root row's overflow menu is open.
     pub(super) explorer_menu: bool,
     /// Captured as the compact Files overlay opens.
-    overlay_return: Option<FocusReturn>,
+    pub(super) overlay_return: Option<FocusReturn>,
     pub show_empty_editor: bool,
     orphan_edit: TextEdit,
     pub layout: Layout,
@@ -377,7 +380,8 @@ impl State {
         self.workspace.layout.explorer_revealed = self.workspace.explorer_revealed;
         self.workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
         self.workspace.layout.active_terminal = self.active;
-        self.workspace.layout.terminal_focus = self.workspace.terminal_focus() || self.settings;
+        self.workspace.layout.terminal_focus =
+            self.workspace.terminal_focus() || self.settings || self.search_tab;
         if let Some(selected) = self.workspace.tree.cursor() {
             self.workspace.layout.selected_path = Some(PathBuf::from(selected));
         }
@@ -408,7 +412,8 @@ impl State {
                     self.workspace.restore_panes = Some(RestoredPanes {
                         editor_visible: layout.editor,
                         terminal_focus: layout.terminal_focus,
-                        explorer_revealed: layout.explorer_revealed,
+                        // Rodtty opens terminal first; the owner shows the explorer.
+                        explorer_revealed: false,
                     });
                 }
                 self.workspace.restore_active = layout.active_file.clone();
@@ -428,8 +433,13 @@ impl State {
                 }
                 let paths = layout.files.clone();
                 self.workspace.show_empty_editor = layout.empty_editor;
-                self.workspace.explorer_revealed = layout.explorer_revealed;
                 self.workspace.layout = layout;
+                // Terminal first: every launch starts with the explorer hidden.
+                // Its root, expanded folders and selection still restore for
+                // when the owner opens it.
+                self.workspace.layout.explorer = false;
+                self.workspace.layout.explorer_revealed = false;
+                self.workspace.explorer_revealed = false;
                 self.workspace.layout.follow = self.config.explorer.follow_terminal;
                 self.workspace.layout.hidden = self.config.explorer.show_hidden;
                 if self
@@ -496,7 +506,7 @@ impl State {
                 self.workspace
                     .tabs
                     .get(self.workspace.active)
-                    .filter(|tab| !self.settings && tab.mode == View::Edit)
+                    .filter(|tab| !self.settings && !self.search_tab && tab.mode == View::Edit)
                     .map(|tab| tab.id),
             )
         };
@@ -765,6 +775,8 @@ impl State {
                 entry: None,
                 label: root_label,
                 badge: String::new(),
+                change: None,
+                lines: None,
                 root: true,
             },
         );
@@ -798,6 +810,17 @@ impl State {
                         .as_ref()
                         .map(|r| r.badge(&entry.path))
                         .unwrap_or_default(),
+                    change: workspace
+                        .repo
+                        .as_ref()
+                        .filter(|_| !entry.directory)
+                        .and_then(|r| r.change(&entry.path))
+                        .or(entry.missing.then_some(Change::Deleted)),
+                    lines: workspace
+                        .repo
+                        .as_ref()
+                        .filter(|_| !entry.directory)
+                        .and_then(|r| r.line_changes(&entry.path)),
                 },
             );
             workspace
@@ -825,6 +848,8 @@ impl State {
                         root: false,
                         label,
                         badge: String::new(),
+                        change: None,
+                        lines: None,
                     },
                 );
             }
@@ -938,6 +963,7 @@ impl State {
             self.workspace.explorer_menu = false;
         }
         self.settings = false;
+        self.search_tab = false;
         self.workspace.explorer_revealed = false;
         self.workspace.set_terminal_focus(false);
         self.workspace.active = index;
@@ -1880,48 +1906,6 @@ pub(super) fn root_controls_fit(explorer_width: f32) -> bool {
     explorer_width - 2.0 * EXPLORER_PADDING - TREE_ROW_CHROME - controls >= ROOT_NAME_MINIMUM
 }
 
-/// A file size as the explorer shows it: decimal units (1 KB = 1,000 bytes),
-/// one decimal place below 10 units, whole numbers above.
-pub(super) fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
-    if bytes < 1000 {
-        return format!("{bytes} B");
-    }
-    // Round before choosing the unit so 999,950 bytes reads "1.0 MB", never "1000 KB".
-    let rounded = |value: f64| {
-        if value < 10.0 {
-            (value * 10.0).round() / 10.0
-        } else {
-            value.round()
-        }
-    };
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while rounded(value) >= 1000.0 && unit + 1 < UNITS.len() {
-        value /= 1000.0;
-        unit += 1;
-    }
-    let shown = rounded(value);
-    if shown < 10.0 {
-        format!("{shown:.1} {}", UNITS[unit])
-    } else {
-        format!("{shown:.0} {}", UNITS[unit])
-    }
-}
-
-/// Exact bytes with thousands separators, for the size's tooltip.
-pub(super) fn exact_bytes(bytes: u64) -> String {
-    let digits = bytes.to_string();
-    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, digit) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    format!("{grouped} {}", if bytes == 1 { "byte" } else { "bytes" })
-}
-
 /// The root row's trailing controls: each toggle shows whether it is on, or
 /// one overflow button when the explorer is too narrow for them all.
 fn root_controls(s: &State, a: &Appearance, width: f32, row_height: f32) -> El {
@@ -2106,6 +2090,8 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
             ));
     }
     let danger = a.danger();
+    let accent = a.accent();
+    let success = a.success();
     let dark = a.dark;
     let workspace_root_path = workspace.directory.clone().unwrap_or_default();
     let mut tree_style = TreeStyle::from_kit(a.kit())
@@ -2120,11 +2106,6 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
     // or holds keyboard focus (the row's hover track lights for both). A
     // selected row draws a fill instead of a hover track, so there they show.
     let controls = root_controls(s, a, width, tree_style.row_height);
-    let label_font = ui_label();
-    let badge_font = a.kit().ty.text_xsmall_medium;
-    let muted = a.muted();
-    let row_space = width - 2.0 * EXPLORER_PADDING - TREE_ROW_CHROME;
-    let indent = tree_style.indent;
     let list = Tree::new(
         |s: &State| &s.workspace.tree,
         |s: &mut State| &mut s.workspace.tree,
@@ -2154,34 +2135,20 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
                 row.expanded == Some(true),
                 dark,
             ));
-            if let Some(bytes) = entry.size.filter(|_| !entry.directory && !entry.missing) {
-                // The name has priority: the size shows only while the whole
-                // name still fits beside it, so it disappears before the name
-                // would truncate.
-                let size = human_size(bytes);
-                let badge = if node.badge.is_empty() {
-                    0.0
-                } else {
-                    rune::text::measure(&node.badge, &[], badge_font, None).0 + 4.0
-                };
-                let room = row_space - row.depth as f32 * indent - badge;
-                let name = rune::text::measure(&node.label, &[], label_font, None).0;
-                let size_width = rune::text::measure(&size, &[], label_font, None).0;
-                if name + 4.0 + size_width <= room {
-                    item = item.trailing(
-                        text(size)
-                            .key("size")
-                            .font(label_font)
-                            .color(muted)
-                            .help(exact_bytes(bytes)),
-                    );
-                }
+            // Git information takes the place of a size: a changed file's
+            // name is tinted by its change, and an updated file counts the
+            // lines it adds and removes.
+            if let Some((added, removed)) =
+                node.lines.filter(|_| node.change == Some(Change::Modified))
+            {
+                item = item.changes(added, removed);
             }
         }
-        if node.entry.as_ref().is_some_and(|entry| entry.missing) {
-            item.label_color(danger)
-        } else {
-            item
+        match node.change {
+            Some(Change::Modified) => item.label_color(accent),
+            Some(Change::Added) => item.label_color(success),
+            Some(Change::Deleted) => item.label_color(danger).strike(),
+            None => item,
         }
     })
     .on_select(|s, _, tx| {
@@ -2195,22 +2162,11 @@ fn explorer(s: &State, a: &Appearance, width: f32) -> El {
     .grow(1.0)
     .min_h(0.0)
     .on_secondary_press(|s: &mut State, press, tx| s.file_context_menu(press, tx));
-    if s.explorer_search.open {
-        pane = pane.child(explorer_search::field(s, a));
-    }
-    // Search results take the tree's place while there is a query.
-    let searching = s.explorer_search.active();
-    pane = pane.child(if searching {
-        explorer_search::results(s, a)
-    } else {
-        list
-    });
+    pane = pane.child(list);
     if workspace.operation_busy {
         pane = pane.child(text("Working on files…").font(ui_label()).color(a.muted()));
     }
-    if searching {
-        // The results draw their own state.
-    } else if workspace.scan_busy {
+    if workspace.scan_busy {
         pane = pane.child(text("Loading…").font(ui_label()).color(a.muted()));
     } else if workspace.entries.is_empty() && workspace.explorer_error.is_none() {
         pane = pane.child(text("No visible files").font(ui_label()).color(a.muted()));
@@ -2308,14 +2264,14 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 .gap(0.0)
                 .center_y()
                 .radius(6.0)
-                .fill(if i == workspace.active && !s.settings {
+                .fill(if i == workspace.active && !s.settings && !s.search_tab {
                     a.hover_bg()
                 } else {
                     a.panel()
                 })
                 .hover(a.hover_bg())
                 .children(
-                    (i == workspace.active && !s.settings)
+                    (i == workspace.active && !s.settings && !s.search_tab)
                         .then(|| super::tab_indicator(a, "indicator-editor-tabs")),
                 )
                 .child(super::tabs::interactive(
@@ -2325,7 +2281,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                         key
                     })
                     .role("tab")
-                    .focus_selected(i == workspace.active && !s.settings)
+                    .focus_selected(i == workspace.active && !s.settings && !s.search_tab)
                     .label(name.clone())
                     .help(tab.document.path.to_string_lossy())
                     .description(if tab.preview {
@@ -2448,6 +2404,59 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
                 ),
         );
     }
+    if s.search_tab_open {
+        let shown = s.search_tab;
+        tab_items.insert(
+            s.tab_strips.search_position.min(tab_items.len()),
+            row()
+                .key("search-group")
+                .role("none")
+                .gap(0.0)
+                .center_y()
+                .radius(6.0)
+                .fill(if shown { a.hover_bg() } else { a.panel() })
+                .hover(a.hover_bg())
+                .children(shown.then(|| super::tab_indicator(a, "indicator-editor-tabs")))
+                .child(super::tabs::interactive(
+                    el().key({
+                        super::pressable("search-tab");
+                        "search-tab"
+                    })
+                    .role("tab")
+                    .focus_selected(shown)
+                    .label("Search")
+                    .help(format!("Search: {}", s.explorer_search.query.text))
+                    .focusable(true)
+                    .focus_ring(2.0, 1.0, a.accent())
+                    .h(29.0)
+                    .center()
+                    .px(8.0)
+                    .gap(6.0)
+                    .on_press_tx(|s: &mut State, tx| s.dispatch(AppAction::ShowSearch, tx))
+                    .child(rune::icon(&rune_kit::glyphs::SEARCH, 16.0).color(a.muted()))
+                    .child(
+                        text("Search")
+                            .font(ui_label())
+                            .color(if shown { a.ink() } else { a.muted() })
+                            .truncate(),
+                    ),
+                    super::tabs::Target::Search,
+                ))
+                .child(
+                    icon_button(
+                        a,
+                        "search-close",
+                        &rune_kit::glyphs::CLOSE,
+                        "Close Search tab",
+                        |s, tx| s.dispatch(AppAction::CloseSearch, tx),
+                    )
+                    .w(24.0)
+                    .min_h(24.0)
+                    .fill(Color::TRANSPARENT)
+                    .hover(a.hover_bg()),
+                ),
+        );
+    }
     pane = pane.child(super::tabs::scroll_strip(
         tabs.children(tab_items),
         s,
@@ -2455,6 +2464,26 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
     ));
     if s.settings {
         return pane.child(super::settings::content(s, a));
+    }
+    if s.search_tab {
+        return pane.child(
+            col()
+                .key("search-content")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .fill(a.bg())
+                .child(
+                    col()
+                        .w_full()
+                        .grow(1.0)
+                        .min_h(0.0)
+                        .px(10.0)
+                        .pt(8.0)
+                        .child(explorer_search::results(s, a)),
+                )
+                .child(explorer_search::footer(s, a)),
+        );
     }
     let Some(tab) = workspace.tabs.get(workspace.active) else {
         // Settings closed its tab but the pane is still drawn while it exits;
@@ -2510,6 +2539,21 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         ),
         ("diff-staged", "Compare staged changes", Comparison::Staged),
     ] {
+        // A comparison shows only when it has changes to show. The explorer's
+        // Git status decides; without it (another repository, or the explorer
+        // closed) every comparison stays available. The open one stays too.
+        let path = &tab.document.path;
+        let available = tab.mode == View::Diff(mode)
+            || workspace
+                .repo
+                .as_ref()
+                .filter(|repo| path.starts_with(&repo.root))
+                .is_none_or(|repo| {
+                    repo.compares(path, mode) || (mode == Comparison::Current && tab.dirty())
+                });
+        if !available {
+            continue;
+        }
         modes = modes.child(
             icon_button(a, key, &rune_kit::glyphs::COMPARE, label, move |s, tx| {
                 s.dispatch(AppAction::Compare(mode), tx)
@@ -2518,8 +2562,66 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .hover(a.hover_bg()),
         );
     }
+    // A thin vertical rule between groups of status line controls.
+    let separator = || {
+        el().w(1.0)
+            .h(18.0)
+            .mx(4.0)
+            .fill(a.kit().c.border_base)
+            .a11y_hidden()
+    };
+    if matches!(tab.mode, View::Diff(_)) {
+        // Git diff controls sit in the status line, before the save button,
+        // instead of over the diff.
+        modes = modes
+            .child(separator())
+            .child(
+                row()
+                    .key("diff-controls")
+                    .role("radiogroup")
+                    .label("Diff layout")
+                    .gap(2.0)
+                    .center_y()
+                    .children(
+                        [("auto", "Auto"), ("inline", "Inline"), ("split", "Split")]
+                            .into_iter()
+                            .zip(0u8..)
+                            .map(|((key, title), layout)| {
+                                // One of three layouts: a radio whose active
+                                // choice is outlined, not only tinted.
+                                let name = format!("{title} diff layout");
+                                button(a, format!("diff-{key}"), title, move |s, _| {
+                                    s.workspace.diff_layout = layout
+                                })
+                                .role("radio")
+                                .label(name.clone())
+                                .help(name)
+                                .toggle_state(a, s.workspace.diff_layout == layout)
+                                .hover(a.hover_bg())
+                            }),
+                    ),
+            )
+            .child(icon_button(
+                a,
+                "diff-prev",
+                &rune_kit::glyphs::ARROW_UP,
+                "Previous change",
+                |s: &mut State, tx| {
+                    s.workspace.diff.next_hunk(false, tx);
+                },
+            ))
+            .child(icon_button(
+                a,
+                "diff-next",
+                &rune_kit::glyphs::ARROW_DOWN,
+                "Next change",
+                |s: &mut State, tx| {
+                    s.workspace.diff.next_hunk(true, tx);
+                },
+            ));
+    }
     let save_help = s.shortcut_help("save-file", "Save file");
-    modes = modes.child(
+    modes = modes.child(separator()).child(
         icon_button(
             a,
             "file-save",
@@ -2568,6 +2670,16 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
         .child(el().grow(1.0));
     let footer = if let Some(status) = status_text {
         footer.child(text(status).font(ui_label()).color(a.muted()).shrink())
+    } else if matches!(tab.mode, View::Diff(_)) {
+        // What the diff compares, in place of the editor's position.
+        footer.child(
+            text(&workspace.diff_label)
+                .key("diff-label")
+                .font(ui_label())
+                .color(a.muted())
+                .shrink()
+                .truncate(),
+        )
     } else {
         footer
     };
@@ -2749,58 +2861,7 @@ fn editor(s: &State, a: &Appearance, width: f32) -> El {
             .child(field);
         pane = pane.child(a.kit().scroll_bar(viewport));
     } else {
-        let mut diff_below = vec![
-            row()
-                .key("diff-controls")
-                .gap(4.0)
-                .h(30.0)
-                .px(10.0)
-                .scroll_x()
-                .children(
-                    [("auto", "Auto"), ("inline", "Inline"), ("split", "Split")]
-                        .into_iter()
-                        .zip(0u8..)
-                        .map(|((key, title), layout)| {
-                            // One of three layouts: a radio whose active
-                            // choice is outlined, not only tinted.
-                            let name = format!("{title} diff layout");
-                            button(a, format!("diff-{key}"), title, move |s, _| {
-                                s.workspace.diff_layout = layout
-                            })
-                            .role("radio")
-                            .label(name.clone())
-                            .help(name)
-                            .toggle_state(a, s.workspace.diff_layout == layout)
-                            .hover(a.hover_bg())
-                        }),
-                )
-                .child(icon_button(
-                    a,
-                    "diff-prev",
-                    &rune_kit::glyphs::ARROW_UP,
-                    "Previous change",
-                    |s: &mut State, tx| {
-                        s.workspace.diff.next_hunk(false, tx);
-                    },
-                ))
-                .child(icon_button(
-                    a,
-                    "diff-next",
-                    &rune_kit::glyphs::ARROW_DOWN,
-                    "Next change",
-                    |s: &mut State, tx| {
-                        s.workspace.diff.next_hunk(true, tx);
-                    },
-                )),
-            // Inset like the controls above, not flush with the pane edge.
-            row().w_full().px(10.0).child(
-                text(&workspace.diff_label)
-                    .key("diff-label")
-                    .font(ui_style(10.0, 400.0))
-                    .color(a.muted())
-                    .wrap(),
-            ),
-        ];
+        let mut diff_below = Vec::new();
         if let Some(error) = &workspace.diff_error {
             diff_below.push(
                 text(error)
@@ -2864,7 +2925,8 @@ fn is_markdown(path: &std::path::Path) -> bool {
 fn editor_available(s: &State) -> bool {
     // No open editor tab and no Settings tab: the pane closes rather than
     // showing an empty placeholder, so the terminal keeps the workspace.
-    s.workspace.layout.editor && (!s.workspace.tabs.is_empty() || s.settings_open)
+    s.workspace.layout.editor
+        && (!s.workspace.tabs.is_empty() || s.settings_open || s.search_tab_open)
 }
 
 fn explorer_minimum_width(s: &State) -> f32 {
@@ -3106,21 +3168,18 @@ pub(super) fn demo(s: &mut State, diff: bool) {
             name: "src".into(),
             directory: true,
             missing: false,
-            size: None,
         },
         Entry {
             path: PathBuf::from("/workspace/rodtty/Cargo.toml"),
             name: "Cargo.toml".into(),
             directory: false,
             missing: false,
-            size: Some(1_284),
         },
         Entry {
             path,
             name: "main.rs".into(),
             directory: false,
             missing: false,
-            size: Some(18_432),
         },
     ];
     s.workspace.layout.expanded_folders = vec![PathBuf::from("/workspace/rodtty/src")];
@@ -3210,7 +3269,6 @@ pub(super) fn icons_demo(s: &mut State) {
             .into_owned(),
         directory,
         missing: false,
-        size: None,
     })
     .collect();
     s.workspace.layout.expanded_folders = vec![root.join("alpine"), root.join("src")];
@@ -4042,32 +4100,36 @@ mod tests {
             (bottom(status) - bottom(pane)).abs() < 1.0,
             "actions end the pane"
         );
-        // Git diff mode: controls and its label follow the diff.
+        // Git diff mode: controls and its label sit in the status line, below
+        // the diff, with the layout and change controls before the save button.
         runtime.update(|s, _| demo_diff(s));
         runtime.settle_all();
         runtime.frame(1.0);
         let viewport = rect(&runtime, "git-diff-viewport");
-        let controls = rect(&runtime, "diff-controls");
-        let label = rect(&runtime, "diff-label");
         let status = rect(&runtime, "editor-status");
+        let save = rect(&runtime, "file-save");
         assert!(bottom(rect(&runtime, "editor-tabs")) <= viewport[1]);
-        assert!(
-            bottom(viewport) <= controls[1],
-            "{viewport:?} above {controls:?}"
-        );
-        assert!(bottom(controls) <= label[1] + 0.5);
-        assert!(bottom(label) <= status[1] + 0.5);
-        let first_layout = rect(&runtime, "diff-auto");
-        assert!(
-            (label[0] - first_layout[0]).abs() < 0.5,
-            "the label's text starts under the first control: {label:?} {first_layout:?}"
-        );
-        for key in ["diff-prev", "diff-next", "diff-current"] {
+        assert!(bottom(viewport) <= status[1] + 0.5);
+        for key in [
+            "diff-controls",
+            "diff-auto",
+            "diff-prev",
+            "diff-next",
+            "diff-current",
+            "diff-label",
+        ] {
+            let r = rect(&runtime, key);
             assert!(
-                rect(&runtime, key)[1] >= bottom(viewport),
-                "{key} below the diff"
+                r[1] >= status[1] && bottom(r) <= bottom(status) + 0.5,
+                "{key} in the status line: {r:?} {status:?}"
             );
         }
+        assert!(rect(&runtime, "diff-current")[0] < rect(&runtime, "diff-auto")[0]);
+        assert!(
+            rect(&runtime, "diff-next")[0] < save[0],
+            "controls before save"
+        );
+        assert!(save[0] < rect(&runtime, "diff-label")[0]);
         // Compact navigation stays with the tabs, above the content.
         let mut state = State::with_root(root.path().to_owned());
         demo(&mut state, false);
@@ -4341,7 +4403,7 @@ mod tests {
         click(&mut runtime, root.path().join("b.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 2);
         open_settings(&mut runtime);
-        click(&mut runtime, "reset-single-click-keeps-open");
+        crate::desktop::settings::restore_tab_defaults(&mut runtime, "general");
         assert!(!Config::load(root.path()).unwrap().single_click_keeps_open);
         click(&mut runtime, root.path().join("c.txt").to_str().unwrap());
         wait_runtime(&mut runtime, |s| s.workspace.tabs.len() == 3);
@@ -4965,7 +5027,7 @@ mod tests {
                 .explorer
                 .confirm_deletion
         );
-        click(&mut runtime, "reset-explorer-preferences");
+        crate::desktop::settings::restore_tab_defaults(&mut runtime, "general");
         assert!(
             Config::load(fixture.path())
                 .unwrap()
@@ -6536,7 +6598,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"\xef\xbb\xbforiginal\r\n");
         open_settings(&mut runtime);
         fill(&mut runtime, "settings-search", "autosave");
-        click(&mut runtime, "autosave-after-delay");
+        crate::desktop::settings::choose(&mut runtime, "autosave", "After Delay");
         runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
         wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].dirty());
         assert_eq!(std::fs::read(&path).unwrap(), b"\xef\xbb\xbfupdated\r\n");
@@ -7062,6 +7124,9 @@ mod tests {
         assert_eq!(runtime.state.workspace.tabs[0].edit.text, "host file");
         runtime.state.persist_workspace();
         let mut restored = self::state(root.path());
+        // The explorer starts hidden; the owner opens it onto the restored root.
+        assert!(!restored.workspace.layout.explorer);
+        restored.workspace.layout.explorer = true;
         wait(&mut restored, |s| {
             !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "hello.txt")
         });
@@ -7625,31 +7690,16 @@ mod tests {
     }
 
     #[test]
-    fn file_sizes_are_human_readable_with_exact_bytes_and_yield_to_the_filename() {
+    fn explorer_marks_git_changes_in_place_of_sizes_and_offers_only_relevant_comparisons() {
         use super::super::tests::runtime_for;
-        for (bytes, shown) in [
-            (0, "0 B"),
-            (999, "999 B"),
-            (1_000, "1.0 KB"),
-            (4_200, "4.2 KB"),
-            (12_345, "12 KB"),
-            (999_499, "999 KB"),
-            (999_950, "1.0 MB"),
-            (1_300_000, "1.3 MB"),
-            (5_000_000_000, "5.0 GB"),
-        ] {
-            assert_eq!(human_size(bytes), shown, "{bytes}");
-        }
-        assert_eq!(exact_bytes(12_345), "12,345 bytes");
-        assert_eq!(exact_bytes(1_234_567), "1,234,567 bytes");
-        assert_eq!(exact_bytes(1), "1 byte");
-        assert_eq!(exact_bytes(0), "0 bytes");
         let root = crate::test_support::tempdir().unwrap();
         let git = |args: &[&str]| {
             assert!(
                 std::process::Command::new("git")
                     .arg("-C")
                     .arg(root.path())
+                    .args(["-c", "user.name=Test", "-c", "user.email=test@example.test"])
+                    .args(["-c", "commit.gpgsign=false"])
                     .args(args)
                     .output()
                     .unwrap()
@@ -7658,100 +7708,121 @@ mod tests {
             );
         };
         git(&["init", "-b", "main"]);
-        std::fs::create_dir(root.path().join("src")).unwrap();
-        std::fs::write(root.path().join("notes.txt"), vec![b'x'; 12_345]).unwrap();
-        std::fs::write(root.path().join("empty.txt"), b"").unwrap();
-        let long = "a-long-descriptive-file-name-for-rows.txt";
-        std::fs::write(root.path().join(long), vec![b'y'; 2_048]).unwrap();
+        for (name, text) in [
+            ("updated.txt", "one\ntwo\nthree\n"),
+            ("staged.txt", "staged\n"),
+            ("gone.txt", "gone\n"),
+            ("clean.txt", "clean\n"),
+        ] {
+            std::fs::write(root.path().join(name), text).unwrap();
+        }
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        std::fs::write(root.path().join("updated.txt"), "one\n2\n3\nfour\n").unwrap();
+        std::fs::write(root.path().join("staged.txt"), "staged\nmore\n").unwrap();
+        git(&["add", "staged.txt"]);
+        std::fs::remove_file(root.path().join("gone.txt")).unwrap();
+        std::fs::write(root.path().join("added.txt"), "new\n").unwrap();
         let mut state = state(root.path());
+        state.config.appearance = crate::config::Appearance::Dark;
+        state.config.theme_family = crate::config::ThemeFamily::Ayu;
         state.toggle_files();
         state.workspace.layout.explorer_width = 420.0;
         wait(&mut state, |s| {
-            s.workspace.entries.len() == 4 && s.workspace.repo.is_some()
+            s.workspace.entries.len() == 5
+                && s.workspace
+                    .repo
+                    .as_ref()
+                    .is_some_and(|r| r.files.len() == 4)
         });
-        let entry = |state: &State, name: &str| {
-            state
-                .workspace
-                .entries
-                .iter()
-                .find(|e| e.name == name)
-                .unwrap()
-                .size
-        };
-        assert_eq!(entry(&state, "notes.txt"), Some(12_345));
-        assert_eq!(entry(&state, "empty.txt"), Some(0));
-        assert_eq!(entry(&state, "src"), None, "folders have no size");
+        let file = |name: &str| root.path().canonicalize().unwrap().join(name);
+        let repo = state.workspace.repo.clone().unwrap();
+        assert_eq!(repo.change(&file("updated.txt")), Some(Change::Modified));
+        assert_eq!(repo.change(&file("added.txt")), Some(Change::Added));
+        assert_eq!(repo.change(&file("gone.txt")), Some(Change::Deleted));
+        assert_eq!(repo.change(&file("clean.txt")), None);
+        assert_eq!(repo.line_changes(&file("updated.txt")), Some((3, 2)));
+        assert_eq!(repo.line_changes(&file("staged.txt")), Some((1, 0)));
         state.rebuild_tree();
         let mut runtime = runtime_for(state);
         settle(&mut runtime);
-        let sizes = |runtime: &rune::Runtime<State>| {
-            runtime
-                .elements()
+        let elements = runtime.elements();
+        let label = |name: &str| {
+            elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some("label") && e.path.contains(name))
+                .unwrap()
+                .text_color
+        };
+        let a = Appearance::resolve(
+            crate::config::ThemeFamily::Ayu,
+            crate::config::Appearance::Dark,
+            true,
+        );
+        assert_eq!(label("updated.txt"), Some(a.accent()));
+        assert_eq!(label("staged.txt"), Some(a.accent()));
+        assert_eq!(label("added.txt"), Some(a.success()));
+        assert_eq!(label("gone.txt"), Some(a.danger()));
+        assert_ne!(label("clean.txt"), label("updated.txt"));
+        let count = |name: &str, key: &str| {
+            elements
+                .iter()
+                .find(|e| {
+                    e.key.as_deref() == Some(key)
+                        && e.path.contains(name)
+                        && e.path.contains("/changes/")
+                })
+                .and_then(|e| e.text.clone())
+        };
+        assert_eq!(count("updated.txt", "added").as_deref(), Some("+3"));
+        assert_eq!(
+            count("updated.txt", "removed").as_deref(),
+            Some("\u{2212}2")
+        );
+        assert_eq!(count("staged.txt", "added").as_deref(), Some("+1"));
+        assert_eq!(count("staged.txt", "removed"), None);
+        for name in ["added.txt", "gone.txt", "clean.txt"] {
+            assert_eq!(count(name, "added"), None, "{name} counts no lines");
+        }
+        assert!(
+            !elements.iter().any(|e| e.key.as_deref() == Some("size")),
+            "Git information replaces file sizes"
+        );
+        // The editor's comparisons follow the file's Git state.
+        let shown = |runtime: &rune::Runtime<State>| {
+            ["diff-current", "diff-unstaged", "diff-staged"]
                 .into_iter()
-                .filter(|e| e.key.as_deref() == Some("size") && !e.exiting)
-                .map(|e| (e.path, e.text.unwrap_or_default(), e.text_color))
+                .filter(|key| runtime.find(key).is_some())
                 .collect::<Vec<_>>()
         };
-        let shown = sizes(&runtime);
-        assert_eq!(shown.len(), 3, "one size per regular file: {shown:?}");
-        let src = root.path().join("src").to_string_lossy().into_owned();
-        assert!(
-            shown
-                .iter()
-                .all(|(path, _, _)| !path.contains(&format!("{src}/")))
-        );
-        let notes = shown
-            .iter()
-            .find(|(path, _, _)| path.contains("notes.txt"))
-            .unwrap();
-        assert_eq!(notes.1, "12 KB");
-        let name_color = runtime
-            .elements()
-            .into_iter()
-            .find(|e| e.key.as_deref() == Some("label") && e.path.contains("notes.txt"))
-            .unwrap()
-            .text_color;
-        assert!(
-            notes.2.is_some() && notes.2 != name_color,
-            "sizes are muted"
-        );
-        assert!(shown.iter().any(|(_, text, _)| text == "0 B"));
-        let (x, y) = runtime
-            .find(&format!("{}/size", root.path().join("notes.txt").display()))
-            .unwrap();
-        runtime.pointer_move(x, y);
-        for _ in 0..30 {
-            runtime.frame(0.1);
+        for (name, expected) in [
+            ("clean.txt", vec![]),
+            ("updated.txt", vec!["diff-current", "diff-unstaged"]),
+            ("staged.txt", vec!["diff-current", "diff-staged"]),
+            ("added.txt", vec!["diff-current", "diff-unstaged"]),
+        ] {
+            runtime.update(|s, _| s.open_file(file(name)));
+            wait_runtime(&mut runtime, |s| {
+                s.workspace
+                    .tabs
+                    .get(s.workspace.active)
+                    .is_some_and(|t| t.document.path == file(name))
+            });
+            settle(&mut runtime);
+            assert_eq!(shown(&runtime), expected, "{name}");
         }
-        assert_eq!(
-            runtime.help_tooltip().map(|(text, _)| text),
-            Some("12,345 bytes"),
-            "the tooltip gives exact bytes"
-        );
-        runtime.pointer_leave();
-        // Git status badges stay beside the size.
-        assert!(runtime.elements().iter().any(|e| {
-            e.key.as_deref() == Some("badge")
-                && e.text.as_deref() == Some("??")
-                && e.path.contains("notes.txt")
-        }));
-        // Narrow: the long name keeps the row, the size goes first.
-        runtime.update(|s, _| s.workspace.layout.explorer_width = 180.0);
+        // Unsaved edits are changes against HEAD too.
+        runtime.update(|s, _| s.open_file(file("clean.txt")));
+        wait_runtime(&mut runtime, |s| {
+            s.workspace.tabs[s.workspace.active].document.path == file("clean.txt")
+        });
+        let id = runtime.state.workspace.tabs[runtime.state.workspace.active].id;
+        fill(&mut runtime, &format!("file-editor-{id}"), "edited\n");
         settle(&mut runtime);
-        let shown = sizes(&runtime);
-        assert!(
-            !shown.iter().any(|(path, _, _)| path.contains(long)),
-            "the size hides before the filename truncates: {shown:?}"
-        );
-        assert!(
-            runtime
-                .elements()
-                .iter()
-                .any(|e| e.key.as_deref() == Some("label")
-                    && e.path.contains(long)
-                    && e.rect[2] > 40.0),
-            "the filename keeps its room"
-        );
+        assert_eq!(shown(&runtime), vec!["diff-current"]);
+        click(&mut runtime, "diff-current");
+        wait_runtime(&mut runtime, |s| !s.workspace.diff_patch.is_empty());
+        assert!(runtime.state.workspace.diff_patch.contains("+edited"));
     }
 
     #[test]
@@ -7911,6 +7982,9 @@ mod tests {
         fresh.shell = shell;
         fresh.directory = files.clone();
         fresh.restore_startup();
+        // The explorer starts hidden; the owner opens it onto the restored root.
+        assert!(!fresh.workspace.layout.explorer);
+        fresh.workspace.layout.explorer = true;
         assert_eq!(fresh.workspace.directory.as_deref(), Some(files.as_path()));
         assert_eq!(
             fresh.workspace.layout.expanded_folders,

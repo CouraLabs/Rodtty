@@ -15,6 +15,7 @@ pub struct TreeItem {
     icon: Option<&'static Icon>,
     icon_color: Option<Color>,
     label_color: Option<Color>,
+    strike: bool,
     highlight: Option<String>,
     changes: Option<(u32, u32)>,
     dot: Option<Color>,
@@ -29,6 +30,7 @@ impl TreeItem {
             icon: None,
             icon_color: None,
             label_color: None,
+            strike: false,
             highlight: None,
             changes: None,
             dot: None,
@@ -53,6 +55,11 @@ impl TreeItem {
     /// The label's colour (the theme's text colour by default): dimmed for an ignored file, say.
     pub fn label_color(mut self, c: Color) -> Self {
         self.label_color = Some(c);
+        self
+    }
+    /// Draws a line through the label in its colour: a deleted file, say.
+    pub fn strike(mut self) -> Self {
+        self.strike = true;
         self
     }
     /// Marks the first case-insensitive occurrence of `query` in the label, as a search does.
@@ -162,6 +169,7 @@ impl TreeItem {
             .unwrap_or_default();
         let full = self.label.clone();
         let label = if spans.is_empty() { text(self.label) } else { rich(self.label, spans) };
+        let label = if self.strike { label.strike(0, full.len(), None) } else { label };
         let label = label.key("label").font(font).color(color).grow(1.0).shrink().min_w(0.0);
         let label = match style.label_fade {
             Some(w) => label.truncate_fade_width(w / font.size.max(1.0)),

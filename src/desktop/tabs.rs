@@ -7,11 +7,13 @@ pub(super) enum Target {
     Terminal(usize),
     Editor(u64),
     Settings,
+    Search,
 }
 
 pub(super) struct Tabs {
     pub context_open: bool,
     pub settings_position: usize,
+    pub search_position: usize,
     pub preview_root: Option<tempfile::TempDir>,
     terminal_scroll: Rc<Cell<f32>>,
     editor_scroll: Rc<Cell<f32>>,
@@ -24,6 +26,7 @@ impl Default for Tabs {
             context_open: false,
             preview_root: None,
             settings_position: usize::MAX,
+            search_position: usize::MAX,
             rects: HashMap::new(),
             terminal_scroll: Default::default(),
             editor_scroll: Default::default(),
@@ -82,7 +85,7 @@ impl State {
                     .position(|s| Some(session_id(s)) == active)
                     .unwrap_or(0);
             }
-            Target::Editor(_) | Target::Settings => {
+            Target::Editor(_) | Target::Settings | Target::Search => {
                 let mut order = self.editor_tab_order();
                 let Some(from) = order.iter().position(|t| *t == target) else {
                     return;
@@ -90,9 +93,16 @@ impl State {
                 let to = to.min(order.len() - 1);
                 let moved = order.remove(from);
                 order.insert(to, moved);
+                // Settings goes back in before Search does, so its place is
+                // counted without the Search tab.
                 self.tab_strips.settings_position = order
                     .iter()
+                    .filter(|t| **t != Target::Search)
                     .position(|t| *t == Target::Settings)
+                    .unwrap_or(usize::MAX);
+                self.tab_strips.search_position = order
+                    .iter()
+                    .position(|t| *t == Target::Search)
                     .unwrap_or(usize::MAX);
                 let active = self.workspace.tabs.get(self.workspace.active).map(|t| t.id);
                 self.workspace
@@ -121,6 +131,12 @@ impl State {
                 Target::Settings,
             );
         }
+        if self.search_tab_open {
+            order.insert(
+                self.tab_strips.search_position.min(order.len()),
+                Target::Search,
+            );
+        }
         order
     }
 
@@ -131,7 +147,7 @@ impl State {
                 .iter()
                 .position(|s| session_id(s) == id)
                 .map(|i| (i, self.sessions.len())),
-            Target::Editor(_) | Target::Settings => {
+            Target::Editor(_) | Target::Settings | Target::Search => {
                 let order = self.editor_tab_order();
                 order
                     .iter()
@@ -147,6 +163,7 @@ fn close(target: Target) -> AppAction {
         Target::Terminal(id) => AppAction::CloseTerminal(id),
         Target::Editor(id) => AppAction::CloseEditor(Some(id)),
         Target::Settings => AppAction::CloseSettings,
+        Target::Search => AppAction::CloseSearch,
     }
 }
 

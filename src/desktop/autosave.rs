@@ -37,15 +37,17 @@ impl State {
         let now = Instant::now();
         // Inspecting this file's diff or using its toolbar/find controls stays
         // inside the same editor context. Raw widget blur is not a save action.
-        let context =
-            (!self.settings && self.workspace.layout.editor && !self.workspace.terminal_focus())
-                .then(|| {
-                    self.workspace
-                        .tabs
-                        .get(self.workspace.active)
-                        .map(|tab| tab.id)
-                })
-                .flatten();
+        let context = (!self.settings
+            && !self.search_tab
+            && self.workspace.layout.editor
+            && !self.workspace.terminal_focus())
+        .then(|| {
+            self.workspace
+                .tabs
+                .get(self.workspace.active)
+                .map(|tab| tab.id)
+        })
+        .flatten();
         let previous = self.workspace.autosave_context;
         self.workspace.autosave_context = context;
         for tab in &mut self.workspace.tabs {

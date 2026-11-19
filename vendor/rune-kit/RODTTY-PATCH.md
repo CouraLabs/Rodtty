@@ -12,6 +12,8 @@ Only production-source differences, recorded in `rodtty.patch`:
 - DiffView draws permanent `+` and `−` sign markers beside line numbers, hidden
   from assistive technology because each row's label already names the change.
 - TreeStyle::selected_mark draws an accent bar on the selected tree row.
+- TreeItem::strike draws a line through a row's label, for a deleted file.
+- A field-appearance Select's listbox is at least as wide as its trigger.
 
 The standalone manifest pins upstream sibling crates to the same revision.
 T06 typography and diff sizing remain unchanged.

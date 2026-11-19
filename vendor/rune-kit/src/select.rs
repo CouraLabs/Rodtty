@@ -226,7 +226,8 @@ impl Select {
                 // Modal, so a reader hears a dialog: it's named as the select is.
                 .label(self.name.clone().unwrap_or_else(|| self.placeholder.clone()))
                 .focus_return(&anchor_key)
-                .min_w(160.0)
+                // A field's list is at least as wide as the field it opens from.
+                .min_w(if self.appearance == SelectAppearance::Field { self.width.max(160.0) } else { 160.0 })
                 .max_w(368.0)
                 .radius(6.0)
                 .fill(c.layer_01)

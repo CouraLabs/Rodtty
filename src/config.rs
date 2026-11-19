@@ -129,6 +129,8 @@ pub struct Config {
     pub terminal_clipboard: TerminalClipboardPreferences,
     /// Applies live: running Rodtty shells pick it up at their next prompt.
     pub prompt: crate::prompt::PromptPreferences,
+    /// The strip along the window's bottom with the app name, folder and messages.
+    pub show_footer: bool,
     /// Preserve preferences owned by other feature modules and future versions.
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
@@ -194,6 +196,7 @@ impl Default for Config {
             behavior: BehaviorPreferences::default(),
             terminal_clipboard: TerminalClipboardPreferences::default(),
             prompt: Default::default(),
+            show_footer: true,
             extra: Default::default(),
         }
     }
@@ -328,13 +331,37 @@ pub fn initial_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {
         }
         return Ok(path);
     }
-    std::env::current_dir()
-        .or_else(|_| {
-            directories::BaseDirs::new()
-                .map(|dirs| dirs.home_dir().to_owned())
-                .ok_or_else(|| std::io::Error::other("home directory unavailable"))
-        })
+    // Launchers start apps in `/` (Finder) or the install folder (Start menu), so
+    // the first terminal opens in the home folder unless `--cwd` names another.
+    directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().to_owned())
+        .filter(|home| home.is_dir())
+        .map_or_else(std::env::current_dir, Ok)
         .context("no usable startup directory")
+}
+
+/// The Startup folder setting's choice, when it names one. `Err` explains why
+/// the first terminal falls back to the home folder instead.
+pub fn configured_startup_directory(
+    behavior: &BehaviorPreferences,
+) -> Option<std::result::Result<PathBuf, String>> {
+    if behavior.startup_directory != StartupDirectory::Specified {
+        return None;
+    }
+    let path = &behavior.startup_specified_directory;
+    Some(if path.as_os_str().is_empty() {
+        Err(
+            "No startup folder is specified in General settings. Opened the home folder instead."
+                .into(),
+        )
+    } else if path.is_absolute() && path.is_dir() {
+        Ok(path.clone())
+    } else {
+        Err(format!(
+            "Startup folder is unavailable: {}. Opened the home folder instead.",
+            path.display()
+        ))
+    })
 }
 
 pub fn shell_executable() -> Result<PathBuf> {
@@ -354,6 +381,11 @@ pub fn shell_executable() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// The allowed terminal line height, as multiples of the font size.
+pub const TERMINAL_LINE_HEIGHT: (f32, f32) = (1.0, 2.5);
+/// The allowed terminal letter spacing, in points per cell.
+pub const TERMINAL_LETTER_SPACING: (f32, f32) = (-2.0, 10.0);
+
 /// Owner typography. The editor uses the terminal family with its own size.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -363,6 +395,10 @@ pub struct FontPreferences {
     pub ui_size: f32,
     pub terminal_size: f32,
     pub editor_size: f32,
+    /// Terminal row height as a multiple of the terminal font size.
+    pub terminal_line_height: f32,
+    /// Points added to each terminal cell's width; negative values tighten it.
+    pub terminal_letter_spacing: f32,
 }
 impl Default for FontPreferences {
     fn default() -> Self {
@@ -372,6 +408,8 @@ impl Default for FontPreferences {
             ui_size: 13.0,
             terminal_size: 14.0,
             editor_size: 14.0,
+            terminal_line_height: 1.2,
+            terminal_letter_spacing: 0.0,
         }
     }
 }
@@ -385,6 +423,26 @@ impl FontPreferences {
             if !size.is_finite() || !(8.0..=32.0).contains(&size) {
                 bail!("{name} font size must be between 8 and 32 pixels");
             }
+        }
+        if !self.terminal_line_height.is_finite()
+            || !(TERMINAL_LINE_HEIGHT.0..=TERMINAL_LINE_HEIGHT.1)
+                .contains(&self.terminal_line_height)
+        {
+            bail!(
+                "terminal line height must be between {} and {}",
+                TERMINAL_LINE_HEIGHT.0,
+                TERMINAL_LINE_HEIGHT.1
+            );
+        }
+        if !self.terminal_letter_spacing.is_finite()
+            || !(TERMINAL_LETTER_SPACING.0..=TERMINAL_LETTER_SPACING.1)
+                .contains(&self.terminal_letter_spacing)
+        {
+            bail!(
+                "terminal letter spacing must be between {} and {} points",
+                TERMINAL_LETTER_SPACING.0,
+                TERMINAL_LETTER_SPACING.1
+            );
         }
         for family in [&self.ui_family, &self.terminal_family] {
             if family.trim().is_empty()
@@ -478,9 +536,21 @@ pub struct BehaviorPreferences {
     pub terminal_tab_close: TerminalClosePolicy,
     pub new_terminal_directory: NewTerminalDirectory,
     pub specified_directory: PathBuf,
+    /// Where the first terminal opens; `--cwd` overrides it.
+    pub startup_directory: StartupDirectory,
+    /// The folder for `StartupDirectory::Specified`.
+    pub startup_specified_directory: PathBuf,
     pub terminal_startup: TerminalStartup,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupDirectory {
+    #[default]
+    Home,
+    Specified,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -526,6 +596,46 @@ mod tests {
         let root = crate::test_support::tempdir().unwrap();
         std::fs::write(root.path().join("settings.json"), json).unwrap();
         Config::load(root.path()).unwrap()
+    }
+
+    #[test]
+    fn first_terminal_defaults_to_home_and_honors_explicit_cwd() {
+        let home = directories::BaseDirs::new().unwrap().home_dir().to_owned();
+        assert_eq!(initial_directory(None).unwrap(), home);
+        let explicit = crate::test_support::tempdir().unwrap();
+        assert_eq!(
+            initial_directory(Some(explicit.path().to_owned())).unwrap(),
+            explicit.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn startup_folder_setting_names_a_folder_or_explains_the_home_fallback() {
+        let folder = crate::test_support::tempdir().unwrap();
+        let mut behavior = BehaviorPreferences::default();
+        assert_eq!(behavior.startup_directory, StartupDirectory::Home);
+        assert_eq!(configured_startup_directory(&behavior), None);
+        behavior.startup_directory = StartupDirectory::Specified;
+        assert!(configured_startup_directory(&behavior).unwrap().is_err());
+        behavior.startup_specified_directory = folder.path().into();
+        assert_eq!(
+            configured_startup_directory(&behavior),
+            Some(Ok(folder.path().to_owned()))
+        );
+        behavior.startup_specified_directory = folder.path().join("missing");
+        assert!(
+            configured_startup_directory(&behavior)
+                .unwrap()
+                .unwrap_err()
+                .contains("missing")
+        );
+        behavior.startup_specified_directory = "relative".into();
+        assert!(configured_startup_directory(&behavior).unwrap().is_err());
+        let saved: BehaviorPreferences = serde_json::from_str(
+            r#"{"startup_directory":"specified","startup_specified_directory":"/tmp"}"#,
+        )
+        .unwrap();
+        assert_eq!(saved.startup_directory, StartupDirectory::Specified);
     }
 
     #[test]

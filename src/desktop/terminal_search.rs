@@ -116,6 +116,36 @@ impl TerminalSearch {
         Some(current)
     }
 
+    /// Make `at`, a match of `query` in `screen`, the current match and scroll
+    /// to it, as a search result row asks. Returns whether it was still there.
+    pub fn select(
+        &mut self,
+        screen: &mut vt100::Screen,
+        key: usize,
+        query: &str,
+        at: Match,
+    ) -> bool {
+        self.query = TextEdit::new(query);
+        self.matches = find_in_lines(screen, query, usize::MAX, false, true)
+            .into_iter()
+            .map(|found| found.at)
+            .collect();
+        self.found = Some(Found {
+            query: query.to_owned(),
+            screen: key,
+            scrollback: scrollback_len(screen),
+        });
+        self.current = self
+            .matches
+            .iter()
+            .position(|m| *m == at)
+            .or_else(|| self.matches.len().checked_sub(1));
+        if let Some(current) = self.current() {
+            reveal(screen, current);
+        }
+        self.current().is_some_and(|m| m == at)
+    }
+
     /// Which highlight, if any, a visible cell of `screen` carries.
     pub fn highlighter<'a>(
         &'a self,
@@ -166,9 +196,47 @@ fn scrollback_len(screen: &mut vt100::Screen) -> usize {
 /// Every non-overlapping match of `needle`, oldest first. The screen's scroll
 /// position is left as it was.
 pub(super) fn find_all(screen: &mut vt100::Screen, needle: &str) -> Vec<Match> {
-    if needle.is_empty() {
+    find_in_lines(screen, needle, usize::MAX, false, false)
+        .into_iter()
+        .map(|found| found.at)
+        .collect()
+}
+
+/// A match with the logical line it is in, for listing as a search result.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LineMatch {
+    pub at: Match,
+    /// The line's text, leading spaces trimmed.
+    pub text: String,
+    /// The match's bytes within `text`.
+    pub highlight: std::ops::Range<usize>,
+}
+
+/// Up to `limit` matches of `needle` with their lines, oldest first, ignoring
+/// ASCII case as the file search does. The screen's scroll position is left
+/// as it was.
+pub(super) fn find_lines(screen: &mut vt100::Screen, needle: &str, limit: usize) -> Vec<LineMatch> {
+    find_in_lines(screen, needle, limit, true, true)
+}
+
+fn find_in_lines(
+    screen: &mut vt100::Screen,
+    needle: &str,
+    limit: usize,
+    with_text: bool,
+    ignore_case: bool,
+) -> Vec<LineMatch> {
+    if needle.is_empty() || limit == 0 {
         return Vec::new();
     }
+    // ASCII case folding keeps every byte where it was, so offsets found in
+    // the folded text hold in the original.
+    let needle = if ignore_case {
+        needle.to_ascii_lowercase()
+    } else {
+        needle.to_owned()
+    };
+    let needle = needle.as_str();
     let offset = screen.scrollback();
     let scrollback = scrollback_len(screen);
     let (rows, cols) = screen.size();
@@ -179,17 +247,42 @@ pub(super) fn find_all(screen: &mut vt100::Screen, needle: &str) -> Vec<Match> {
     let mut text = String::new();
     let mut cells: Vec<(usize, CellPos, u16)> = Vec::new();
     let mut flush = |text: &mut String, cells: &mut Vec<(usize, CellPos, u16)>| {
-        for (start, found) in text.match_indices(needle) {
+        let folded;
+        let haystack = if ignore_case {
+            folded = text.to_ascii_lowercase();
+            folded.as_str()
+        } else {
+            text.as_str()
+        };
+        for (start, found) in haystack.match_indices(needle) {
+            if matches.len() >= limit {
+                break;
+            }
             let last = start + found.len() - 1;
             let cell = |byte: usize| cells[cells.partition_point(|c| c.0 <= byte) - 1];
             let (_, first, _) = cell(start);
             let (_, end, width) = cell(last);
-            matches.push(Match {
+            let at = Match {
                 start: first,
                 end: CellPos {
                     line: end.line,
                     col: end.col + width,
                 },
+            };
+            let (line, highlight) = if with_text {
+                let trimmed = text.trim_start();
+                let skip = text.len() - trimmed.len();
+                (
+                    trimmed.to_owned(),
+                    start.saturating_sub(skip)..(start + found.len()).saturating_sub(skip),
+                )
+            } else {
+                (String::new(), 0..0)
+            };
+            matches.push(LineMatch {
+                at,
+                text: line,
+                highlight,
             });
         }
         text.clear();

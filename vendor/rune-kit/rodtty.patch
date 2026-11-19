@@ -266,7 +266,35 @@
      /// The unchanged lines between two hunks, folded: buttons to show more, and the next
 --- a/src/tree/view.rs
 +++ b/src/tree/view.rs
-@@ -116,6 +116,9 @@
+@@ -15,6 +15,7 @@
+     icon: Option<&'static Icon>,
+     icon_color: Option<Color>,
+     label_color: Option<Color>,
++    strike: bool,
+     highlight: Option<String>,
+     changes: Option<(u32, u32)>,
+     dot: Option<Color>,
+@@ -29,6 +30,7 @@
+             icon: None,
+             icon_color: None,
+             label_color: None,
++            strike: false,
+             highlight: None,
+             changes: None,
+             dot: None,
+@@ -55,6 +57,11 @@
+         self.label_color = Some(c);
+         self
+     }
++    /// Draws a line through the label in its colour: a deleted file, say.
++    pub fn strike(mut self) -> Self {
++        self.strike = true;
++        self
++    }
+     /// Marks the first case-insensitive occurrence of `query` in the label, as a search does.
+     pub fn highlight(mut self, query: impl Into<String>) -> Self {
+         let q = query.into();
+@@ -116,6 +123,9 @@
          if r.cursor && r.multi {
              e = e.outline(1.0, -1.0, c.border_focus);
          }
@@ -276,7 +304,15 @@
          if style.guides {
              for level in 0..r.depth {
                  let x = pad + level as f32 * style.indent + chevron_w * 0.5 - 0.5;
-@@ -209,6 +212,9 @@
+@@ -159,6 +169,7 @@
+             .unwrap_or_default();
+         let full = self.label.clone();
+         let label = if spans.is_empty() { text(self.label) } else { rich(self.label, spans) };
++        let label = if self.strike { label.strike(0, full.len(), None) } else { label };
+         let label = label.key("label").font(font).color(color).grow(1.0).shrink().min_w(0.0);
+         let label = match style.label_fade {
+             Some(w) => label.truncate_fade_width(w / font.size.max(1.0)),
+@@ -209,6 +220,9 @@
      pub guides: bool,
      pub guide: Color,
      pub selected: Color,
@@ -286,7 +322,7 @@
      hover: Color,
      gap: f32,
      radius: f32,
-@@ -233,6 +239,7 @@
+@@ -233,6 +247,7 @@
              guides: true,
              guide: k.c.border_muted,
              selected: k.alpha(k.c.text_accent, if k.dark { 0.24 } else { 0.2 }),
@@ -294,3 +330,15 @@
              hover: k.c.hover,
              gap: 4.0,
              radius: k.radius.sm,
+--- a/src/select.rs
++++ b/src/select.rs
+@@ -226,7 +226,8 @@
+                 // Modal, so a reader hears a dialog: it's named as the select is.
+                 .label(self.name.clone().unwrap_or_else(|| self.placeholder.clone()))
+                 .focus_return(&anchor_key)
+-                .min_w(160.0)
++                // A field's list is at least as wide as the field it opens from.
++                .min_w(if self.appearance == SelectAppearance::Field { self.width.max(160.0) } else { 160.0 })
+                 .max_w(368.0)
+                 .radius(6.0)
+                 .fill(c.layer_01)

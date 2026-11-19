@@ -416,7 +416,13 @@ mod tests {
             std::fs::read(root.join("settings.json")).ok(),
             settings_before
         );
-        let runtime = super::super::tests::runtime_for(fresh);
+        let mut runtime = super::super::tests::runtime_for(fresh);
+        assert!(
+            runtime.find("file-list").is_none(),
+            "the explorer starts hidden"
+        );
+        runtime.update(|s, tx| s.dispatch(AppAction::ToggleExplorer, tx));
+        runtime.frame(0.0);
         assert!(runtime.find("file-list").is_some());
     }
 
@@ -454,7 +460,7 @@ mod tests {
             s.settings_query.replace_text("startup");
         });
         runtime.frame(0.0);
-        click(&mut runtime, "startup-single-fresh");
+        crate::desktop::settings::choose(&mut runtime, "terminal-startup", "One fresh terminal");
         assert_eq!(runtime.state.active().unwrap().id(), retained);
         assert_eq!(runtime.state.sessions.len(), 2);
         runtime.update(|s, _| {
@@ -495,7 +501,11 @@ mod tests {
             s.settings_query.replace_text("startup");
         });
         runtime.frame(0.0);
-        click(&mut runtime, "reset-terminal-startup");
+        crate::desktop::settings::choose(
+            &mut runtime,
+            "terminal-startup",
+            "Restore terminal arrangement",
+        );
         let preferences = std::fs::read_to_string(root.join("settings.json")).unwrap();
         assert!(preferences.contains("restore_workspace"));
         // First launch always uses its initial directory, even with Single Fresh + Specified.
@@ -545,31 +555,38 @@ mod tests {
     }
 
     #[test]
-    fn cold_workspace_keeps_explicit_compact_explorer_visible() {
-        // The compact explorer opens as a revealed overlay over the terminal,
-        // the layout preference that made it visible survives a restart.
+    fn cold_start_opens_terminal_first_with_the_explorer_hidden() {
+        // Rodtty is terminal first: an explorer the owner left open is hidden
+        // on the next launch, while its root folder still restores.
         let fixture = crate::test_support::tempdir().unwrap();
         let mut state = fixture_state(fixture.path().into());
         state.directory = fixture.path().into();
         state.restore_startup();
         let mut runtime =
-            rune::Runtime::new(state, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+            rune::Runtime::new(state, view, (1200.0, 800.0), rune::Env::new(true, 1.0));
         runtime.settle_all();
         runtime.frame(0.0);
         runtime.update(|s, tx| {
             s.dispatch(AppAction::ToggleExplorer, tx);
             s.persist_workspace();
         });
+        runtime.frame(0.0);
+        assert!(runtime.state.workspace.layout.explorer);
+        let root = runtime.state.workspace.directory.clone();
         drop(runtime);
         let mut fresh = fixture_state(fixture.path().into());
         fresh.directory = fixture.path().into();
         fresh.restore_startup();
         let mut runtime =
-            rune::Runtime::new(fresh, view, (640.0, 360.0), rune::Env::new(true, 1.0));
+            rune::Runtime::new(fresh, view, (1200.0, 800.0), rune::Env::new(true, 1.0));
         runtime.frame(0.0);
-        runtime.update(|s, _| s.workspace.explorer_revealed = s.workspace.layout.explorer);
+        assert!(!runtime.state.workspace.layout.explorer);
+        assert!(!runtime.state.workspace.explorer_revealed);
+        assert!(runtime.find("file-list").is_none());
+        assert!(runtime.find("terminal").is_some());
+        assert_eq!(runtime.state.workspace.directory, root);
+        runtime.update(|s, tx| s.dispatch(AppAction::ToggleExplorer, tx));
         runtime.frame(0.0);
-        assert!(runtime.state.workspace.layout.explorer);
-        assert!(runtime.find("file-list").is_some());
+        assert!(runtime.find("file-list").is_some(), "the owner opens it");
     }
 }

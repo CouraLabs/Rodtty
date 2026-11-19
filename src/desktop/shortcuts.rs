@@ -37,8 +37,10 @@ impl State {
             focused.is_some_and(|f| f.starts_with("file-editor-") || f.starts_with("editor-"));
         let settings_field = focused.is_some_and(|f| f.starts_with("settings-"));
         let terminal = terminal_visible && self.workspace.terminal_focus() && focused.is_none();
-        let editor =
-            editor_visible && !self.settings && (editor_field || !self.workspace.terminal_focus());
+        let editor = editor_visible
+            && !self.settings
+            && !self.search_tab
+            && (editor_field || !self.workspace.terminal_focus());
         match context {
             actions::ShortcutContext::Terminal => terminal,
             actions::ShortcutContext::Editor => editor,
@@ -192,9 +194,11 @@ impl State {
     }
 }
 
-pub(super) fn list(s: &State, a: &Appearance) -> El {
+/// The Settings rows for every action the search matches: its title, and its
+/// binding as a button that records a new one.
+pub(super) fn rows(s: &State, a: &Appearance) -> Vec<El> {
     let query = s.settings_query.text.trim().to_lowercase();
-    let mut list = col().w_full().gap(8.0);
+    let mut rows = Vec::new();
     for command in &s.commands {
         let binding = s.binding(command);
         if !format!(
@@ -208,39 +212,40 @@ pub(super) fn list(s: &State, a: &Appearance) -> El {
         }
         let id = command.id;
         let conflicts = s.shortcut_conflicts(id, &binding);
+        let shown = if binding.is_empty() {
+            "Unassigned".to_owned()
+        } else {
+            binding
+        };
+        // The button shows only the binding; a reader hears which command it
+        // records for.
+        let name = format!("{} shortcut: {shown}", command.title);
         let mut item = col()
+            .key(format!("shortcut-{id}-row"))
             .w_full()
+            .py(8.0)
             .gap(4.0)
-            .child(text(command.title).font(ui_label()).color(a.ink()))
             .child(
                 row()
                     .w_full()
-                    .gap(6.0)
-                    .child({
-                        let shown = if binding.is_empty() {
-                            "Unassigned".to_owned()
-                        } else {
-                            binding
-                        };
-                        // The button shows only the binding; a reader hears
-                        // which command it records for.
-                        let name = format!("{} shortcut: {shown}", command.title);
+                    .gap(12.0)
+                    .center_y()
+                    .child(
+                        text(command.title)
+                            .font(ui_label())
+                            .color(a.ink())
+                            .grow(1.0)
+                            .shrink()
+                            .min_w(0.0)
+                            .wrap(),
+                    )
+                    .child(
                         button(a, format!("record-{id}"), shown, move |s, tx| {
                             s.begin_recording(id, tx)
                         })
                         .label(name)
-                        .help("Record a new shortcut")
-                    })
-                    .child({
-                        let name = format!("Reset {} shortcut", command.title);
-                        button(a, format!("reset-shortcut-{id}"), "Reset", move |s, _| {
-                            s.save_config(|c| {
-                                c.shortcuts.remove(id);
-                            })
-                        })
-                        .label(name.clone())
-                        .help(name)
-                    }),
+                        .help("Record a new shortcut"),
+                    ),
             );
         if !conflicts.is_empty() {
             item = item.child(
@@ -250,9 +255,9 @@ pub(super) fn list(s: &State, a: &Appearance) -> El {
                     .wrap(),
             );
         }
-        list = list.child(item);
+        rows.push(item);
     }
-    list
+    rows
 }
 
 pub(super) fn recorder(s: &State, a: &Appearance) -> Option<El> {
@@ -343,7 +348,7 @@ mod tests {
         press(rt, Key::Text(query.into()), Default::default());
     }
     #[test]
-    fn owner_searches_records_and_resets_a_live_persisted_shortcut() {
+    fn owner_searches_records_and_restores_a_live_persisted_shortcut() {
         let root = crate::test_support::tempdir().unwrap();
         let mut rt = runtime_for(State::with_root(root.path().into()));
         settings(&mut rt, "toggle explorer");
@@ -359,10 +364,67 @@ mod tests {
         let mut reopened = runtime_for(State::with_root(root.path().into()));
         settings(&mut reopened, "toggle explorer");
         assert!(words(&reopened).contains("F8"));
-        click(&mut reopened, "reset-shortcut-toggle-explorer");
+        crate::desktop::settings::restore_tab_defaults(&mut reopened, "shortcuts");
         assert!(!words(&reopened).contains("F8"));
         press(&mut reopened, Key::Function(8), Default::default());
         assert!(!reopened.state.workspace.layout.explorer);
+        // The restored default is VS Code's Toggle Sidebar binding.
+        assert_eq!(
+            reopened.state.shortcut_label("toggle-explorer"),
+            if cfg!(target_os = "macos") {
+                "Cmd+B"
+            } else {
+                "Ctrl+B"
+            }
+        );
+        reopened.update(|_, tx| tx.blur());
+        press(
+            &mut reopened,
+            Key::Command('b'),
+            rune::Mods {
+                ctrl: !cfg!(target_os = "macos"),
+                cmd: true,
+                ..Default::default()
+            },
+        );
+        assert!(reopened.state.workspace.layout.explorer);
+    }
+
+    #[test]
+    fn default_shortcuts_follow_vs_code_and_parse() {
+        let state = State::with_root(crate::test_support::tempdir().unwrap().path().into());
+        let mac = cfg!(target_os = "macos");
+        for (id, vs_code_mac, vs_code_other) in [
+            ("command-palette", "Cmd+Shift+P", "Ctrl+Shift+P"),
+            ("toggle-explorer", "Cmd+B", "Ctrl+B"),
+            ("explorer-focus", "Cmd+Shift+E", "Ctrl+Shift+E"),
+            ("explorer-search", "Cmd+Shift+F", "Ctrl+Shift+F"),
+            ("toggle-terminal", "Ctrl+`", "Ctrl+`"),
+            ("new-terminal", "Ctrl+Shift+`", "Ctrl+Shift+`"),
+            ("find-terminal", "Cmd+F", "Ctrl+F"),
+            ("find-editor", "Cmd+F", "Ctrl+F"),
+            ("replace-editor", "Cmd+Alt+F", "Ctrl+H"),
+            ("save-file", "Cmd+S", "Ctrl+S"),
+            ("close-editor", "Cmd+W", "Ctrl+W"),
+            ("settings", "Cmd+Comma", "Ctrl+Comma"),
+            ("close-window", "Cmd+Shift+W", "Ctrl+Shift+W"),
+            ("quit", "Cmd+Q", "Ctrl+Q"),
+            ("copy-terminal", "Cmd+C", "Ctrl+Shift+C"),
+            ("paste-terminal", "Cmd+V", "Ctrl+Shift+V"),
+        ] {
+            let command = state.commands.iter().find(|c| c.id == id).unwrap();
+            let expected = if mac { vs_code_mac } else { vs_code_other };
+            assert_eq!(command.shortcut, expected, "{id}");
+            assert!(
+                rune::Chord::parse(expected).is_ok(),
+                "{id} {expected} parses"
+            );
+            assert!(
+                state.shortcut_conflicts(id, expected).is_empty(),
+                "{id} {expected} conflicts with {:?}",
+                state.shortcut_conflicts(id, expected)
+            );
+        }
     }
     #[test]
     fn conflicting_recording_preserves_defaults_and_palette_uses_current_binding() {

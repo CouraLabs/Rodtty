@@ -51,6 +51,8 @@ pub(super) enum AppAction {
     ToggleHidden,
     ToggleIgnore,
     SearchFiles,
+    ShowSearch,
+    CloseSearch,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -76,6 +78,7 @@ pub(super) struct Command {
 
 /// Registrations are stable IDs plus visible metadata and an application action. Later
 /// slices can append registrations without changing palette search, input or rendering.
+/// Default bindings follow VS Code's for the same actions on each platform.
 pub(super) fn register(commands: &mut Vec<Command>) {
     let app = |linux, mac| {
         if cfg!(target_os = "macos") {
@@ -130,13 +133,13 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "new-terminal",
             "Terminal: New Tab",
-            app("Ctrl+Shift+T", "Cmd+T"),
+            app("Ctrl+Shift+`", "Ctrl+Shift+`"),
             AppAction::NewTerminal,
         ),
         (
             "end-terminal",
             "Terminal: End Session",
-            app("Ctrl+Shift+W", "Cmd+Shift+W"),
+            "",
             AppAction::EndTerminal,
         ),
         (
@@ -154,13 +157,13 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "toggle-explorer",
             "View: Toggle Explorer",
-            app("Ctrl+Shift+E", "Cmd+E"),
+            app("Ctrl+B", "Cmd+B"),
             AppAction::ToggleExplorer,
         ),
         (
             "toggle-terminal",
             "View: Toggle Terminal",
-            "",
+            app("Ctrl+`", "Ctrl+`"),
             AppAction::ToggleTerminal,
         ),
         (
@@ -178,7 +181,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "find-terminal",
             "Terminal: Find in Scrollback",
-            app("Ctrl+Shift+F", "Cmd+Shift+F"),
+            app("Ctrl+F", "Cmd+F"),
             AppAction::FindTerminal,
         ),
         (
@@ -190,7 +193,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "replace-editor",
             "File: Replace in Editor",
-            app("Ctrl+H", "Cmd+H"),
+            app("Ctrl+H", "Cmd+Alt+F"),
             AppAction::ReplaceEditor,
         ),
         ("edit-file", "File: Show Editor", "", AppAction::EditFile),
@@ -239,7 +242,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "explorer-focus",
             "Explorer: Focus Tree",
-            "",
+            app("Ctrl+Shift+E", "Cmd+Shift+E"),
             AppAction::ExplorerFocus,
         ),
         (
@@ -262,8 +265,8 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         ),
         (
             "explorer-search",
-            "Explorer: Search Files",
-            "",
+            "Search: Files and Terminals",
+            app("Ctrl+Shift+F", "Cmd+Shift+F"),
             AppAction::SearchFiles,
         ),
         (
@@ -293,7 +296,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "settings",
             "Settings: Open Settings",
-            "",
+            app("Ctrl+Comma", "Cmd+Comma"),
             AppAction::Settings,
         ),
         (
@@ -311,7 +314,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "close-window",
             "Window: Close Window",
-            "",
+            app("Ctrl+Shift+W", "Cmd+Shift+W"),
             AppAction::CloseWindow,
         ),
         (
@@ -323,7 +326,7 @@ pub(super) fn register(commands: &mut Vec<Command>) {
         (
             "quit",
             "Application: Quit Rodtty",
-            app("Ctrl+Shift+Q", "Cmd+Q"),
+            app("Ctrl+Q", "Cmd+Q"),
             AppAction::Quit,
         ),
     ] {
@@ -362,7 +365,7 @@ impl State {
     /// a Settings tab. Used to decide whether hiding the terminal would strand
     /// the workspace behind an empty pane.
     fn editor_pane_contents(&self) -> bool {
-        !self.workspace.tabs.is_empty() || self.settings_open
+        !self.workspace.tabs.is_empty() || self.settings_open || self.search_tab_open
     }
 
     pub(super) fn action_disabled(&self, action: AppAction) -> Option<&'static str> {
@@ -381,7 +384,9 @@ impl State {
             );
         }
         match action {
-            AppAction::TrashFile if self.settings => Some("Select a file in the explorer first"),
+            AppAction::TrashFile if self.settings || self.search_tab => {
+                Some("Select a file in the explorer first")
+            }
             AppAction::RevealFileOperation if self.workspace.operation_result.is_none() => {
                 Some("No completed file operation")
             }
@@ -409,11 +414,14 @@ impl State {
             | AppAction::ReplaceEditor
             | AppAction::EditFile
             | AppAction::Compare(_)
-                if self.settings =>
+                if self.settings || self.search_tab =>
             {
                 Some("Select a file editor first")
             }
             AppAction::CloseSettings if !self.settings_open => Some("Settings is not open"),
+            AppAction::CloseSearch | AppAction::ShowSearch if !self.search_tab_open => {
+                Some("Search is not open")
+            }
             AppAction::NewTerminal if !self.config_valid => {
                 Some("Fix settings before starting a session")
             }
@@ -593,7 +601,7 @@ impl State {
                 }
             }
             AppAction::ToggleEditor => {
-                if self.workspace.tabs.is_empty() && !self.settings_open {
+                if !self.editor_pane_contents() {
                     // Nothing to show in the pane: closing the terminal behind an
                     // empty editor would strand the workspace.
                     self.message = "Open a file or Settings to fill the editor pane".into();
@@ -630,8 +638,13 @@ impl State {
             AppAction::OpenSettingsJson => self.open_settings_json(),
             AppAction::CloseSettings => {
                 self.settings_open = false;
+                let shown = self.settings;
                 self.settings = false;
-                if self.workspace.tabs.is_empty() {
+                if self.search_tab {
+                    // The Search tab shows; closing Settings leaves it there.
+                } else if shown && self.search_tab_open && self.workspace.tabs.is_empty() {
+                    self.search_tab = true;
+                } else if self.workspace.tabs.is_empty() {
                     self.workspace.set_terminal_focus(true);
                     tx.blur();
                 } else {
@@ -730,6 +743,11 @@ impl State {
                 self.save_config(|c| c.explorer.respect_ignore = !c.explorer.respect_ignore);
             }
             AppAction::SearchFiles => self.open_explorer_search(tx),
+            AppAction::ShowSearch => {
+                tx.blur();
+                self.show_search_tab();
+            }
+            AppAction::CloseSearch => self.close_explorer_search(tx),
         }
     }
 }

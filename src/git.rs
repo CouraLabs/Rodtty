@@ -23,12 +23,58 @@ pub struct Status {
     pub code: String,
     pub original: Option<PathBuf>,
 }
+/// How a file differs from HEAD, as the explorer marks it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Added,
+    Modified,
+    Deleted,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repository {
     pub root: PathBuf,
     pub files: BTreeMap<PathBuf, Status>,
+    /// Lines added and removed between HEAD and the working tree, per tracked
+    /// file. Empty before the first commit; binary files are left out.
+    pub lines: BTreeMap<PathBuf, (u32, u32)>,
 }
 impl Repository {
+    /// The file's change against HEAD, or `None` when it is unchanged.
+    pub fn change(&self, path: &Path) -> Option<Change> {
+        if self.untracked(path) {
+            return Some(Change::Added);
+        }
+        let code = &self.files.get(path)?.code;
+        Some(if code.contains('D') {
+            Change::Deleted
+        } else if code.starts_with('A') {
+            Change::Added
+        } else {
+            Change::Modified
+        })
+    }
+    /// Lines added and removed in a changed tracked file.
+    pub fn line_changes(&self, path: &Path) -> Option<(u32, u32)> {
+        self.lines.get(path).copied()
+    }
+    /// Whether the comparison would show a change for this file. `Current`
+    /// compares the editor with HEAD, so it also applies to unsaved edits,
+    /// which the caller knows about.
+    pub fn compares(&self, path: &Path, comparison: Comparison) -> bool {
+        if self.untracked(path) {
+            return comparison != Comparison::Staged;
+        }
+        let Some(status) = self.files.get(path) else {
+            return false;
+        };
+        let mut code = status.code.chars();
+        let (index, worktree) = (code.next().unwrap_or(' '), code.next().unwrap_or(' '));
+        match comparison {
+            Comparison::Current => true,
+            Comparison::Unstaged => worktree != ' ',
+            Comparison::Staged => index != ' ' && index != '?',
+        }
+    }
     pub fn untracked(&self, path: &Path) -> bool {
         self.files
             .iter()
@@ -67,6 +113,13 @@ fn command(directory: &Path) -> Command {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE");
+    // A GUI process has no console, so Windows would open one for each git call.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     command
 }
 
@@ -168,7 +221,52 @@ pub fn inspect(directory: &Path) -> Result<Option<Repository>> {
             Status { code, original },
         );
     }
-    Ok(Some(Repository { root, files }))
+    let lines = if files.is_empty() {
+        BTreeMap::new()
+    } else {
+        line_changes(&root)?
+    };
+    Ok(Some(Repository { root, files, lines }))
+}
+
+/// Lines added and removed between HEAD and the working tree. A repository
+/// without commits has no HEAD to count from, so it reports none.
+fn line_changes(root: &Path) -> Result<BTreeMap<PathBuf, (u32, u32)>> {
+    let output = run(
+        root,
+        [
+            "diff",
+            "HEAD",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--",
+        ],
+    )?;
+    let mut lines = BTreeMap::new();
+    if !output.status.success() {
+        let head = run(root, ["rev-parse", "--verify", "--quiet", "HEAD"])?;
+        if head.status.success() {
+            bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        return Ok(lines);
+    }
+    for record in output.stdout.split(|b| *b == 0) {
+        let mut fields = record.splitn(3, |b| *b == b'\t');
+        let (Some(added), Some(removed), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        // Binary files report `-` for both counts.
+        let count = |raw: &[u8]| std::str::from_utf8(raw).ok()?.parse::<u32>().ok();
+        if let (Some(added), Some(removed)) = (count(added), count(removed)) {
+            lines.insert(root.join(bytes_path(path)), (added, removed));
+        }
+    }
+    Ok(lines)
 }
 
 /// Git's own exclude engine honors nested .gitignore, info/exclude, global

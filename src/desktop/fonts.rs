@@ -21,10 +21,12 @@ struct Typography {
     ui: f32,
     terminal: f32,
     editor: f32,
+    terminal_line_height: f32,
+    terminal_letter_spacing: f32,
     scale: f32,
 }
 thread_local! {
-    static CURRENT: Cell<Typography> = const { Cell::new(Typography { ui: 13.0, terminal: 14.0, editor: 14.0, scale: 1.0 }) };
+    static CURRENT: Cell<Typography> = const { Cell::new(Typography { ui: 13.0, terminal: 14.0, editor: 14.0, terminal_line_height: 1.2, terminal_letter_spacing: 0.0, scale: 1.0 }) };
 }
 // View construction is synchronous on one thread. Restore the outer scope for nested
 // views, headless runtimes and unwinding, without global cross-window preferences.
@@ -39,6 +41,8 @@ pub(super) fn scope(p: &FontPreferences, scale: f32) -> Scope {
         ui: p.ui_size,
         terminal: p.terminal_size,
         editor: p.editor_size,
+        terminal_line_height: p.terminal_line_height,
+        terminal_letter_spacing: p.terminal_letter_spacing,
         scale,
     }))
 }
@@ -77,6 +81,10 @@ pub(super) struct Metrics {
     pub width: f32,
     pub height: f32,
     pub style: TextStyle,
+    /// Points of letter spacing included in `width`; each glyph sits centered
+    /// in the extra space.
+    pub spacing: f32,
+    line_height: f32,
     scale: f32,
     epoch: u64,
 }
@@ -85,14 +93,17 @@ impl Metrics {
         let t = CURRENT.get();
         let style = TextStyle::new(t.terminal, 400.0)
             .family(Family::Mono)
-            .lh(t.terminal * 1.5);
+            .lh(t.terminal * t.terminal_line_height);
         let snap = |v: f32| (v * t.scale).round().max(1.0) / t.scale;
-        let width = snap(rune::text::advance("MMMMMMMMMM", style) / 10.0);
+        let width =
+            snap(rune::text::advance("MMMMMMMMMM", style) / 10.0 + t.terminal_letter_spacing);
         let height = snap(rune::text::measure("M", &[], style, None).1);
         Self {
             width,
             height,
             style: style.lh(height),
+            spacing: t.terminal_letter_spacing,
+            line_height: t.terminal_line_height,
             scale: t.scale,
             epoch: rune::text::font_epoch(),
         }
@@ -130,7 +141,10 @@ impl State {
     }
     pub(super) fn refresh_terminal_metrics(&mut self) -> bool {
         let previous = self.terminal_metrics;
-        if previous.style.size == self.config.fonts.terminal_size
+        let fonts = &self.config.fonts;
+        if previous.style.size == fonts.terminal_size
+            && previous.line_height == fonts.terminal_line_height
+            && previous.spacing == fonts.terminal_letter_spacing
             && previous.epoch == rune::text::font_epoch()
         {
             return false;
@@ -158,6 +172,8 @@ impl Default for Metrics {
             width: 1.0,
             height: 1.0,
             style: TextStyle::new(14.0, 400.0).family(Family::Mono),
+            spacing: 0.0,
+            line_height: 1.2,
             scale: 1.0,
             epoch: 0,
         }
@@ -192,7 +208,7 @@ mod tests {
         frame(rt);
     }
     #[test]
-    fn font_family_reset_stays_inside_the_pane_and_wraps_below_a_narrow_picker() {
+    fn font_family_pickers_stay_inside_the_pane_and_wrap_below_their_label_when_narrow() {
         let _families = rune::text::with_families("Geist", "Geist Mono");
         // A 640 pt window (the minimum) shows the editor pane alone; a wide
         // window with a narrow editor share squeezes the Settings pane.
@@ -224,28 +240,21 @@ mod tests {
             let section = element("settings-section-Appearance").rect;
             for key in ["ui", "terminal"] {
                 let picker = element(&format!("font-{key}-trigger"));
-                let reset = element(&format!("reset-{key}-font-family"));
+                let line = element(&format!("{key}-font-family-row")).rect;
                 let right = |r: [f32; 4]| r[0] + r[2];
-                for (what, e) in [("picker", &picker), ("Reset", &reset)] {
-                    assert!(
-                        right(e.rect) <= right(section) + 0.5 && e.rect[0] >= section[0] - 0.5,
-                        "{size:?} {key} {what} stays inside its section: {:?} in {section:?}",
-                        e.rect
-                    );
-                    assert!(
-                        (e.visible[2] - e.rect[2]).abs() < 0.5,
-                        "{size:?} {key} {what} is not clipped: {:?}",
-                        e.visible
-                    );
-                }
-                let below = reset.rect[1] >= picker.rect[1] + picker.rect[3] - 0.5;
-                assert_eq!(below, wraps, "{size:?} {key} Reset wraps below the picker");
-                if !wraps {
-                    assert!(
-                        reset.rect[0] > right(picker.rect),
-                        "Reset follows the picker"
-                    );
-                }
+                assert!(
+                    right(picker.rect) <= right(section) + 0.5
+                        && picker.rect[0] >= section[0] - 0.5,
+                    "{size:?} {key} picker stays inside its section: {:?} in {section:?}",
+                    picker.rect
+                );
+                assert!(
+                    (picker.visible[2] - picker.rect[2]).abs() < 0.5,
+                    "{size:?} {key} picker is not clipped: {:?}",
+                    picker.visible
+                );
+                let below = picker.rect[1] - line[1] > 10.0;
+                assert_eq!(below, wraps, "{size:?} {key} picker wraps below its label");
             }
         }
     }
@@ -283,7 +292,8 @@ mod tests {
         assert!(rt.find("font-terminal-option-Geist").is_none());
         assert!(rt.find("font-terminal-option-Geist Mono").is_some());
         click(&mut rt, "font-terminal-option-Geist Mono");
-        click(&mut rt, "reset-ui-font-family");
+        click(&mut rt, "font-ui-trigger");
+        click(&mut rt, "font-ui-option-Geist");
         assert_eq!(
             crate::config::Config::load(root.path())
                 .unwrap()
@@ -458,7 +468,8 @@ mod tests {
                 .1
                 .starts_with(&format!("\"{installed_mono}\""))
         );
-        click(&mut rt, "reset-terminal-font-family");
+        click(&mut rt, "font-terminal-trigger");
+        click(&mut rt, "font-terminal-option-Geist Mono");
         assert!(rt.font_families().1.starts_with("\"Geist Mono\""));
         assert_eq!(Config::load(root.path()).unwrap().fonts.editor_size, 22.0);
     }
@@ -560,7 +571,7 @@ mod tests {
             rt.copy_request.take().unwrap().content().text(),
             "Wi日本語🌿e\u{301}Z"
         );
-        click(&mut rt, "reset-terminal-font-size");
+        crate::desktop::settings::restore_tab_defaults(&mut rt, "appearance");
         rt.set_viewport((1200.0, 900.0), 1.5);
         frame(&mut rt);
         let grid = rect(&rt, "terminal");
@@ -845,6 +856,7 @@ fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> 
     super::pressable(&format!("{key}-value-trigger"));
     rune_kit::Combobox::new(key, state, &options, move |s: &mut State| {
         s.theme_family_picker.close();
+        s.settings_select = None;
         if terminal {
             &mut s.font_terminal
         } else {
@@ -855,7 +867,7 @@ fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> 
     .current(Some(current))
     .placeholder(current)
     .search_placeholder("Search font families")
-    .width(260.0)
+    .width(240.0)
     .max_height(190.0)
     .on_choose(move |s, family, tx| {
         s.save_config(|c| {
@@ -870,90 +882,42 @@ fn dropdown(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> 
     })
     .build(a.kit(), layers)
 }
-pub(super) fn selectors(s: &State, a: &Appearance) -> El {
-    let mut result = col().w_full().gap(6.0);
-    for terminal in [false, true] {
-        let key = if terminal { "terminal" } else { "ui" };
-        let current = if terminal {
-            &s.config.fonts.terminal_family
-        } else {
-            &s.config.fonts.ui_family
-        };
-        result = result
-            .child(
-                text(if terminal {
-                    "Terminal font family · editor follows"
-                } else {
-                    "UI font family"
-                })
-                .font(label())
-                .color(a.ink()),
-            )
-            .child(
-                // Reset follows the picker on its line while both fit and
-                // wraps below it in a narrower pane, never clipped or
-                // scrolled out of view; a picker wider than the pane shrinks.
-                row()
-                    .key(format!("font-{key}-row"))
-                    .w_full()
-                    .gap(6.0)
-                    .flex_wrap()
-                    .center_y()
-                    .child(
-                        dropdown(s, a, terminal, &mut Vec::new())
-                            .shrink()
-                            .min_w(0.0),
-                    )
-                    .child({
-                        let name = if terminal {
-                            "Reset terminal font family"
-                        } else {
-                            "Reset UI font family"
-                        };
-                        button(
-                            a,
-                            format!("reset-{key}-font-family"),
-                            "Reset",
-                            move |s, tx| {
-                                s.save_config(|c| {
-                                    if terminal {
-                                        c.fonts.terminal_family = "Geist Mono".into();
-                                    } else {
-                                        c.fonts.ui_family = "Geist".into();
-                                    }
-                                });
-                                let (sans, mono) = s.font_families();
-                                tx.set_font_families(sans, mono);
-                            },
-                        )
-                        .label(name)
-                        .help(name)
-                    }),
-            )
-            .child(
-                text("Aa Bb 0123456789 · Wi il {} =>")
-                    .key(format!("font-{key}-preview"))
-                    .font(if terminal { editor() } else { ui(15.0, 400.0) })
-                    .color(a.ink())
-                    .wrap(),
-            );
-        if s.font_catalog.ready
-            && !s
-                .font_catalog
-                .families
-                .iter()
-                .any(|f| f.name.eq_ignore_ascii_case(current) && (!terminal || f.monospace))
-        {
-            result = result.child(
-                text(format!(
-                    "{current} is unavailable; using bundled {}",
-                    if terminal { "Geist Mono" } else { "Geist" }
-                ))
-                .font(label())
-                .color(a.muted())
-                .wrap(),
-            );
-        }
+/// The UI or terminal font family picker, its list drawn into `layers`.
+pub(super) fn family_picker(s: &State, a: &Appearance, terminal: bool, layers: &mut Vec<El>) -> El {
+    dropdown(s, a, terminal, layers).shrink().min_w(0.0)
+}
+
+/// A sample in the chosen family, and why it is not in use when it is missing.
+pub(super) fn family_notes(s: &State, a: &Appearance, terminal: bool) -> El {
+    let key = if terminal { "terminal" } else { "ui" };
+    let current = if terminal {
+        &s.config.fonts.terminal_family
+    } else {
+        &s.config.fonts.ui_family
+    };
+    let mut result = col().w_full().gap(4.0).child(
+        text("Aa Bb 0123456789 · Wi il {} =>")
+            .key(format!("font-{key}-preview"))
+            .font(if terminal { editor() } else { ui(15.0, 400.0) })
+            .color(a.ink())
+            .wrap(),
+    );
+    if s.font_catalog.ready
+        && !s
+            .font_catalog
+            .families
+            .iter()
+            .any(|f| f.name.eq_ignore_ascii_case(current) && (!terminal || f.monospace))
+    {
+        result = result.child(
+            text(format!(
+                "{current} is unavailable; using bundled {}",
+                if terminal { "Geist Mono" } else { "Geist" }
+            ))
+            .font(label())
+            .color(a.muted())
+            .wrap(),
+        );
     }
     if !s.font_catalog.ready {
         result = result.child(
@@ -963,18 +927,4 @@ pub(super) fn selectors(s: &State, a: &Appearance) -> El {
         );
     }
     result
-}
-pub(super) fn overlays(s: &State, a: &Appearance, width: f32) -> Vec<El> {
-    let mut layers = Vec::new();
-    if s.settings
-        && !s.application_overlay_open()
-        && workspace::pane_visibility(s, width).2
-        && "appearance ui font family terminal font family installed monospace preview"
-            .contains(&s.settings_query.text.trim().to_lowercase())
-    {
-        for terminal in [false, true] {
-            let _ = dropdown(s, a, terminal, &mut layers);
-        }
-    }
-    layers
 }
