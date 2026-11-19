@@ -28,50 +28,45 @@ pub(crate) fn terminal_tabs(state: &State, a: &Appearance) -> El {
         let location = tilde_path(&session.cwd());
         let id = tabs::session_id(session);
         let selected = i == state.active;
+        // The label carries the activation, because interactive()'s drag and
+        // middle handlers make it its own press target and would otherwise
+        // swallow a press on the pill.
+        let tab = tabs::interactive(
+            terminal_tab(a, i, count, &label, selected)
+                .help(location)
+                .on_press_tx(move |s: &mut State, tx| {
+                    tx.blur();
+                    s.dispatch(AppAction::ActivateTerminal(i), tx);
+                }),
+            tabs::Target::Terminal(id),
+        );
+        let close = icon_button(
+            a,
+            format!("terminal-close-{i}"),
+            &rune_kit::glyphs::CLOSE,
+            "End terminal session",
+            move |s, tx| s.dispatch(AppAction::CloseTerminal(id), tx),
+        )
+        // Each close button names the tab it ends, since every tab has one
+        // and a reader meets them out of the strip.
+        .label(format!(
+            "End terminal session: {label} (tab {} of {count})",
+            i + 1
+        ))
+        .description("")
+        .w(22.0)
+        .min_h(22.0)
+        .fill(if selected { a.hover_bg() } else { a.panel() });
         list = list.child(
-            row()
-                .key(format!("terminal-group-{id}"))
-                // The pill only groups its tab and close button for sight;
-                // the tab list holds the tabs themselves.
-                .role("none")
-                .gap(0.0)
-                .center_y()
-                .radius(6.0)
-                .fill(if selected { a.hover_bg() } else { a.panel() })
-                .hover(a.hover_bg())
-                .no_window_drag()
-                .children(selected.then(|| tab_indicator(a, "indicator-terminal-tabs")))
-                // The pill only draws; the label below carries the activation,
-                // because interactive()'s drag and middle handlers make the label
-                // its own press target and would otherwise swallow the press.
-                .child(tabs::interactive(
-                    terminal_tab(a, i, count, &label, selected)
-                        .help(location)
-                        .on_press_tx(move |s: &mut State, tx| {
-                            tx.blur();
-                            s.dispatch(AppAction::ActivateTerminal(i), tx);
-                        }),
-                    tabs::Target::Terminal(id),
-                ))
-                .child(
-                    icon_button(
-                        a,
-                        format!("terminal-close-{i}"),
-                        &rune_kit::glyphs::CLOSE,
-                        "End terminal session",
-                        move |s, tx| s.dispatch(AppAction::CloseTerminal(id), tx),
-                    )
-                    // Each close button names the tab it ends, since every
-                    // tab has one and a reader meets them out of the strip.
-                    .label(format!(
-                        "End terminal session: {label} (tab {} of {count})",
-                        i + 1
-                    ))
-                    .description("")
-                    .w(22.0)
-                    .min_h(22.0)
-                    .fill(if selected { a.hover_bg() } else { a.panel() }),
-                ),
+            tab_pill(
+                a,
+                format!("terminal-group-{id}"),
+                "indicator-terminal-tabs",
+                selected,
+                tab,
+                close,
+            )
+            .no_window_drag(),
         );
     }
     if state.preview.is_some() {

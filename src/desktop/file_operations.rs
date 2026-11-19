@@ -359,9 +359,9 @@ pub(super) fn view(s: &State, a: &Appearance) -> Option<El> {
                 );
             }
             content = content.child(text("Name").font(ui_label()).color(a.muted())).child(
-                text_input(&s.workspace.operation_name,ui_label()).key("operation-name").label("File or folder name").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).fill(a.bg()).border(1.0,a.hover_bg()).radius(5.0).px(8.0).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_name).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                operation_field(a, &s.workspace.operation_name, "operation-name", "File or folder name", |s| &mut s.workspace.operation_name))
                 .child(text("Destination folder").font(ui_label()).color(a.muted())).child(
-                text_input(&s.workspace.operation_destination,ui_label()).key("operation-destination").label("Destination folder").single_line().w_full().h((ui_label().size * 1.5 + 12.0).max(34.0)).color(a.ink()).fill(a.bg()).border(1.0,a.hover_bg()).radius(5.0).px(8.0).caret(a.accent(),a.selection()).on_edit(|s: &mut State| &mut s.workspace.operation_destination).on_submit(|s: &mut State, tx| s.submit_file_operation(tx)))
+                operation_field(a, &s.workspace.operation_destination, "operation-destination", "Destination folder", |s| &mut s.workspace.operation_destination))
                 .child(text("Choose an existing host folder. Relative paths start at the explorer root.").font(ui_label()).color(a.muted()).wrap());
             if let Some(error) = &s.workspace.operation_error {
                 content = content.child(text(error).font(ui_label()).color(a.danger()).wrap());
@@ -425,4 +425,21 @@ pub(super) fn collision_demo(s: &mut State) {
     if let Ok(OperationOutcome::Collision(collision)) = request.execute(None) {
         s.pending = Some(Pending::Operation(OperationPrompt::Collision(collision)));
     }
+}
+
+/// A name or destination field in the file operation dialog; Return submits.
+fn operation_field(
+    a: &Appearance,
+    edit: &TextEdit,
+    key: &'static str,
+    label: &'static str,
+    field: fn(&mut State) -> &mut TextEdit,
+) -> El {
+    text_field(a, edit, key, label)
+        .h((ui_label().size * 1.5 + 12.0).max(34.0))
+        .fill(a.bg())
+        .border(1.0, a.hover_bg())
+        .radius(5.0)
+        .on_edit(field)
+        .on_submit(|s: &mut State, tx| s.submit_file_operation(tx))
 }

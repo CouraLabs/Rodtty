@@ -26,3 +26,27 @@ pub(crate) fn tab_label(a: &Appearance, label: &str, selected: bool) -> El {
             .truncate(),
     )
 }
+
+/// A tab's pill: it groups the tab and its close button for sight only
+/// (`role: none`; the tab list holds the tabs), fills and marks the selected
+/// one with `strip`'s indicator, and highlights on hover.
+pub(crate) fn tab_pill(
+    a: &Appearance,
+    key: impl Into<String>,
+    strip: &'static str,
+    selected: bool,
+    tab: El,
+    close: El,
+) -> El {
+    row()
+        .key(key)
+        .role("none")
+        .gap(0.0)
+        .center_y()
+        .radius(6.0)
+        .fill(if selected { a.hover_bg() } else { a.panel() })
+        .hover(a.hover_bg())
+        .children(selected.then(|| tab_indicator(a, strip)))
+        .child(tab)
+        .child(close)
+}
