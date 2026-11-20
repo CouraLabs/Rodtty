@@ -1,0 +1,154 @@
+{
+  "started": "2026-11-20T13:32:47.270Z",
+  "checks": [
+    {
+      "message": "client cl_9602332c5c26cab5 approved for /private/var/folders/wk/rcttcp_n6f121l53tv5m5l6w0000gn/T/rodtty-e2e-S0bYi7",
+      "passed": true
+    },
+    {
+      "message": "service and app run in separate terminals",
+      "passed": true
+    },
+    {
+      "message": "the interactive app received and submitted the two-line prompt",
+      "passed": true
+    },
+    {
+      "message": "playable video /tmp/rt-b/artifacts/browser-1795181568263-d7585005.avi: 45 frames, 3.000000s",
+      "passed": true
+    },
+    {
+      "message": "browser screenshot /tmp/rt-b/artifacts/browser-1795181571430-31b40740.png",
+      "passed": true
+    },
+    {
+      "message": "an edit against a stale revision is rejected",
+      "passed": true
+    },
+    {
+      "message": "saved through the version-protected save",
+      "passed": true
+    },
+    {
+      "message": "the worktree diff shows the change and opens for review",
+      "passed": true
+    },
+    {
+      "message": "Git changes list the edited file as unstaged",
+      "passed": true
+    },
+    {
+      "message": "a duplicate launch returns the first operation",
+      "passed": true
+    },
+    {
+      "message": "reconnecting replays nothing (2 terminals before and after)",
+      "passed": true
+    },
+    {
+      "message": "the prompt was submitted once across the reconnect",
+      "passed": true
+    },
+    {
+      "message": "a terminal ID from another run is unknown",
+      "passed": true
+    },
+    {
+      "message": "the 2 s limit stopped and finalized the recording (20 frames)",
+      "passed": true
+    },
+    {
+      "message": "a renderer exit is reported: The page's renderer stopped (TerminationStatus(TS_PROCESS_WAS_KILLED)). Reload to recover.",
+      "passed": true
+    },
+    {
+      "message": "reload recovers the page after the renderer exit",
+      "passed": true
+    },
+    {
+      "message": "the owner's frontmost app stayed \"Google Chrome\"",
+      "passed": true
+    },
+    {
+      "message": "a revoked client cannot send input",
+      "passed": true
+    },
+    {
+      "message": "status still reports the revocation",
+      "passed": true
+    }
+  ],
+  "desktop": [
+    {
+      "label": "before",
+      "pointer": [
+        1832,
+        160.7
+      ],
+      "front": "\"Google Chrome\""
+    },
+    {
+      "label": "during browser workflow",
+      "pointer": [
+        1832,
+        160.7
+      ],
+      "front": "\"Google Chrome\""
+    },
+    {
+      "label": "after",
+      "pointer": [
+        1832,
+        160.7
+      ],
+      "front": "\"Google Chrome\""
+    }
+  ],
+  "instance": "788d8c60",
+  "features": [
+    "terminal",
+    "workspaces",
+    "editor",
+    "git",
+    "browser",
+    "recording"
+  ],
+  "terminal_screenshot": "/tmp/rt-b/artifacts/terminal-1795181567787-1a159e6c.png",
+  "video": {
+    "path": "/tmp/rt-b/artifacts/browser-1795181568263-d7585005.avi",
+    "frames": 45,
+    "duration_ms": 3000,
+    "ffprobe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "mjpeg",
+          "width": 1100,
+          "height": 760,
+          "nb_read_frames": "45"
+        }
+      ],
+      "format": {
+        "duration": "3.000000"
+      }
+    }
+  },
+  "browser_screenshot": "/tmp/rt-b/artifacts/browser-1795181571430-31b40740.png",
+  "diff": "--- a/greeting.txt\n+++ b/greeting.txt\n@@ -1,2 +1,2 @@\n Hello from the fixture.\n-Status: draft\n+Status: reviewed by the agent\n",
+  "finished": "2026-11-20T13:32:58.422Z",
+  "passed": true,
+  "platform": {
+    "os": "27.2.1",
+    "build": "26B131",
+    "arch": "arm64",
+    "rodtty": "0.1.1 debug dev bundle (scripts/browser/dev-app.sh)",
+    "cef": "156.0.31+ge603d97+chromium-156.0.8078.100 (cef crate 156.7.0)",
+    "mcp_client": "@modelcontextprotocol/sdk 1.32.2 (node v24.22.3)"
+  },
+  "artifact_sha256": {
+    "video": "5e030da4679af2f2ff99e0142ba43a3427bc297920daed1e64c986c0b7d95889",
+    "browser_screenshot": "f53ee2353eb16412430207425eb39c40c7aceaaee0c9f449a6a477c15fde6394",
+    "terminal_screenshot": "a5183b072c340e3c9c1128dff9229757eb1d0c3bb09638a89bd3896a1efd5e0f"
+  }
+}

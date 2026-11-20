@@ -156,10 +156,18 @@ impl State {
             let canonical = cwd
                 .canonical()
                 .map_err(|e| ToolError::invalid(format!("Can't open {}: {e}", cwd.display())))?;
-            if canonical.starts_with(&root) {
+            let explicit = arg_opt_str(args, "workspace")?.is_some();
+            let (specific, specific_root) = self.workspace_of(&canonical);
+            let registered = crate::workspaces::Registry::load(&self.root)
+                .unwrap_or_default()
+                .get(&specific)
+                .is_some();
+            // The most specific registered workspace owns the session,
+            // unless the client named the workspace it belongs in.
+            if canonical.starts_with(&root) && (explicit || !registered) {
                 (workspace.clone(), root.clone())
             } else {
-                self.workspace_of(&canonical)
+                (specific, specific_root)
             }
         };
         grant.check(None, Some(&cwd_workspace))?;
