@@ -68,6 +68,7 @@ pub(super) enum AppAction {
     ShowServices,
     EditTasks,
     TogglePasteConfirmation,
+    TogglePassthrough,
     RunTask(u16),
     CheckEnvironment,
     CodexDecline,

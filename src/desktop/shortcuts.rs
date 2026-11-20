@@ -71,6 +71,12 @@ impl State {
         }
         false
     }
+    /// Whether `event` is the binding of command `id`.
+    pub(super) fn is_shortcut(&self, id: &str, event: &KeyEvent, tx: &Tx) -> bool {
+        self.commands.iter().find(|c| c.id == id).is_some_and(|c| {
+            rune::Chord::parse(&self.binding(c)).is_ok_and(|b| b.matches_tx(event, tx))
+        })
+    }
     pub(super) fn dispatch_mouse_shortcut(
         &mut self,
         button: rune::PointerButton,

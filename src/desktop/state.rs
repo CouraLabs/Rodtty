@@ -93,6 +93,9 @@ pub(crate) struct State {
     pub(crate) owner_instance: bool,
     /// The session each project task last ran in, by (workspace, task name).
     pub(crate) task_sessions: std::collections::HashMap<(String, String), usize>,
+    /// The session whose terminal receives Rodtty's shortcuts, while
+    /// keyboard passthrough is on. Never saved: a cold start begins without it.
+    pub(crate) passthrough: Option<usize>,
     #[cfg(feature = "browser")]
     pub(crate) browsers: browser::Browsers,
     /// A diff an automation client asked to show once its file has opened.
@@ -213,6 +216,7 @@ impl State {
             automation: Default::default(),
             owner_instance: false,
             task_sessions: Default::default(),
+            passthrough: None,
             #[cfg(feature = "browser")]
             browsers: Default::default(),
             pending_diff: None,

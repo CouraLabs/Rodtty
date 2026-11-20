@@ -260,6 +260,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "terminal-passthrough",
+            "Terminal: Toggle Keyboard Passthrough",
+            "Ctrl+Shift+F12",
+            AppAction::TogglePassthrough,
+        ),
+        (
             "toggle-paste-confirmation",
             "Terminal: Toggle Multiline Paste Confirmation",
             "",

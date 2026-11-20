@@ -41,6 +41,17 @@ impl State {
             AppAction::CodexApprove => self.codex_decide("accept"),
             AppAction::ShowServices => self.show_services(),
             AppAction::EditTasks => self.edit_tasks(),
+            AppAction::TogglePassthrough => {
+                let id = self.active().map(Session::id);
+                self.passthrough = if self.passthrough.is_some() { None } else { id };
+                let exit = self.shortcut_label("terminal-passthrough");
+                self.message = match self.passthrough {
+                    Some(_) => format!(
+                        "Keyboard passthrough on: Rodtty shortcuts go to this terminal. {exit} exits."
+                    ),
+                    None => "Keyboard passthrough off.".into(),
+                };
+            }
             AppAction::TogglePasteConfirmation => {
                 self.save_config(|c| {
                     c.behavior.confirm_multiline_paste = !c.behavior.confirm_multiline_paste

@@ -842,6 +842,15 @@ impl State {
     pub(crate) fn automation_indicator(&self) -> Option<String> {
         let recording = self.recording_indicator();
         let agents = !self.automation.agent_focus.is_empty();
+        if self
+            .passthrough
+            .is_some_and(|id| self.active().map(Session::id) == Some(id))
+        {
+            return Some(format!(
+                "Keyboard passthrough — {} exits",
+                self.shortcut_label("terminal-passthrough")
+            ));
+        }
         if let Some((_, _, summary)) = crate::desktop::codex::pending_approvals()
             .into_iter()
             .next()

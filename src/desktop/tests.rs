@@ -1221,3 +1221,53 @@ fn terminal_controls_are_distinct_from_desktop_shortcuts() {
     assert_eq!(encode_key(&arrow, false), Some(b"\x1b[A".to_vec()));
     assert_eq!(encode_key(&arrow, true), Some(b"\x1bOA".to_vec()));
 }
+
+#[test]
+fn passthrough_sends_app_shortcuts_to_the_terminal_until_its_exit_binding() {
+    let root = crate::test_support::tempdir().unwrap();
+    let mut state = State::with_root(root.path().into());
+    state.shell = Some(crate::test_support::shell_binary().unwrap());
+    state.start_tab(root.path().into());
+    state
+        .active()
+        .unwrap()
+        .wait_for("rodtty:", std::time::Duration::from_secs(15))
+        .unwrap();
+    // A program that prints the bytes it receives.
+    state.send(b"stty raw -echo; head -c 3 | od -An -tx1 | tr -s ' '; stty sane\r".to_vec());
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let mut rt = runtime_for(state);
+    rt.update(|s, tx| s.dispatch(AppAction::TogglePassthrough, tx));
+    assert!(rt.state.passthrough.is_some());
+    // Ctrl+B would be a Rodtty shortcut; here Ctrl+B, Ctrl+P and Ctrl+W go to the app.
+    let ctrl = |c: char| rune::Mods {
+        ctrl: true,
+        cmd: !cfg!(target_os = "macos"),
+        ..Default::default()
+    };
+    for c in ['b', 'p', 'w'] {
+        press(&mut rt, Key::Text(c.to_string()), ctrl(c));
+    }
+    rt.state
+        .active()
+        .unwrap()
+        .wait_for("02 10 17", std::time::Duration::from_secs(10))
+        .unwrap();
+    assert!(rt.state.palette.is_none());
+    // The exit binding is never passed through: it ends passthrough.
+    press(
+        &mut rt,
+        Key::Function(12),
+        rune::Mods {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert!(rt.state.passthrough.is_none());
+    open_palette(&mut rt);
+    assert!(
+        rt.state.palette.is_some(),
+        "the same app shortcut works normally again"
+    );
+}

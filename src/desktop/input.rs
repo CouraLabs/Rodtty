@@ -117,6 +117,29 @@ pub(crate) fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Escape && state.dismiss_explorer_overlay(tx) {
         return true;
     }
+    // Passthrough: shortcuts go to the focused terminal's program, except the
+    // exit binding. It applies only while that terminal itself has the
+    // keyboard; dialogs, the editor and app controls keep their keys.
+    if let Some(id) = state.passthrough {
+        if state.active().map(Session::id) != Some(id)
+            || state.sessions.iter().all(|s| s.id() != id)
+        {
+            if state.sessions.iter().all(|s| s.id() != id) {
+                state.passthrough = None;
+            }
+        } else if state.workspace.terminal_focus()
+            && tx.focused().is_none()
+            && !state.application_overlay_open()
+            && !state.is_shortcut("terminal-passthrough", event, tx)
+        {
+            if let Some(bytes) =
+                encode_key(event, state.with_screen(vt100::Screen::application_cursor))
+            {
+                state.send(bytes);
+            }
+            return true;
+        }
+    }
     if state.dispatch_shortcut(event, tx) {
         return true;
     }
