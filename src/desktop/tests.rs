@@ -452,9 +452,13 @@ fn footer_shows_bold_app_identity_then_tilde_home_path_with_a_point_frame() {
     // The owner's actual home folder collapses to `~`, whatever the host
     // calls it, and never collapses folders that merely sit beside it.
     assert_eq!(tilde_path(&home), "~");
-    let project = home.join("Projects/CouraLabs/Rodtty");
+    let project = home.join("Projects").join("CouraLabs").join("Rodtty");
     assert_eq!(tilde_path(&project), "~/Projects/CouraLabs/Rodtty");
-    let elsewhere = home.parent().unwrap().join("shared-not-home/readme");
+    let elsewhere = home
+        .parent()
+        .unwrap()
+        .join("shared-not-home")
+        .join("readme");
     assert_eq!(tilde_path(&elsewhere), elsewhere.display().to_string());
 
     let root = crate::test_support::tempdir().unwrap();

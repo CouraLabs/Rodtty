@@ -207,7 +207,7 @@ pub(crate) fn icons_demo(s: &mut State) {
 pub(crate) fn host_tree_demo(s: &mut State) {
     let root = s.directory.clone();
     s.workspace.layout.explorer = true;
-    s.workspace.layout.expanded_folders = vec![root.join("src"), root.join("src/desktop")];
+    s.workspace.layout.expanded_folders = vec![root.join("src"), root.join("src").join("desktop")];
     s.workspace.layout.hidden = s.config.explorer.show_hidden;
     s.workspace.layout.follow = s.config.explorer.follow_terminal;
     let listing = (|| -> anyhow::Result<_> {
@@ -237,9 +237,13 @@ pub(crate) fn host_tree_demo(s: &mut State) {
             s.workspace.tree_listed = listing.listed;
             s.workspace.repo = repo;
             s.rebuild_tree();
-            s.workspace
-                .tree
-                .select(&root.join("src/desktop/workspace.rs").to_string_lossy());
+            s.workspace.tree.select(
+                &root
+                    .join("src")
+                    .join("desktop")
+                    .join("workspace.rs")
+                    .to_string_lossy(),
+            );
         }
         Err(error) => s.workspace.explorer_error = Some(format!("{error:#}")),
     }

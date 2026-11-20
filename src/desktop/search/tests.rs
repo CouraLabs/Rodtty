@@ -76,7 +76,7 @@ fn typing_waits_for_a_pause_then_groups_rows_with_line_numbers_and_highlights() 
     let root = crate::test_support::tempdir().unwrap();
     std::fs::create_dir(root.path().join("src")).unwrap();
     std::fs::write(
-        root.path().join("src/main.rs"),
+        root.path().join("src").join("main.rs"),
         "fn main() {\n    let needle = 1;\n}\n",
     )
     .unwrap();

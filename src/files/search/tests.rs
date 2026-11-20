@@ -26,7 +26,7 @@ fn names_and_contents_match_case_insensitively_and_literally() {
     let root = crate::test_support::tempdir().unwrap();
     fs::create_dir(root.path().join("src")).unwrap();
     fs::write(
-        root.path().join("src/Alpha.rs"),
+        root.path().join("src").join("Alpha.rs"),
         "one\n  let Alpha = 1;\r\nthree",
     )
     .unwrap();
@@ -79,10 +79,10 @@ fn hidden_and_ignored_entries_follow_the_settings() {
     let root = crate::test_support::tempdir().unwrap();
     let root = root.path();
     fs::create_dir(root.join(".config")).unwrap();
-    fs::write(root.join(".config/match.txt"), "needle").unwrap();
+    fs::write(root.join(".config").join("match.txt"), "needle").unwrap();
     fs::write(root.join(".env"), "needle").unwrap();
     fs::create_dir(root.join("build")).unwrap();
-    fs::write(root.join("build/out.txt"), "needle").unwrap();
+    fs::write(root.join("build").join("out.txt"), "needle").unwrap();
     fs::write(root.join("kept.txt"), "needle").unwrap();
     fs::write(root.join("debug.log"), "needle").unwrap();
     fs::write(root.join(".gitignore"), "build/\n*.log\n").unwrap();

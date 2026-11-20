@@ -64,8 +64,8 @@ pub(super) fn native_check(
                 report
             } else {
                 handle.update(|s, _| {
-                    let first = s.root.join("native-restoration/alpha");
-                    let second = s.root.join("native-restoration/beta");
+                    let first = s.root.join("native-restoration").join("alpha");
+                    let second = s.root.join("native-restoration").join("beta");
                     std::fs::create_dir_all(&first).unwrap();
                     std::fs::create_dir_all(&second).unwrap();
                     // The native fixture starts isolated fresh terminals through the
@@ -83,8 +83,16 @@ pub(super) fn native_check(
                             .all(|t| t.screen().contents().contains("rodtty:"))
                 })?;
                 handle.update(|s, _| {
-                    let regular = s.root.join("native-restoration/alpha/retained.txt");
-                    let preview = s.root.join("native-restoration/beta/preview.txt");
+                    let regular = s
+                        .root
+                        .join("native-restoration")
+                        .join("alpha")
+                        .join("retained.txt");
+                    let preview = s
+                        .root
+                        .join("native-restoration")
+                        .join("beta")
+                        .join("preview.txt");
                     std::fs::write(&regular, "retained native file").unwrap();
                     std::fs::write(&preview, "temporary native file").unwrap();
                     s.open_file(regular);

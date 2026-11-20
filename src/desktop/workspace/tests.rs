@@ -1292,7 +1292,7 @@ fn explorer_trash_action_cancel_preserves_work_then_moves_to_host_trash() {
     assert!(reopened.workspace.tabs.is_empty());
     assert!(reopened.workspace.layout.selected_path.is_none());
     assert_eq!(
-        std::fs::read_dir(fixture.join("data/Trash/files"))
+        std::fs::read_dir(fixture.join("data").join("Trash").join("files"))
             .unwrap()
             .count(),
         1
@@ -1930,7 +1930,7 @@ fn explorer_move_collision_keeps_dirty_destination_safe_and_keep_both_available(
     fill(
         &mut runtime,
         "operation-destination",
-        root.path().join("destination/..").to_str().unwrap(),
+        root.path().join("destination").join("..").to_str().unwrap(),
     );
     click(&mut runtime, "operation-submit");
     wait_runtime(&mut runtime, |s| {
@@ -1998,13 +1998,17 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
     let source = root.path().join("source");
     let target = root.path().join("moved");
     std::fs::create_dir_all(source.join("nested")).unwrap();
-    std::fs::write(source.join("nested/dirty.txt"), "saved draft").unwrap();
+    std::fs::write(source.join("nested").join("dirty.txt"), "saved draft").unwrap();
     std::fs::write(source.join("clean.txt"), "clean text").unwrap();
     std::fs::create_dir(root.path().join("source-other")).unwrap();
-    std::fs::write(root.path().join("source-other/file.txt"), "unrelated").unwrap();
+    std::fs::write(
+        root.path().join("source-other").join("file.txt"),
+        "unrelated",
+    )
+    .unwrap();
     git(&["add", "."]);
     git(&["commit", "-m", "move fixture"]);
-    let index = std::fs::read(root.path().join(".git/index")).unwrap();
+    let index = std::fs::read(root.path().join(".git").join("index")).unwrap();
     let mut state = state(root.path());
     for name in [
         "source/nested/dirty.txt",
@@ -2042,7 +2046,7 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
     runtime.update(|s, _| {
         s.workspace
             .tree
-            .select(source.join("nested/dirty.txt").to_str().unwrap());
+            .select(source.join("nested").join("dirty.txt").to_str().unwrap());
     });
     click(&mut runtime, "operation-submit");
     wait_runtime(&mut runtime, |s| !s.workspace.operation_busy);
@@ -2060,7 +2064,7 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
     assert_eq!(runtime.state.workspace.active, 0);
     assert_eq!(
         runtime.state.workspace.tabs[0].document.path,
-        target.join("nested/dirty.txt")
+        target.join("nested").join("dirty.txt")
     );
     assert_eq!(
         runtime.state.workspace.tabs[0].edit.text,
@@ -2080,19 +2084,36 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
     assert_eq!(runtime.state.workspace.tabs[1].edit.text, "clean text");
     assert_eq!(
         runtime.state.workspace.tabs[2].document.path,
-        root.path().join("source-other/file.txt")
+        root.path().join("source-other").join("file.txt")
     );
     let layout = Layout::load(root.path()).unwrap();
     assert_eq!(layout.explorer_directory, Some(target.clone()));
     assert!(layout.expanded_folders.contains(&target.join("nested")));
-    assert_eq!(layout.active_file, Some(target.join("nested/dirty.txt")));
-    assert_eq!(layout.selected_path, Some(target.join("nested/dirty.txt")));
+    assert_eq!(
+        layout.active_file,
+        Some(target.join("nested").join("dirty.txt")),
+        "files {:?}, tabs {:?}, active {}, message {:?}",
+        layout.files,
+        runtime
+            .state
+            .workspace
+            .tabs
+            .iter()
+            .map(|t| (&t.document.path, t.preview))
+            .collect::<Vec<_>>(),
+        runtime.state.workspace.active,
+        runtime.state.message
+    );
+    assert_eq!(
+        layout.selected_path,
+        Some(target.join("nested").join("dirty.txt"))
+    );
     assert_eq!(
         layout.files,
         vec![
-            target.join("nested/dirty.txt"),
+            target.join("nested").join("dirty.txt"),
             target.join("clean.txt"),
-            root.path().join("source-other/file.txt")
+            root.path().join("source-other").join("file.txt")
         ]
     );
     runtime.update(|s, tx| s.dispatch(AppAction::ActivateEditor(0), tx));
@@ -2110,7 +2131,7 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
     runtime.update(|s, tx| s.dispatch(AppAction::SaveEditor(Some(1)), tx));
     wait_runtime(&mut runtime, |s| !s.workspace.tabs[0].saving);
     assert_eq!(
-        std::fs::read_to_string(target.join("nested/dirty.txt")).unwrap(),
+        std::fs::read_to_string(target.join("nested").join("dirty.txt")).unwrap(),
         "saved after move"
     );
     runtime.update(|s, tx| s.dispatch(AppAction::Compare(Comparison::Current), tx));
@@ -2125,7 +2146,7 @@ fn explorer_folder_move_keeps_descendant_edits_and_restores_new_paths_without_st
             .contains("saved after move")
     );
     assert_eq!(
-        std::fs::read(root.path().join(".git/index")).unwrap(),
+        std::fs::read(root.path().join(".git").join("index")).unwrap(),
         index
     );
 }
@@ -2198,7 +2219,7 @@ fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
     let destination = root.path().join("destination");
     std::fs::create_dir_all(source.join("nested")).unwrap();
     std::fs::create_dir(&destination).unwrap();
-    std::fs::write(source.join("nested/file.txt"), "copy me").unwrap();
+    std::fs::write(source.join("nested").join("file.txt"), "copy me").unwrap();
     let editor = root.path().join("draft.txt");
     std::fs::write(&editor, "saved").unwrap();
     let mut state = state(root.path());
@@ -2233,7 +2254,8 @@ fn explorer_context_copy_uses_the_clicked_item_and_keeps_unsaved_edits() {
         !s.workspace.operation_busy && s.message.starts_with("Copied")
     });
     assert_eq!(
-        std::fs::read_to_string(destination.join("source/nested/file.txt")).unwrap(),
+        std::fs::read_to_string(destination.join("source").join("nested").join("file.txt"))
+            .unwrap(),
         "copy me"
     );
     assert_eq!(runtime.state.workspace.tabs[0].edit.text, "unsaved draft");
@@ -2369,7 +2391,7 @@ fn explorer_file_operation_errors_leave_disk_and_editor_content_intact() {
             .as_deref()
             .is_some_and(|t| t.contains("File operation failed:"))
     }));
-    assert!(!source.join("child/source").exists());
+    assert!(!source.join("child").join("source").exists());
     runtime.update(|s, tx| s.dispatch(AppAction::CreateFile, tx));
     runtime.frame(1.0);
     fill(&mut runtime, "operation-name", "../outside.txt");
@@ -2941,8 +2963,10 @@ fn autosave_does_not_preempt_removal_save_as_collision_or_cancel() {
     assert!(!runtime.state.workspace.tabs[0].dirty());
     pump_autosave(&mut runtime, Duration::from_millis(150));
     assert!(!source.exists());
-    let trash =
-        PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap()).join("Trash/files/draft.txt");
+    let trash = PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap())
+        .join("Trash")
+        .join("files")
+        .join("draft.txt");
     assert_eq!(std::fs::read_to_string(trash).unwrap(), "later edit");
 }
 
@@ -2996,7 +3020,7 @@ fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_des
         let source = root.path().join("source");
         let destination = root.path().join("moved");
         std::fs::create_dir_all(source.join("nested")).unwrap();
-        let path = source.join("nested/draft.txt");
+        let path = source.join("nested").join("draft.txt");
         let preview = root.path().join("preview.txt");
         std::fs::write(&path, "original descendant").unwrap();
         std::fs::write(&preview, "preview contents").unwrap();
@@ -3040,12 +3064,12 @@ fn autosave_folder_move_keeps_dirty_preview_work_and_saves_only_the_remapped_des
         });
         assert!(!source.exists());
         assert_eq!(
-            std::fs::read_to_string(destination.join("nested/draft.txt")).unwrap(),
+            std::fs::read_to_string(destination.join("nested").join("draft.txt")).unwrap(),
             "draft after folder move"
         );
         assert_eq!(
             runtime.state.workspace.tabs[0].document.path,
-            destination.join("nested/draft.txt")
+            destination.join("nested").join("draft.txt")
         );
         assert!(runtime.state.workspace.tabs[1].preview);
         assert_eq!(
@@ -3428,7 +3452,7 @@ fn explorer_opens_descendants_without_replacing_the_chosen_root() {
     let root = crate::test_support::tempdir().unwrap();
     let folder = root.path().join("src");
     std::fs::create_dir_all(folder.join("nested")).unwrap();
-    std::fs::write(folder.join("nested/hello.txt"), "hello").unwrap();
+    std::fs::write(folder.join("nested").join("hello.txt"), "hello").unwrap();
     let mut state = state(root.path());
     state.toggle_files();
     wait(&mut state, |s| !s.workspace.scan_busy);
@@ -3491,10 +3515,10 @@ fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_withou
     git(&["add", "tracked.rs"]);
     std::fs::write(root.path().join("tracked.rs"), "disk\n").unwrap();
     std::fs::create_dir(root.path().join("ignored")).unwrap();
-    std::fs::write(root.path().join("ignored/cache"), "ignored\n").unwrap();
+    std::fs::write(root.path().join("ignored").join("cache"), "ignored\n").unwrap();
     std::fs::write(root.path().join(".hidden"), "hidden\n").unwrap();
     std::fs::write(root.path().join("untracked.rs"), "untracked\n").unwrap();
-    let index = std::fs::read(root.path().join(".git/index")).unwrap();
+    let index = std::fs::read(root.path().join(".git").join("index")).unwrap();
     for show_all in [false, true] {
         let mut state = State::with_root(root.path().into());
         state.directory = root.path().into();
@@ -3533,7 +3557,7 @@ fn host_tree_scene_renders_real_git_filters_status_and_hidden_preferences_withou
         }
     }
     assert_eq!(
-        std::fs::read(root.path().join(".git/index")).unwrap(),
+        std::fs::read(root.path().join(".git").join("index")).unwrap(),
         index
     );
     assert_eq!(
@@ -3558,7 +3582,7 @@ fn explorer_controls_filter_real_git_ignores_and_persist_owner_preferences() {
     );
     std::fs::write(root.path().join(".gitignore"), "ignored/\n*.log\n").unwrap();
     std::fs::create_dir(root.path().join("ignored")).unwrap();
-    std::fs::write(root.path().join("ignored/output"), "output").unwrap();
+    std::fs::write(root.path().join("ignored").join("output"), "output").unwrap();
     std::fs::write(root.path().join("output.log"), "output").unwrap();
     std::fs::write(root.path().join("visible.txt"), "hello").unwrap();
     std::fs::write(root.path().join(".secret"), "hidden").unwrap();
@@ -3670,7 +3694,7 @@ fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_fi
             .status
             .success()
     );
-    let cwd = root.path().join(".hidden/ignored/nested");
+    let cwd = root.path().join(".hidden").join("ignored").join("nested");
     std::fs::create_dir_all(&cwd).unwrap();
     std::fs::write(root.path().join(".gitignore"), ".hidden/\n").unwrap();
     let mut state = state(root.path());
@@ -3678,7 +3702,20 @@ fn explorer_follow_reveals_a_filtered_terminal_folder_without_changing_global_fi
     wait(&mut state, |s| !s.workspace.scan_busy);
     state.directory = cwd.clone();
     state.dispatch(AppAction::ToggleFollow, &mut Tx::default());
-    wait(&mut state, |s| s.workspace.tree.cursor() == cwd.to_str());
+    let started = Instant::now();
+    while state.workspace.tree.cursor() != cwd.to_str() {
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "cursor {:?} never reached {cwd:?}; rows {:?}, message {:?}",
+            state.workspace.tree.cursor(),
+            (0..state.workspace.tree.visible_len())
+                .filter_map(|row| state.workspace.tree.visible_id(row))
+                .collect::<Vec<_>>(),
+            state.message
+        );
+        state.workspace_poll(&mut Tx::default());
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let runtime = crate::desktop::tests::runtime_for(state);
     assert!(runtime.find(cwd.to_str().unwrap()).is_some());
     assert!(!runtime.state.config.explorer.show_hidden);
@@ -3728,7 +3765,7 @@ fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
     let root = crate::test_support::tempdir().unwrap();
     let folder = root.path().join("source");
     std::fs::create_dir_all(folder.join("nested")).unwrap();
-    let path = folder.join("nested/hello.txt");
+    let path = folder.join("nested").join("hello.txt");
     std::fs::write(&path, "host file").unwrap();
     let mut state = state(root.path());
     state.toggle_files();
@@ -3759,7 +3796,14 @@ fn explorer_keyboard_opens_nested_files_and_restores_root_and_expansion() {
         !s.workspace.scan_busy && s.workspace.entries.iter().any(|e| e.name == "hello.txt")
     });
     let runtime = runtime_for(restored);
-    assert!(runtime.find(path.to_str().unwrap()).is_some());
+    assert!(
+        runtime.find(path.to_str().unwrap()).is_some(),
+        "{path:?} not shown; rows {:?}, expanded {:?}",
+        (0..runtime.state.workspace.tree.visible_len())
+            .filter_map(|row| runtime.state.workspace.tree.visible_id(row))
+            .collect::<Vec<_>>(),
+        runtime.state.workspace.layout.expanded_folders
+    );
     assert_eq!(runtime.state.workspace.tree.cursor(), path.to_str());
     assert_eq!(
         runtime.state.workspace.directory.as_deref(),
@@ -3917,7 +3961,7 @@ fn workspace_controls_inspect_current_unstaged_and_staged_git_without_writes() {
     std::fs::write(&path, &staged).unwrap();
     git(&["add", "notes.txt"]);
     std::fs::write(&path, &disk).unwrap();
-    let index_path = root.path().join(".git/index");
+    let index_path = root.path().join(".git").join("index");
     let index_before = std::fs::read(&index_path).unwrap();
     std::fs::write(
         root.path().join("settings.json"),
