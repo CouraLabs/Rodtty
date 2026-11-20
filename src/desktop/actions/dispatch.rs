@@ -78,6 +78,13 @@ impl State {
             AppAction::FilterTerminal => self.open_log_filter(tx),
             AppAction::SendToTerminal => self.begin_send_to_terminal(),
             AppAction::PinRun => self.pin_last_run(),
+            AppAction::RecoverDrafts => {
+                self.drafts.dialog =
+                    !self.drafts.pending.is_empty() || !self.drafts.unreadable.is_empty();
+                if !self.drafts.dialog {
+                    self.message = "No unsaved edits from an earlier run are waiting.".into();
+                }
+            }
             AppAction::ToggleChanges => self.toggle_changes_view(),
             AppAction::NextChange => self.step_change(true, tx),
             AppAction::PreviousChange => self.step_change(false, tx),

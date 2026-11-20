@@ -5157,3 +5157,207 @@ fn the_changes_view_lists_a_linked_worktree_opens_diffs_keeps_drafts_and_follows
         "a changed\n"
     );
 }
+
+/// The child half of the crash test: edit, snapshot, then wait to be killed.
+#[test]
+#[ignore = "run by draft_recovery_survives_a_killed_process"]
+fn draft_recovery_child() {
+    let Ok(dir) = std::env::var("RODTTY_DRAFT_CHILD") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let mut state = state(&dir);
+    for name in ["a.txt", "b.txt"] {
+        state.open_file(dir.join(name));
+        wait(&mut state, |s| {
+            s.workspace
+                .tabs
+                .iter()
+                .any(|t| t.document.path.ends_with(name))
+        });
+        let tab = state
+            .workspace
+            .tabs
+            .iter()
+            .position(|t| t.document.path.ends_with(name))
+            .unwrap();
+        state.workspace.tabs[tab].edit.insert("unsaved ✓ ");
+        let id = state.workspace.tabs[tab].id;
+        state.changed_editor(id);
+    }
+    state.drafts_force_due();
+    state.poll_drafts();
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[test]
+fn draft_recovery_survives_a_killed_process_and_resolves_conflicts_saves_and_discards() {
+    let dir = crate::test_support::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\r\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "beta\n").unwrap();
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = Kill(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "desktop::workspace::tests::draft_recovery_child",
+                "--ignored",
+            ])
+            .env("RODTTY_DRAFT_CHILD", dir.path())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let drafts_dir = crate::drafts::directory(dir.path());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while std::fs::read_dir(&drafts_dir).map_or(0, |d| {
+        d.filter(|e| {
+            e.as_ref()
+                .is_ok_and(|e| e.path().extension().is_some_and(|x| x == "draft"))
+        })
+        .count()
+    }) < 2
+    {
+        assert!(Instant::now() < deadline, "no snapshot");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Terminated unexpectedly: no shutdown code runs.
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\r\n",
+        "untouched"
+    );
+    // Another program changes b.txt before Rodtty reopens.
+    std::fs::write(dir.path().join("b.txt"), "beta from elsewhere\n").unwrap();
+    // A corrupt draft file doesn't hide the others.
+    std::fs::write(drafts_dir.join("0000.draft"), b"garbage").unwrap();
+
+    let mut state = state(dir.path());
+    state.load_pending_drafts();
+    assert!(state.drafts.dialog);
+    assert_eq!(state.drafts.pending.len(), 2);
+    assert_eq!(state.drafts.unreadable.len(), 1);
+    // a.txt: restore, then save; the recovery item goes away.
+    let a = state
+        .drafts
+        .pending
+        .iter()
+        .position(|d| d.path.ends_with("a.txt"))
+        .unwrap();
+    state.restore_draft(a);
+    let tab = state
+        .workspace
+        .tabs
+        .iter()
+        .position(|t| t.document.path.ends_with("a.txt"))
+        .unwrap();
+    assert!(state.workspace.tabs[tab].dirty());
+    assert!(state.workspace.tabs[tab].edit.text.contains("unsaved ✓"));
+    let id = state.workspace.tabs[tab].id;
+    state.save_file(id, false, None);
+    wait(&mut state, |s| {
+        s.workspace
+            .tabs
+            .iter()
+            .any(|t| t.id == id && !t.dirty() && !t.saving)
+    });
+    let saved = std::fs::read(dir.path().join("a.txt")).unwrap();
+    assert!(
+        saved.starts_with(b"alpha\r\n"),
+        "CRLF kept: {:?} {}",
+        String::from_utf8_lossy(&saved),
+        state.message
+    );
+    assert!(
+        std::fs::read_to_string(dir.path().join("a.txt"))
+            .unwrap()
+            .contains("unsaved ✓")
+    );
+    state.sync_drafts();
+    assert!(
+        !drafts_dir
+            .join(crate::drafts::key(&state.workspace.tabs[tab].document.path))
+            .exists()
+    );
+    // b.txt changed on disk: restoring keeps both versions and saving refuses.
+    let b = state
+        .drafts
+        .pending
+        .iter()
+        .position(|d| d.path.ends_with("b.txt"))
+        .unwrap();
+    assert_eq!(
+        state.drafts.pending[b].disk_state(),
+        crate::drafts::DiskState::Changed
+    );
+    state.restore_draft(b);
+    assert!(
+        state.message.contains("changed on disk"),
+        "{}",
+        state.message
+    );
+    let tab = state
+        .workspace
+        .tabs
+        .iter()
+        .find(|t| t.document.path.ends_with("b.txt"))
+        .unwrap();
+    let id = tab.id;
+    state.save_file(id, false, None);
+    wait(&mut state, |s| {
+        s.workspace.tabs.iter().any(|t| t.id == id && !t.saving)
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "beta from elsewhere\n",
+        "nothing overwritten"
+    );
+    assert!(
+        state
+            .workspace
+            .tabs
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .dirty(),
+        "the draft is still there"
+    );
+    // Save as copy and discard, on a fresh load of the same draft.
+    let mut other = State::with_root(dir.path().to_owned());
+    other.directory = dir.path().to_owned();
+    other.load_pending_drafts();
+    let b = other
+        .drafts
+        .pending
+        .iter()
+        .position(|d| d.path.ends_with("b.txt"))
+        .unwrap();
+    other.save_draft_copy(b);
+    let copy = dir.path().join("b (recovered).txt");
+    assert!(
+        std::fs::read_to_string(&copy)
+            .unwrap()
+            .contains("unsaved ✓")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "beta from elsewhere\n"
+    );
+    other.discard_unreadable_drafts();
+    let (left, bad) = crate::drafts::load(dir.path());
+    assert!(
+        bad.is_empty() && left.iter().all(|d| !d.path.ends_with("b.txt")),
+        "{left:?}"
+    );
+}

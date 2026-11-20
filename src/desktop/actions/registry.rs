@@ -290,6 +290,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "recover-drafts",
+            "File: Recover Unsaved Edits…",
+            "",
+            AppAction::RecoverDrafts,
+        ),
+        (
             "toggle-changes",
             "Git: Show Changes",
             app("Ctrl+Shift+G", "Ctrl+Shift+G"),

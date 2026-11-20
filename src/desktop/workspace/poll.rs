@@ -44,6 +44,7 @@ impl State {
         self.poll_command_notifications();
         changed |= self.poll_log_filter();
         changed |= self.poll_changes();
+        self.poll_drafts();
         tx.wake_after(Duration::from_millis(200));
         changed
     }

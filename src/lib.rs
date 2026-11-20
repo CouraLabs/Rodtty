@@ -17,6 +17,7 @@ pub mod ansi;
 pub mod automation;
 pub mod compare;
 pub mod config;
+pub mod drafts;
 pub mod environment;
 pub mod excerpt;
 pub mod files;

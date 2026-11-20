@@ -4,6 +4,7 @@ use super::*;
 impl State {
     pub(super) fn restore_startup(&mut self) {
         self.workspace_setup();
+        self.load_pending_drafts();
         let directories = self.workspace.layout.terminals.clone();
         let active = self.workspace.layout.active_terminal;
         if directories.is_empty() {

@@ -92,6 +92,7 @@ pub(super) enum AppAction {
     ToggleChanges,
     NextChange,
     PreviousChange,
+    RecoverDrafts,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

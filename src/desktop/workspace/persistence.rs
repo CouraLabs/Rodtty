@@ -372,6 +372,7 @@ impl State {
                 tx.close_window();
             }
             Action::Quit => {
+                self.sync_drafts();
                 self.persist_workspace();
                 self.pending = Some(Pending::Quit);
                 if !self.sessions.iter().any(Session::has_running_commands) {

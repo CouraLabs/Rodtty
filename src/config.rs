@@ -548,6 +548,9 @@ pub struct BehaviorPreferences {
     pub command_notifications: bool,
     /// The minimum duration for a notification, in seconds; 0 means 30.
     pub command_notification_seconds: u64,
+    /// Stop keeping recovery drafts of unsaved editor buffers in
+    /// `<app root>/drafts`.
+    pub disable_draft_recovery: bool,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
