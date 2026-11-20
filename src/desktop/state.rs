@@ -81,6 +81,12 @@ pub(crate) struct State {
     /// Wheel travel in points not yet worth a whole line.
     pub(crate) wheel_remainder: f32,
     pub(crate) terminal_context_open: bool,
+    /// The command Previous/Next Command last scrolled to: session and command ID.
+    pub(crate) command_cursor: Option<(usize, u64)>,
+    pub(crate) window_focused: bool,
+    /// Commands already considered for a notification.
+    pub(crate) notified: std::collections::VecDeque<(usize, u64)>,
+    pub(crate) notifications_sent: usize,
     pub(crate) message: String,
     pub(crate) preview: Option<vt100::Screen>,
     pub(crate) terminal_rect: Option<[f32; 4]>,
@@ -213,6 +219,10 @@ impl State {
             mouse_hover: None,
             wheel_remainder: 0.0,
             terminal_context_open: false,
+            command_cursor: None,
+            window_focused: true,
+            notified: Default::default(),
+            notifications_sent: 0,
             message,
             preview: None,
             terminal_rect: None,

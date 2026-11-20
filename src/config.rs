@@ -544,6 +544,10 @@ pub struct BehaviorPreferences {
     pub terminal_startup: TerminalStartup,
     /// Preview multiline terminal pastes and wait for Paste or Cancel.
     pub confirm_multiline_paste: bool,
+    /// Notify when a long command finishes while Rodtty is in the background.
+    pub command_notifications: bool,
+    /// The minimum duration for a notification, in seconds; 0 means 30.
+    pub command_notification_seconds: u64,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }

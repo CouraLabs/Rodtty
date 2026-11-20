@@ -20,6 +20,7 @@ mod autosave;
 pub(crate) mod browser;
 mod capture;
 mod codex;
+mod commands;
 mod folders;
 mod fonts;
 mod motion;

@@ -290,6 +290,24 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "previous-command",
+            "Terminal: Previous Command",
+            app("Ctrl+Up", "Cmd+Up"),
+            AppAction::PreviousCommand,
+        ),
+        (
+            "next-command",
+            "Terminal: Next Command",
+            app("Ctrl+Down", "Cmd+Down"),
+            AppAction::NextCommand,
+        ),
+        (
+            "toggle-command-notifications",
+            "Terminal: Toggle Notifications for Long Commands",
+            "",
+            AppAction::ToggleCommandNotifications,
+        ),
+        (
             "toggle-paste-confirmation",
             "Terminal: Toggle Multiline Paste Confirmation",
             "",
@@ -382,7 +400,9 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
                 AppAction::CopyTerminal
                 | AppAction::PasteTerminal
                 | AppAction::EndTerminal
-                | AppAction::FindTerminal => ShortcutContext::Terminal,
+                | AppAction::FindTerminal
+                | AppAction::PreviousCommand
+                | AppAction::NextCommand => ShortcutContext::Terminal,
                 AppAction::SaveEditor(_)
                 | AppAction::CloseEditor(_)
                 | AppAction::FindEditor

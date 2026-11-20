@@ -371,3 +371,79 @@ fn the_same_relative_reference_printed_in_two_directories_opens_each_ones_file()
     // A prompt or blank cell is no reference.
     assert!(!state.open_terminal_reference(rows[0], 30, &mut Tx::default()));
 }
+
+#[test]
+fn previous_and_next_command_scroll_to_each_prompt_and_background_long_commands_notify_once() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    let finished = |state: &State| {
+        state.sessions[0]
+            .commands()
+            .iter()
+            .filter(|c| c.ended.is_some())
+            .count()
+    };
+    let run = |state: &mut State, line: &str| {
+        let before = finished(state);
+        state.sessions[0]
+            .send(format!("{line}\r").into_bytes())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while finished(state) == before {
+            assert!(Instant::now() < deadline, "{line} never finished");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    run(&mut state, "echo FIRST_RUN");
+    // Enough output to push the first prompt off the visible screen.
+    run(&mut state, "seq 1 80");
+    run(&mut state, "false");
+    let commands = state.sessions[0].commands();
+    assert!(
+        commands.iter().all(|c| c.prompt_line.is_some()),
+        "{commands:?}"
+    );
+    state.step_command(true);
+    assert!(
+        state.message.contains("Command 3 of 3: failed (exit 1)"),
+        "{}",
+        state.message
+    );
+    state.step_command(true);
+    state.step_command(true);
+    assert!(
+        state.message.contains("Command 1 of 3: succeeded"),
+        "{}",
+        state.message
+    );
+    let top = state.sessions[0].with_screen(|s| s.rows(0, s.size().1).next().unwrap());
+    assert!(
+        top.contains("echo FIRST_RUN"),
+        "the first prompt is at the top: {top}"
+    );
+    state.step_command(false);
+    state.step_command(false);
+    state.step_command(false);
+    assert!(state.message.contains("live screen"), "{}", state.message);
+    assert_eq!(state.sessions[0].with_screen(vt100::Screen::scrollback), 0);
+
+    // Notifications: off by default, then only for long, backgrounded work.
+    state.config.behavior.command_notification_seconds = 1;
+    state.window_focused = false;
+    run(&mut state, "sleep 1.2");
+    state.poll_command_notifications();
+    assert_eq!(state.notifications_sent, 0, "disabled by default");
+    state.config.behavior.command_notifications = true;
+    run(&mut state, "sleep 1.2");
+    state.poll_command_notifications();
+    state.poll_command_notifications();
+    assert_eq!(state.notifications_sent, 1, "one notification per command");
+    run(&mut state, "true");
+    state.poll_command_notifications();
+    assert_eq!(state.notifications_sent, 1, "a short command is quiet");
+    state.window_focused = true;
+    run(&mut state, "sleep 1.2");
+    state.poll_command_notifications();
+    assert_eq!(state.notifications_sent, 1, "foreground work is quiet");
+}

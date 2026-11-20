@@ -75,6 +75,18 @@ impl State {
             }
             AppAction::RunTask(index) => self.run_task_index(usize::from(index)),
             AppAction::CheckEnvironment => self.check_environment(),
+            AppAction::PreviousCommand => self.step_command(true),
+            AppAction::NextCommand => self.step_command(false),
+            AppAction::ToggleCommandNotifications => {
+                self.save_config(|c| {
+                    c.behavior.command_notifications = !c.behavior.command_notifications
+                });
+                self.message = if self.config.behavior.command_notifications {
+                    "Notifications on for commands that finish in the background.".into()
+                } else {
+                    "Command notifications off.".into()
+                };
+            }
             AppAction::CodexDecline => self.codex_decide("decline"),
             #[cfg(feature = "browser")]
             AppAction::OpenBrowser => self.open_browser_view(tx),

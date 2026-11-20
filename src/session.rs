@@ -50,6 +50,9 @@ pub struct CommandRecord {
     /// The output range, as [`OutputLog`] offsets.
     pub output_start: u64,
     pub output_end: Option<u64>,
+    /// The screen row that held the prompt and command line when the command
+    /// began, for finding the command again in scrollback.
+    pub prompt_line: Option<String>,
 }
 
 /// How a finished command ended, from its exit status.
@@ -85,7 +88,7 @@ impl TerminalEvents {
     pub fn command_running(&self) -> bool {
         self.command_running
     }
-    fn command_started(&mut self) {
+    fn command_started(&mut self, prompt_line: Option<String>) {
         // A start with no prompt in between replaces nothing: nested
         // pre-command markers belong to the command already running.
         if self.commands.back().is_some_and(|c| c.ended.is_none()) {
@@ -104,6 +107,7 @@ impl TerminalEvents {
             exit: None,
             output_start: self.offset,
             output_end: None,
+            prompt_line,
         });
     }
     fn prompt_drawn(&mut self, exit: Option<i32>) {
@@ -125,7 +129,7 @@ impl vt100::Callbacks for TerminalEvents {
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title = String::from_utf8_lossy(title).into_owned();
     }
-    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
         match params {
             // vt100 routes OSC 0/2 here when semicolons split the title into
             // additional parameters. They belong to the title, not its syntax.
@@ -150,7 +154,23 @@ impl vt100::Callbacks for TerminalEvents {
                 match *phase {
                     b"C" => {
                         self.command_running = true;
-                        self.command_started();
+                        // The accepted command line is the row the cursor
+                        // just left, or the one it is on mid-line.
+                        let (row, col) = screen.cursor_position();
+                        let row = if col == 0 {
+                            row.checked_sub(1)
+                        } else {
+                            Some(row)
+                        };
+                        let viewed = screen.scrollback();
+                        screen.set_scrollback(0);
+                        let line = row
+                            .filter(|_| !screen.alternate_screen())
+                            .and_then(|row| screen.rows(0, screen.size().1).nth(usize::from(row)))
+                            .map(|l| l.trim_end().to_owned())
+                            .filter(|l| !l.is_empty());
+                        screen.set_scrollback(viewed);
+                        self.command_started(line);
                     }
                     b"A" => {
                         self.command_running = false;

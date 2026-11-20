@@ -41,6 +41,7 @@ impl State {
         changed |= self.apply_pending_location(tx);
         changed |= self.poll_explorer_search(tx);
         changed |= self.poll_autosave(tx);
+        self.poll_command_notifications();
         tx.wake_after(Duration::from_millis(200));
         changed
     }

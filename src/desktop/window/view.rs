@@ -42,6 +42,7 @@ pub(crate) fn view_with_frame(
         .on_middle_press(|s: &mut State, tx| {
             s.dispatch_mouse_shortcut(rune::PointerButton::Middle, tx);
         })
+        .on_window_focus(|s: &mut State, focused, _| s.window_focus_changed(focused))
         .on_layout(|s: &mut State, r| s.workspace.operation_viewport = (r[2], r[3]))
         .w_full()
         .h_full()

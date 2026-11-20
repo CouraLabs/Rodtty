@@ -81,6 +81,9 @@ pub(super) enum AppAction {
     CheckEnvironment,
     CodexDecline,
     CloseBrowser,
+    PreviousCommand,
+    NextCommand,
+    ToggleCommandNotifications,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
