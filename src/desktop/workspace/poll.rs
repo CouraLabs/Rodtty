@@ -42,6 +42,7 @@ impl State {
         changed |= self.poll_explorer_search(tx);
         changed |= self.poll_autosave(tx);
         self.poll_command_notifications();
+        changed |= self.poll_log_filter();
         tx.wake_after(Duration::from_millis(200));
         changed
     }

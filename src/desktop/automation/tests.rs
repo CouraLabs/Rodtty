@@ -447,3 +447,73 @@ fn previous_and_next_command_scroll_to_each_prompt_and_background_long_commands_
     state.poll_command_notifications();
     assert_eq!(state.notifications_sent, 1, "foreground work is quiet");
 }
+
+#[test]
+fn filtering_a_live_session_lists_incoming_matches_jumps_and_restores_the_terminal() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    state.sessions[0]
+        .send(b"seq 1 200 | sed 's/^/req=/'; echo SEQ_DONE\r".to_vec())
+        .unwrap();
+    wait(&state, 0, "\nSEQ_DONE");
+    let before = state.sessions[0].screen().contents();
+    state.open_log_filter(&mut Tx::default());
+    state.log_filter.query = TextEdit::new("req=7");
+    state.poll_log_filter();
+    // req=7 and req=70..79.
+    assert_eq!(state.log_filter.total, 11, "{:?}", state.log_filter.shown);
+    state.log_filter.regex = true;
+    state.log_filter.query = TextEdit::new(r"^req=1\d7$");
+    state.log_filter.refresh();
+    assert_eq!(state.log_filter.total, 10);
+    state.log_filter.query = TextEdit::new("req=(");
+    state.log_filter.refresh();
+    assert!(state.log_filter.error.is_some());
+    // New output appends; nonmatching lines stay out.
+    state.log_filter.regex = false;
+    state.log_filter.query = TextEdit::new("LATE_");
+    state.sessions[0]
+        .send(b"echo LATE_ONE; echo other; echo LATE_TWO\r".to_vec())
+        .unwrap();
+    wait(&state, 0, "\nLATE_TWO");
+    std::thread::sleep(Duration::from_millis(100));
+    state.poll_log_filter();
+    let lines: Vec<&str> = state
+        .log_filter
+        .shown
+        .iter()
+        .map(|(l, _)| l.as_str())
+        .collect();
+    assert!(lines.ends_with(&["LATE_ONE", "LATE_TWO"]), "{lines:?}");
+    // Jump to an early line: the view closes and the terminal scrolls to it.
+    state.log_filter.query = TextEdit::new("req=3");
+    state.poll_log_filter();
+    let (line, after) = state
+        .log_filter
+        .shown
+        .iter()
+        .find(|(l, _)| l == "req=3")
+        .cloned()
+        .unwrap();
+    state.jump_to_filtered_line(&line, after, &mut Tx::default());
+    assert!(!state.log_filter.open);
+    let shown = state.sessions[0].screen().contents();
+    assert!(shown.lines().any(|l| l == "req=3"), "{shown}");
+    // Open and close again: the scroll position the terminal had returns.
+    let scrolled = state.sessions[0].with_screen(vt100::Screen::scrollback);
+    assert!(scrolled > 0);
+    state.open_log_filter(&mut Tx::default());
+    state.close_log_filter(&mut Tx::default());
+    assert_eq!(
+        state.sessions[0].with_screen(vt100::Screen::scrollback),
+        scrolled
+    );
+    state.sessions[0].with_screen_mut(|s| s.set_scrollback(0));
+    assert!(
+        state.sessions[0]
+            .screen()
+            .contents()
+            .contains(before.lines().last().unwrap())
+    );
+}

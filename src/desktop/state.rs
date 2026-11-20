@@ -83,6 +83,7 @@ pub(crate) struct State {
     pub(crate) terminal_context_open: bool,
     /// The command Previous/Next Command last scrolled to: session and command ID.
     pub(crate) command_cursor: Option<(usize, u64)>,
+    pub(crate) log_filter: terminal::filter::LogFilter,
     pub(crate) window_focused: bool,
     /// Commands already considered for a notification.
     pub(crate) notified: std::collections::VecDeque<(usize, u64)>,
@@ -220,6 +221,7 @@ impl State {
             wheel_remainder: 0.0,
             terminal_context_open: false,
             command_cursor: None,
+            log_filter: Default::default(),
             window_focused: true,
             notified: Default::default(),
             notifications_sent: 0,

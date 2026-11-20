@@ -290,6 +290,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "filter-terminal",
+            "Terminal: Filter Output…",
+            app("Ctrl+Shift+L", "Cmd+Shift+L"),
+            AppAction::FilterTerminal,
+        ),
+        (
             "previous-command",
             "Terminal: Previous Command",
             app("Ctrl+Up", "Cmd+Up"),

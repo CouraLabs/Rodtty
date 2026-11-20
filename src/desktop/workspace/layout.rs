@@ -57,15 +57,19 @@ pub(crate) fn body(s: &State, a: &Appearance, width: f32) -> El {
         if s.terminal_search.open {
             pane = pane.child(terminal::search::bar(s, a));
         }
-        pane = pane.child(
-            col()
-                .grow(1.0)
-                .min_h(0.0)
-                .w_full()
-                .px(16.0)
-                .py(12.0)
-                .child(grid(s, a)),
-        );
+        if s.log_filter.open && s.active().map(Session::id) == Some(s.log_filter.session()) {
+            pane = pane.child(terminal::filter::view(s, a));
+        } else {
+            pane = pane.child(
+                col()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .w_full()
+                    .px(16.0)
+                    .py(12.0)
+                    .child(grid(s, a)),
+            );
+        }
         main = main.child(pane.grow(if show_editor {
             1.0 - workspace.layout.editor_share
         } else {
