@@ -16,11 +16,11 @@ fn main() {
         // (as brush-interactive's own build script also decides).
         ("reedline_backend", feature("REEDLINE") && (unix || windows)),
         // The shell's VT and basic backends edit on the process's own terminal
-        // (`StdTerminal`), which can switch it to raw mode only on Unix: the
-        // Windows console sends keys as bytes only in a mode brush doesn't set,
-        // and WASI has no API for raw mode. (brush-interactive's `VtInputBackend`
-        // itself builds for every target, for hosts that supply a `Terminal`.)
-        ("vt_backend", feature("VT") && unix),
+        // (`StdTerminal`), which switches it to raw mode through termios on Unix
+        // and the console API on Windows; WASI has no API for raw mode. The basic
+        // backend still needs Unix. (brush-interactive's `VtInputBackend` itself
+        // builds for every target, for hosts that supply a `Terminal`.)
+        ("vt_backend", feature("VT") && (unix || windows)),
         ("basic_backend", feature("BASIC") && unix),
         ("minimal_backend", feature("MINIMAL")),
     ];

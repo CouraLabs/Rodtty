@@ -25,3 +25,8 @@ Every change to Brush's source is listed here, newest last.
   Windows console ends lines) is read as ending in LF, so the CR doesn't join
   the command's last word. Before, `cd dir` on Windows looked for `dir\r` and
   failed with "os error 123".
+- `brush-interactive`, VT backend: `StdTerminal` switches the Windows console
+  to raw mode (VT input sequences, no line input, echo or Ctrl-C processing),
+  reports its width, and waits for key events, so the VT line editor works on
+  Windows. `brush-shell`'s build script offers the VT backend on Windows.
+  Adds a Windows-only `windows-sys` dependency to `brush-interactive`.

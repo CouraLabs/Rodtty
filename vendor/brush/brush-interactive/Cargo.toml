@@ -46,6 +46,14 @@ unicode-width = { version = "0.2.2", optional = true }
 [target.'cfg(any(unix, windows))'.dependencies]
 reedline = { version = "0.52.0", optional = true }
 
+# The VT backend's raw mode for the Windows console; see `vt/terminal.rs`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 pretty_assertions = { version = "1.4.1", features = ["unstable"] }
 vt100 = "0.18.1"
