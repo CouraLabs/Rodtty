@@ -139,6 +139,12 @@ mod tests {
             );
         }
         drop(host);
+        // A test running in parallel may fork a PTY child while the lock is
+        // open; the child holds the descriptor until it execs and closes it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && Instance::acquire(root.path()).unwrap().is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         assert!(Instance::acquire(root.path()).unwrap().is_some());
     }
 }
