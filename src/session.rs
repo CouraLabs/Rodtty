@@ -22,6 +22,103 @@ pub struct TerminalEvents {
     responses: Vec<Vec<u8>>,
     command_running: bool,
     activity_tag: String,
+    /// The output offset just past the bytes the parser is processing now.
+    offset: u64,
+    /// Commands this session's own shell reported, oldest first.
+    pub commands: std::collections::VecDeque<CommandRecord>,
+    next_command: u64,
+}
+
+/// Commands kept per session. Their output ranges index the session's
+/// [`OutputLog`], so older ones would point only at evicted bytes.
+pub const COMMAND_HISTORY: usize = 512;
+
+/// One command the session's shell ran, from its pre-command marker to the
+/// prompt that followed it.
+#[derive(Clone, Debug)]
+pub struct CommandRecord {
+    /// Unique within the session, increasing.
+    pub id: u64,
+    /// The directory the shell last reported before the command began.
+    pub directory: Option<PathBuf>,
+    pub started: Instant,
+    pub started_at: std::time::SystemTime,
+    pub ended: Option<Instant>,
+    /// The shell's `$?` when the next prompt drew. `None` while running, or
+    /// when the shell exited before reporting.
+    pub exit: Option<i32>,
+    /// The output range, as [`OutputLog`] offsets.
+    pub output_start: u64,
+    pub output_end: Option<u64>,
+}
+
+/// How a finished command ended, from its exit status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandOutcome {
+    Running,
+    Succeeded,
+    Failed,
+    /// Ended by SIGINT (status 130), as Ctrl+C reports.
+    Interrupted,
+    /// The shell exited before reporting a status.
+    Unknown,
+}
+
+impl CommandRecord {
+    pub fn outcome(&self) -> CommandOutcome {
+        match (self.ended, self.exit) {
+            (None, _) => CommandOutcome::Running,
+            (Some(_), Some(0)) => CommandOutcome::Succeeded,
+            (Some(_), Some(130)) => CommandOutcome::Interrupted,
+            (Some(_), Some(_)) => CommandOutcome::Failed,
+            (Some(_), None) => CommandOutcome::Unknown,
+        }
+    }
+    pub fn elapsed(&self) -> Duration {
+        self.ended.unwrap_or_else(Instant::now) - self.started
+    }
+}
+
+impl TerminalEvents {
+    /// Whether the shell reported a command running, between its pre-command
+    /// marker and the next prompt.
+    pub fn command_running(&self) -> bool {
+        self.command_running
+    }
+    fn command_started(&mut self) {
+        // A start with no prompt in between replaces nothing: nested
+        // pre-command markers belong to the command already running.
+        if self.commands.back().is_some_and(|c| c.ended.is_none()) {
+            return;
+        }
+        if self.commands.len() == COMMAND_HISTORY {
+            self.commands.pop_front();
+        }
+        self.next_command += 1;
+        self.commands.push_back(CommandRecord {
+            id: self.next_command,
+            directory: self.cwd.clone(),
+            started: Instant::now(),
+            started_at: std::time::SystemTime::now(),
+            ended: None,
+            exit: None,
+            output_start: self.offset,
+            output_end: None,
+        });
+    }
+    fn prompt_drawn(&mut self, exit: Option<i32>) {
+        if let Some(command) = self.commands.back_mut()
+            && command.ended.is_none()
+        {
+            command.ended = Some(Instant::now());
+            command.exit = exit;
+            command.output_end = Some(self.offset);
+        }
+    }
+    /// Close a command left running when the shell itself ended.
+    fn shell_ended(&mut self) {
+        self.prompt_drawn(None);
+    }
 }
 
 impl vt100::Callbacks for TerminalEvents {
@@ -47,12 +144,22 @@ impl vt100::Callbacks for TerminalEvents {
                     }
                 }
             }
-            [b"777", b"rodtty", tag, phase]
+            [b"777", b"rodtty", tag, phase, status @ ..]
                 if !self.activity_tag.is_empty() && *tag == self.activity_tag.as_bytes() =>
             {
                 match *phase {
-                    b"C" => self.command_running = true,
-                    b"A" => self.command_running = false,
+                    b"C" => {
+                        self.command_running = true;
+                        self.command_started();
+                    }
+                    b"A" => {
+                        self.command_running = false;
+                        let exit = status
+                            .first()
+                            .and_then(|s| std::str::from_utf8(s).ok())
+                            .and_then(|s| s.parse().ok());
+                        self.prompt_drawn(exit);
+                    }
                     _ => {}
                 }
             }
@@ -83,6 +190,60 @@ pub struct TerminalState {
     pub bytes: u64,
     pub exit: Option<u32>,
     pub error: Option<String>,
+    /// The most recent raw output, for incremental reads by cursor.
+    pub output: OutputLog,
+}
+
+/// A bounded window of a session's raw output. Cursors are byte offsets into
+/// everything the session ever printed, so a reader can tell when the bytes it
+/// asked for have already been evicted.
+pub struct OutputLog {
+    bytes: std::collections::VecDeque<u8>,
+    /// The offset of `bytes[0]` in the session's whole output.
+    start: u64,
+    capacity: usize,
+}
+
+/// Raw output retained for incremental reads: one mebibyte per session.
+pub const OUTPUT_LOG_BYTES: usize = 1 << 20;
+
+impl OutputLog {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            bytes: Default::default(),
+            start: 0,
+            capacity: capacity.max(1),
+        }
+    }
+    pub fn push(&mut self, data: &[u8]) {
+        let data = if data.len() > self.capacity {
+            self.start += (data.len() - self.capacity) as u64;
+            &data[data.len() - self.capacity..]
+        } else {
+            data
+        };
+        let overflow = (self.bytes.len() + data.len()).saturating_sub(self.capacity);
+        self.bytes.drain(..overflow.min(self.bytes.len()));
+        self.start += overflow as u64;
+        self.bytes.extend(data);
+    }
+    /// The first retained offset.
+    pub fn start(&self) -> u64 {
+        self.start
+    }
+    /// The offset one past the last byte printed.
+    pub fn end(&self) -> u64 {
+        self.start + self.bytes.len() as u64
+    }
+    /// Up to `max` bytes from `cursor`, the cursor actually read from (later
+    /// than `cursor` when part of the range was evicted), and the next cursor.
+    pub fn read(&self, cursor: u64, max: usize) -> (u64, Vec<u8>, u64) {
+        let from = cursor.clamp(self.start, self.end());
+        let skip = (from - self.start) as usize;
+        let data: Vec<u8> = self.bytes.iter().skip(skip).take(max).copied().collect();
+        let next = from + data.len() as u64;
+        (from, data, next)
+    }
 }
 
 /// A terminal tab's label while its application has set no terminal title.
@@ -170,6 +331,7 @@ impl Session {
             bytes: 0,
             exit: None,
             error: None,
+            output: OutputLog::new(OUTPUT_LOG_BYTES),
         }));
         let write_state = state.clone();
         let write_wake = wake.clone();
@@ -194,7 +356,22 @@ impl Session {
                     Ok(0) => break,
                     Ok(count) => {
                         let mut state = read_state.lock().unwrap_or_else(|e| e.into_inner());
-                        state.parser.process(&buffer[..count]);
+                        // Feed the parser up to the end of each activity
+                        // marker separately, so a command's recorded output
+                        // range starts and ends exactly at its markers.
+                        let chunk = &buffer[..count];
+                        let mut from = 0;
+                        for end in marker_ends(chunk).chain([count]) {
+                            if end <= from {
+                                continue;
+                            }
+                            let piece = &chunk[from..end];
+                            state.output.push(piece);
+                            let offset = state.output.end();
+                            state.parser.callbacks_mut().offset = offset;
+                            state.parser.process(piece);
+                            from = end;
+                        }
                         state.bytes += count as u64;
                         state.generation += 1;
                         let responses = std::mem::take(&mut state.parser.callbacks_mut().responses);
@@ -221,6 +398,7 @@ impl Session {
             let _profile = profile;
             let result = child.wait();
             let mut state = exit_state.lock().unwrap_or_else(|e| e.into_inner());
+            state.parser.callbacks_mut().shell_ended();
             match result {
                 Ok(status) => state.exit = Some(status.exit_code()),
                 Err(error) => state.error = Some(error.to_string()),
@@ -246,9 +424,50 @@ impl Session {
         })
     }
 
+    /// The commands this session's shell reported, oldest first.
+    pub fn commands(&self) -> Vec<CommandRecord> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.parser.callbacks().commands.iter().cloned().collect()
+    }
+
+    /// A command's retained output without terminal control sequences, and
+    /// whether all of it was still retained.
+    pub fn command_output(&self, id: u64) -> Option<(String, bool)> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let command = state
+            .parser
+            .callbacks()
+            .commands
+            .iter()
+            .find(|c| c.id == id)?;
+        let end = command.output_end.unwrap_or_else(|| state.output.end());
+        let max = usize::try_from(end.saturating_sub(command.output_start)).unwrap_or(usize::MAX);
+        let (from, bytes, _) = state.output.read(command.output_start, max);
+        let bytes = &bytes[..bytes.len().min(usize::try_from(end - from.min(end)).unwrap_or(0))];
+        Some((crate::ansi::strip(bytes), from == command.output_start))
+    }
+
     /// Process-lifetime identity, independent of tab position and rendering.
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    /// The PTY's rows and columns.
+    pub fn size(&self) -> (u16, u16) {
+        self.size
+    }
+
+    /// The shell's process ID, and the PTY's foreground process group leader
+    /// where the platform reports one.
+    pub fn processes(&self) -> (Option<u32>, Option<u32>) {
+        #[cfg(unix)]
+        let foreground = self
+            .master
+            .process_group_leader()
+            .and_then(|pid| u32::try_from(pid).ok());
+        #[cfg(not(unix))]
+        let foreground = None;
+        (self.shell_pid, foreground)
     }
 
     /// A live interactive shell at its prompt is idle. Shell markers cover
@@ -459,6 +678,31 @@ impl Drop for Session {
         }
         self.input.take();
     }
+}
+
+/// Offsets just past each complete `OSC 777;rodtty` marker in `chunk`.
+fn marker_ends(chunk: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    const START: &[u8] = b"\x1b]777;rodtty;";
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        while at + START.len() <= chunk.len() {
+            if chunk[at..].starts_with(START) {
+                let body = at + START.len();
+                let end = chunk[body..].iter().enumerate().find_map(|(i, b)| match b {
+                    0x07 => Some(body + i + 1),
+                    0x1b if chunk.get(body + i + 1) == Some(&b'\\') => Some(body + i + 2),
+                    _ => None,
+                });
+                at = end.unwrap_or(chunk.len());
+                if end.is_some() {
+                    return end;
+                }
+            } else {
+                at += 1;
+            }
+        }
+        None
+    })
 }
 
 /// Whether process `parent` has a live child process. When the process list

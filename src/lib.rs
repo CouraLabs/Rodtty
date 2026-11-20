@@ -13,6 +13,8 @@ macro_rules! asset_str {
     };
 }
 
+pub mod ansi;
+pub mod automation;
 pub mod config;
 pub mod files;
 pub mod git;
@@ -22,6 +24,7 @@ pub mod profile;
 pub mod prompt;
 pub mod session;
 pub mod work;
+pub mod workspaces;
 
 #[cfg(feature = "desktop")]
 pub mod desktop;

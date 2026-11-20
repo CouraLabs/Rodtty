@@ -172,7 +172,7 @@ impl PreparedProfile {
         // `jobs` in command substitution runs in a subshell and loses Brush's
         // internal async jobs. Capture directly in private session files instead.
         script.push_str(&format!(
-            "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]777;rodtty;{activity_tag};A\\007'\n}}\n",
+            "__rodtty_prompt_activity() {{\n jobs -r > {jobs}; jobs -s >> {jobs}\n jobs -pr > {pids}; jobs -ps >> {pids}\n printf '\\033]777;rodtty;{activity_tag};A;%s\\007' \"${{__rodtty_prompt_exit:-0}}\"\n}}\n",
             jobs = quote(&jobs)?, pids = quote(&job_pids)?,
         ));
         // The status entry runs before every owner entry and returns `$?`
