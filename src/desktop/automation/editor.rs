@@ -406,3 +406,57 @@ pub(super) fn git_diff(host: &Host, grant: &ClientGrant, args: &Value) -> ToolRe
         "shown": show,
     }))
 }
+
+pub(super) fn services(host: &Host, grant: &ClientGrant, cancel: &AtomicBool) -> ToolResult {
+    let g = grant.clone();
+    // Shell process IDs of the sessions this client may see, by terminal ID.
+    let shells = on_ui(&host.handle, move |s, _| -> Vec<(u32, String)> {
+        let allowed: Vec<usize> = (0..s.sessions.len())
+            .filter(|i| g.allows_workspace(&s.session_owner(*i).workspace))
+            .collect();
+        allowed
+            .into_iter()
+            .filter_map(|i| {
+                s.sessions[i]
+                    .processes()
+                    .0
+                    .map(|pid| (pid, s.terminal_target(&s.sessions[i])))
+            })
+            .collect()
+    })?;
+    let listeners = crate::services::list(cancel).map_err(|e| {
+        ToolError::new(
+            ErrorCode::Unavailable,
+            format!("Listener inspection is unavailable: {e}"),
+        )
+    })?;
+    let parents = crate::services::parents();
+    let pids: Vec<u32> = shells.iter().map(|(p, _)| *p).collect();
+    let rows: Vec<Value> = listeners
+        .iter()
+        .map(|l| {
+            let owner = match (l.pid, &parents) {
+                (Some(pid), Some(parents)) => match crate::services::owner(pid, &pids, parents) {
+                    Some(shell) => shells.iter().find(|(p, _)| *p == shell).map(|(_, t)| json!(t)).unwrap_or(json!("unknown")),
+                    None => json!("external"),
+                },
+                _ => json!("unknown"),
+            };
+            json!({"port": l.port, "address": l.address, "pid": l.pid, "process": l.process, "owner": owner, "loopback": l.loopback_reachable(), "url_if_http": l.loopback_reachable().then(|| l.local_url("http"))})
+        })
+        .collect();
+    Ok(json!({"listeners": rows}))
+}
+
+pub(super) fn environment(
+    host: &Host,
+    grant: &ClientGrant,
+    args: &Value,
+    cancel: &AtomicBool,
+) -> ToolResult {
+    let root = repository_root(host, grant, args)?;
+    let rows = crate::environment::check(&root, crate::environment::PROBE_TIMEOUT, cancel);
+    Ok(
+        json!({"root": root, "environment": "Rodtty's own PATH; terminals with custom shell changes may differ", "rows": rows}),
+    )
+}

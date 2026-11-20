@@ -39,6 +39,8 @@ impl State {
             ),
             AppAction::AutomationTakeOver => self.automation_take_over(),
             AppAction::CodexApprove => self.codex_decide("accept"),
+            AppAction::ShowServices => self.show_services(),
+            AppAction::CheckEnvironment => self.check_environment(),
             AppAction::CodexDecline => self.codex_decide("decline"),
             #[cfg(feature = "browser")]
             AppAction::OpenBrowser => self.open_browser_view(tx),

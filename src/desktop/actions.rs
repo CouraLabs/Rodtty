@@ -65,6 +65,8 @@ pub(super) enum AppAction {
     AutomationReturn,
     OpenBrowser,
     CodexApprove,
+    ShowServices,
+    CheckEnvironment,
     CodexDecline,
     CloseBrowser,
 }

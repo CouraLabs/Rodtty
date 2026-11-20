@@ -16,6 +16,7 @@ macro_rules! asset_str {
 pub mod ansi;
 pub mod automation;
 pub mod config;
+pub mod environment;
 pub mod files;
 pub mod git;
 pub mod instance;
@@ -23,6 +24,7 @@ pub mod open;
 pub mod paths;
 pub mod profile;
 pub mod prompt;
+pub mod services;
 pub mod session;
 pub mod work;
 pub mod workspaces;

@@ -405,6 +405,8 @@ impl Host {
             "editor_edit" => ui!(|s, tx| s.auto_editor_edit(&g, &args)),
             "editor_save" => editor::save(self, grant, &args),
             "git_changes" => editor::git_changes(self, grant, &args),
+            "services_list" => editor::services(self, grant, &cancel),
+            "project_environment" => editor::environment(self, grant, &args, &cancel),
             "git_diff" => editor::git_diff(self, grant, &args),
             "capture_screenshot" => self.capture(grant, &args),
             #[cfg(feature = "browser")]
@@ -1071,5 +1073,97 @@ fn job_finished(shared: &Shared, id: &str, result: ToolResult) {
         Err(error) => shared
             .hub
             .update_job(id, JobState::Failed, None, Some(error)),
+    }
+}
+
+impl State {
+    /// Services: Show Local Services. Inspection runs off the UI thread; the
+    /// summary names each listener's port, process and terminal.
+    pub(crate) fn show_services(&mut self) {
+        let Some(handle) = self.handle.clone() else {
+            return;
+        };
+        let shells: Vec<(u32, String)> = self
+            .sessions
+            .iter()
+            .filter_map(|s| s.processes().0.map(|pid| (pid, s.tab_title())))
+            .collect();
+        self.message = "Looking for local services…".into();
+        std::thread::spawn(move || {
+            let summary = match crate::services::list(&AtomicBool::new(false)) {
+                Err(error) => format!("Listener inspection is unavailable: {error}"),
+                Ok(listeners) if listeners.is_empty() => "No local TCP listeners.".into(),
+                Ok(listeners) => {
+                    let parents = crate::services::parents();
+                    let pids: Vec<u32> = shells.iter().map(|(p, _)| *p).collect();
+                    let mut seen = std::collections::BTreeSet::new();
+                    listeners
+                        .iter()
+                        .filter(|l| seen.insert((l.port, l.pid)))
+                        .map(|l| {
+                            let owner = match (l.pid, &parents) {
+                                (Some(pid), Some(parents)) => {
+                                    crate::services::owner(pid, &pids, parents)
+                                        .and_then(|shell| {
+                                            shells
+                                                .iter()
+                                                .find(|(p, _)| *p == shell)
+                                                .map(|(_, t)| format!("terminal “{t}”"))
+                                        })
+                                        .unwrap_or_else(|| "outside Rodtty".into())
+                                }
+                                _ => "owner unknown".into(),
+                            };
+                            format!(
+                                "{} {} ({owner})",
+                                l.port,
+                                l.process.clone().unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                }
+            };
+            handle.update(move |s, _| s.message = summary);
+        });
+    }
+
+    /// Project: Check Environment, for the explorer's project folder.
+    pub(crate) fn check_environment(&mut self) {
+        let Some(handle) = self.handle.clone() else {
+            return;
+        };
+        let (_, root) = self.active_workspace();
+        self.message = format!("Checking tool versions for {}…", root.display());
+        std::thread::spawn(move || {
+            let rows = crate::environment::check(
+                &root,
+                crate::environment::PROBE_TIMEOUT,
+                &AtomicBool::new(false),
+            );
+            let summary = if rows.is_empty() {
+                format!(
+                    "No .node-version, global.json or rust-toolchain in {}.",
+                    root.display()
+                )
+            } else {
+                rows.iter()
+                    .map(|r| {
+                        format!(
+                            "{} {}: {:?}{}",
+                            r.tool,
+                            r.expected,
+                            r.outcome,
+                            r.detected
+                                .as_ref()
+                                .map(|d| format!(" ({d})"))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            };
+            handle.update(move |s, _| s.message = summary);
+        });
     }
 }

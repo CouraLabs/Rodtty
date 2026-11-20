@@ -260,6 +260,18 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "show-services",
+            "Services: Show Local Services",
+            "",
+            AppAction::ShowServices,
+        ),
+        (
+            "check-environment",
+            "Project: Check Environment",
+            "",
+            AppAction::CheckEnvironment,
+        ),
+        (
             "codex-approve",
             "Codex: Approve Pending Request",
             "",
