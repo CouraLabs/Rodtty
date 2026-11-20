@@ -31,8 +31,12 @@ impl State {
                 .containing(&session.initial_cwd)
                 .map(|w| format!(" [{}]", registry.label(&w.id)))
                 .unwrap_or_default();
+            let agent = session
+                .agent_status()
+                .map(|a| format!(" · agent {}", a.label()))
+                .unwrap_or_default();
             let title = format!(
-                "Session: {} — {} · {state}{workspace}",
+                "Session: {} — {} · {state}{agent}{workspace}",
                 session.tab_title(),
                 window::tilde_path(&session.cwd())
             );

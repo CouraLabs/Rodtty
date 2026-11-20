@@ -34,10 +34,14 @@ pub(crate) fn terminal_tabs(state: &State, a: &Appearance) -> El {
             continue;
         }
         let split = state.split_of(session.id());
-        let label = match split {
+        let mut label = match split {
             Some(_) => format!("{} ⫴", session.tab_title()),
             None => session.tab_title(),
         };
+        // Agent status is the agent's own report, apart from shell activity.
+        if let Some(agent) = session.agent_status() {
+            label = format!("{label} · Agent {}", agent.label());
+        }
         // The label names the program; the tooltip says where it runs.
         let location = tilde_path(&session.cwd());
         let id = tabs::session_id(session);

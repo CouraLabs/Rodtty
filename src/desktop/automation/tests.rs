@@ -941,3 +941,103 @@ fn remote_devices_pair_attach_read_type_resize_follow_control_and_lose_access_wh
         .unwrap_or(true);
     assert!(refused, "the port no longer serves");
 }
+
+#[test]
+fn agent_status_follows_its_own_session_rejects_bad_reports_expires_and_leaves_close_protection_alone()
+ {
+    use crate::session::AgentState::*;
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    wait(&state, 1, "rodtty:");
+    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts/agent-status/picobu-sample.sh");
+    state.sessions[0]
+        .send(format!("PICOBU_STEP=1 sh '{}'\r", sample.display()).into_bytes())
+        .unwrap();
+    let until = |state: &State, i: usize, want: Option<crate::session::AgentState>| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while state.sessions[i].agent_status() != want {
+            assert!(
+                Instant::now() < deadline,
+                "{want:?}: {:?}",
+                state.sessions[i].agent_status()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    until(&state, 0, Some(Working));
+    until(&state, 0, Some(Waiting));
+    assert_eq!(
+        state.sessions[1].agent_status(),
+        None,
+        "the other terminal keeps its own status"
+    );
+    // Visible on the tab with an accessible label.
+    let mut runtime = crate::desktop::tests::runtime_for(state);
+    runtime.frame(1.0);
+    let label = runtime
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("tab-0"))
+        .and_then(|e| e.label)
+        .unwrap_or_default();
+    assert!(label.contains("Agent waiting for input"), "{label}");
+    let mut state = std::mem::replace(&mut runtime.state, State::with_root(root.path().into()));
+    // Session close protection is the shell's, unchanged by the report.
+    let id = state.sessions[0].id();
+    state.dispatch(AppAction::CloseTerminal(id), &mut Tx::default());
+    assert!(matches!(state.pending, Some(Pending::Tab(_))));
+    state.pending = None;
+    state.sessions[0].send(b"y\r".to_vec()).unwrap();
+    until(&state, 0, Some(Working));
+    until(&state, 0, Some(Finished));
+    until(&state, 0, None);
+    // Bad reports from the other session change nothing.
+    let token = |i: usize| {
+        state.sessions[i]
+            .send(b"echo TOKEN=$RODTTY_AGENT_STATUS_TOKEN\r".to_vec())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        state.sessions[i]
+            .screen()
+            .contents()
+            .lines()
+            .filter_map(|l| l.strip_prefix("TOKEN="))
+            .last()
+            .unwrap()
+            .to_owned()
+    };
+    let (a, b) = (token(0), token(1));
+    assert_ne!(a, b);
+    let rejected = state.sessions[1].rejected_status_updates();
+    let send = |i: usize, body: &str| {
+        state.sessions[i]
+            .send(format!("printf '\\033]777;rodtty-status;{body}\\007'\r").into_bytes())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+    };
+    send(1, &format!("1;{a};1;working"));
+    send(1, &format!("2;{b};1;working"));
+    send(1, &format!("1;{b};1;dancing"));
+    send(1, &format!("1;{b};1;working;99999"));
+    send(1, &format!("1;{b};1;working;{}", "x".repeat(300)));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while state.sessions[1].rejected_status_updates() < rejected + 5 {
+        assert!(
+            Instant::now() < deadline,
+            "{}",
+            state.sessions[1].rejected_status_updates()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(state.sessions[1].agent_status(), None);
+    // Out of order within one command, then expiry to Unknown.
+    state.sessions[1]
+        .send(format!("printf '\\033]777;rodtty-status;1;{b};5;waiting;1\\007\\033]777;rodtty-status;1;{b};4;working\\007'; sleep 3\r").into_bytes())
+        .unwrap();
+    until(&state, 1, Some(Waiting));
+    until(&state, 1, Some(Unknown));
+    assert_eq!(state.sessions[0].agent_status(), None);
+}

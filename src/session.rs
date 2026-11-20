@@ -27,6 +27,121 @@ pub struct TerminalEvents {
     /// Commands this session's own shell reported, oldest first.
     pub commands: std::collections::VecDeque<CommandRecord>,
     next_command: u64,
+    /// The secret an agent in this session presents with status updates.
+    status_token: String,
+    pub agent: Option<AgentReport>,
+    /// Status updates refused (wrong token, stale, malformed, oversized).
+    pub rejected_status: u64,
+}
+
+/// Agent status, version 1 of the local status interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentState {
+    Working,
+    Waiting,
+    Finished,
+    /// The last report expired.
+    Unknown,
+}
+
+impl AgentState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Working => "working",
+            Self::Waiting => "waiting for input",
+            Self::Finished => "finished",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AgentReport {
+    pub state: AgentState,
+    pub sequence: u64,
+    pub at: Instant,
+    pub ttl: Duration,
+    /// The command running when the agent reported, which it belongs to.
+    pub command: Option<u64>,
+}
+
+impl AgentReport {
+    /// The reported state, or Unknown once the report outlived its TTL.
+    pub fn current(&self) -> AgentState {
+        if self.at.elapsed() > self.ttl {
+            AgentState::Unknown
+        } else {
+            self.state
+        }
+    }
+}
+
+/// Status reports default to this lifetime and may ask for up to an hour.
+pub const AGENT_STATUS_TTL: Duration = Duration::from_secs(120);
+const AGENT_STATUS_MAX_BYTES: usize = 256;
+
+impl TerminalEvents {
+    /// `ESC ] 777 ; rodtty-status ; 1 ; <token> ; <sequence> ; <state> [; <ttl>] BEL`
+    fn agent_status(&mut self, params: &[&[u8]]) {
+        let size: usize = params.iter().map(|p| p.len() + 1).sum();
+        let parsed = (|| {
+            if size > AGENT_STATUS_MAX_BYTES || self.status_token.is_empty() {
+                return None;
+            }
+            let [version, token, sequence, state, rest @ ..] = params else {
+                return None;
+            };
+            if *version != b"1" || rest.len() > 1 {
+                return None;
+            }
+            let expected = self.status_token.as_bytes();
+            if token.len() != expected.len()
+                || token
+                    .iter()
+                    .zip(expected)
+                    .fold(0u8, |a, (x, y)| a | (x ^ y))
+                    != 0
+            {
+                return None;
+            }
+            let sequence: u64 = std::str::from_utf8(sequence).ok()?.parse().ok()?;
+            if self.agent.is_some_and(|a| sequence <= a.sequence) {
+                return None;
+            }
+            let state = match *state {
+                b"working" => AgentState::Working,
+                b"waiting" => AgentState::Waiting,
+                b"finished" => AgentState::Finished,
+                _ => return None,
+            };
+            let ttl = match rest.first() {
+                Some(t) => {
+                    let t: u64 = std::str::from_utf8(t).ok()?.parse().ok()?;
+                    if !(1..=3600).contains(&t) {
+                        return None;
+                    }
+                    Duration::from_secs(t)
+                }
+                None => AGENT_STATUS_TTL,
+            };
+            let command = self
+                .commands
+                .back()
+                .filter(|c| c.ended.is_none())
+                .map(|c| c.id);
+            Some(AgentReport {
+                state,
+                sequence,
+                at: Instant::now(),
+                ttl,
+                command,
+            })
+        })();
+        match parsed {
+            Some(report) => self.agent = Some(report),
+            None => self.rejected_status += 1,
+        }
+    }
 }
 
 /// Commands kept per session. Their output ranges index the session's
@@ -114,6 +229,10 @@ impl TerminalEvents {
         if let Some(command) = self.commands.back_mut()
             && command.ended.is_none()
         {
+            // The command the agent reported from ended: the agent is gone.
+            if self.agent.is_some_and(|a| a.command == Some(command.id)) {
+                self.agent = None;
+            }
             command.ended = Some(Instant::now());
             command.exit = exit;
             command.output_end = Some(self.offset);
@@ -148,6 +267,7 @@ impl vt100::Callbacks for TerminalEvents {
                     }
                 }
             }
+            [b"777", b"rodtty-status", rest @ ..] => self.agent_status(rest),
             [b"777", b"rodtty", tag, phase, status @ ..]
                 if !self.activity_tag.is_empty() && *tag == self.activity_tag.as_bytes() =>
             {
@@ -330,6 +450,10 @@ impl Session {
         command.env(DISABLED_ENV, &profile.disabled);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // The local agent status interface: version and this session's secret.
+        let status_token = crate::remote::secret(16).unwrap_or_default();
+        command.env("RODTTY_AGENT_STATUS", "1");
+        command.env("RODTTY_AGENT_STATUS_TOKEN", &status_token);
         command.env_remove("BASH_ENV");
         let mut child = pair
             .slave
@@ -350,6 +474,7 @@ impl Session {
                 TerminalEvents {
                     command_running: true,
                     activity_tag: profile.activity_tag.clone(),
+                    status_token,
                     ..Default::default()
                 },
             ),
@@ -456,6 +581,17 @@ impl Session {
             job_pids,
             profile: profile_directory,
         })
+    }
+
+    /// The agent status reported in this session, if any.
+    pub fn agent_status(&self) -> Option<AgentState> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.parser.callbacks().agent.map(|a| a.current())
+    }
+
+    pub fn rejected_status_updates(&self) -> u64 {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.parser.callbacks().rejected_status
     }
 
     /// The commands this session's shell reported, oldest first.
