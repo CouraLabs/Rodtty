@@ -219,7 +219,8 @@ mod console {
             if unsafe { GetConsoleMode(input(), &raw mut original) } == 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            let raw = (original & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+            let raw = (original
+                & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
                 | ENABLE_VIRTUAL_TERMINAL_INPUT;
             // SAFETY: as above; the mode is a plain bit mask.
             if unsafe { SetConsoleMode(input(), raw) } == 0 {
