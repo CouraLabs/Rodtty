@@ -15,7 +15,12 @@ pub(crate) fn tilde_path(path: &std::path::Path) -> String {
         .ok()
         .filter(|rest| !rest.as_os_str().is_empty())
     {
-        return format!("~/{}", rest.display());
+        // `/` between folders on every platform, as the shell's own `~` prompt shows them.
+        let rest: Vec<_> = rest
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect();
+        return format!("~/{}", rest.join("/"));
     }
     path.display().to_string()
 }
