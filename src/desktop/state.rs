@@ -85,6 +85,8 @@ pub(crate) struct State {
     pub(crate) automation: automation::Automation,
     /// Whether this process holds the owner instance lock, and so serves automation.
     pub(crate) owner_instance: bool,
+    /// The session each project task last ran in, by (workspace, task name).
+    pub(crate) task_sessions: std::collections::HashMap<(String, String), usize>,
     #[cfg(feature = "browser")]
     pub(crate) browsers: browser::Browsers,
     /// A diff an automation client asked to show once its file has opened.
@@ -204,6 +206,7 @@ impl State {
             font_terminal: Default::default(),
             automation: Default::default(),
             owner_instance: false,
+            task_sessions: Default::default(),
             #[cfg(feature = "browser")]
             browsers: Default::default(),
             pending_diff: None,

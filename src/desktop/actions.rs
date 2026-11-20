@@ -66,6 +66,8 @@ pub(super) enum AppAction {
     OpenBrowser,
     CodexApprove,
     ShowServices,
+    EditTasks,
+    RunTask(u16),
     CheckEnvironment,
     CodexDecline,
     CloseBrowser,

@@ -40,6 +40,8 @@ impl State {
             AppAction::AutomationTakeOver => self.automation_take_over(),
             AppAction::CodexApprove => self.codex_decide("accept"),
             AppAction::ShowServices => self.show_services(),
+            AppAction::EditTasks => self.edit_tasks(),
+            AppAction::RunTask(index) => self.run_task_index(usize::from(index)),
             AppAction::CheckEnvironment => self.check_environment(),
             AppAction::CodexDecline => self.codex_decide("decline"),
             #[cfg(feature = "browser")]
@@ -100,7 +102,10 @@ impl State {
                     self.reveal_file_result(path, tx);
                 }
             }
-            AppAction::CommandPalette => self.open_palette(tx),
+            AppAction::CommandPalette => {
+                self.refresh_task_commands();
+                self.open_palette(tx)
+            }
             AppAction::NewTerminal => {
                 tx.blur();
                 self.workspace.layout.terminal = true;

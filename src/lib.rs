@@ -26,6 +26,7 @@ pub mod profile;
 pub mod prompt;
 pub mod services;
 pub mod session;
+pub mod tasks;
 pub mod work;
 pub mod workspaces;
 

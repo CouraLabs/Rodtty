@@ -23,6 +23,7 @@ mod codex;
 mod fonts;
 mod motion;
 mod search;
+mod tasks;
 use motion::{Enters, Entrance};
 mod tabs;
 use appearance::{Appearance, rgb};

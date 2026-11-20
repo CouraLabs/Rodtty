@@ -32,6 +32,7 @@ mod terminal;
 mod tests;
 
 pub(crate) use input::VirtualInput;
+pub(crate) use terminal::quote as terminal_quote;
 
 /// Who opened a session and which workspace it belongs to, fixed when
 /// automation first sees it.
@@ -406,6 +407,10 @@ impl Host {
             "editor_save" => editor::save(self, grant, &args),
             "git_changes" => editor::git_changes(self, grant, &args),
             "services_list" => editor::services(self, grant, &cancel),
+            "tasks_list" | "task_run" => {
+                let tool = name.to_owned();
+                ui!(|s, tx| s.auto_tasks(&g, tool, &args))
+            }
             "project_environment" => editor::environment(self, grant, &args, &cancel),
             "git_diff" => editor::git_diff(self, grant, &args),
             "capture_screenshot" => self.capture(grant, &args),
@@ -1165,5 +1170,52 @@ impl State {
             };
             handle.update(move |s, _| s.message = summary);
         });
+    }
+}
+
+fn name_owned(_args: &Value, name: &str) -> String {
+    name.to_owned()
+}
+
+impl State {
+    fn auto_tasks(&mut self, grant: &ClientGrant, tool: String, args: &Value) -> ToolResult {
+        let (workspace, root) = match crate::automation::arg_opt_str(args, "workspace")? {
+            Some(id) => {
+                let registry = crate::workspaces::Registry::load(&self.root).unwrap_or_default();
+                match registry.get(id) {
+                    Some(w) => (w.id.clone(), w.root.clone()),
+                    None if self.active_workspace().0 == id => self.active_workspace(),
+                    None => {
+                        return Err(ToolError::new(
+                            ErrorCode::UnknownTarget,
+                            "No such workspace",
+                        ));
+                    }
+                }
+            }
+            None => self.active_workspace(),
+        };
+        grant.check(None, Some(&workspace))?;
+        let file = crate::tasks::TaskFile::load(&self.root, &workspace).map_err(|e| {
+            ToolError::new(
+                ErrorCode::Conflict,
+                format!("The project's task file is invalid: {e:#}"),
+            )
+        })?;
+        if tool == "tasks_list" {
+            return Ok(json!({"workspace": workspace, "root": root, "tasks": file.tasks}));
+        }
+        let name = crate::automation::arg_str(args, "name")?;
+        let task = file.find(name).cloned().ok_or_else(|| {
+            ToolError::new(ErrorCode::UnknownTarget, format!("No task named {name}"))
+        })?;
+        let (index, started) = self
+            .run_task(&workspace, &root, &task, Some(&grant.id))
+            .map_err(|e| ToolError::new(ErrorCode::Conflict, e))?;
+        let target = self.terminal_target(&self.sessions[index]);
+        self.emit("session", Some(&target), json!({"state": if started { "task_started" } else { "task_running" }, "task": task.name}));
+        Ok(
+            json!({"task": task, "terminal": target, "started": started, "already_running": !started}),
+        )
     }
 }

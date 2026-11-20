@@ -260,6 +260,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "edit-tasks",
+            "Tasks: Edit Project Tasks",
+            "",
+            AppAction::EditTasks,
+        ),
+        (
             "show-services",
             "Services: Show Local Services",
             "",
