@@ -6,6 +6,18 @@ The release workflow publishes the section whose heading matches the tagged vers
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-20
+
+### Added
+
+- Mouse reporting for terminal applications that request it (xterm modes 9, 1000, 1002 and 1003, in default, UTF-8 and SGR encodings): clicks, drags, motion and the wheel reach the application. Shift keeps Rodtty's own selection and scrollback.
+- The wheel scrolls alternate-screen applications that don't request mouse input, such as `less` and `man`, by sending arrow keys.
+
+### Fixed
+
+- The wheel and trackpad scroll the terminal's scrollback in the system's scroll direction, including macOS natural scrolling. They scrolled the opposite way.
+- A full terminal draws in about a millisecond instead of about 17, so output and scrolling keep up with the display's refresh rate. Adjacent ASCII cells of one style now share one text run instead of one text element per cell.
+
 ## [0.1.0] - 2026-11-19
 
 First public release. Windows and macOS native runtime checks are still pending; see [the desktop implementation report](docs/desktop-implementation.md).
@@ -23,5 +35,6 @@ First public release. Windows and macOS native runtime checks are still pending;
 - Native accessibility support and reduced-motion-aware transitions.
 - Installers: a universal macOS app, Windows MSI installers for x64 and ARM64, and Linux archives for x86_64 and ARM64, distributed through GitHub Releases, Homebrew, and winget.
 
-[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/CouraLabs/Rodtty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/CouraLabs/Rodtty/releases/tag/v0.1.0

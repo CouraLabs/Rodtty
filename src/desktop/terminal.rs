@@ -2,6 +2,7 @@
 //! and clipboard.
 pub(crate) mod clipboard;
 mod keys;
+pub(crate) mod mouse;
 pub(crate) mod palette;
 pub(crate) mod search;
 mod tabs;

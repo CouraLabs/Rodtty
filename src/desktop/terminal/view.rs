@@ -1,7 +1,9 @@
-//! The terminal grid: one positioned run per cell, painted from the
+//! The terminal grid: positioned runs on a fixed cell grid, painted from the
 //! appearance's terminal palette, with selection and search highlights, and
-//! the pointer gestures (selection drag, wheel scroll) over it.
+//! the pointer gestures over it: selection drag and wheel scroll, or mouse
+//! reports to an application that asked for them.
 use crate::desktop::*;
+use terminal::mouse;
 
 pub(crate) fn grid(state: &State, a: &Appearance) -> El {
     state.with_screen(|screen| grid_view(state, screen, a))
@@ -27,8 +29,14 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         .grow(1.0)
         .clip_soft(0.0)
         .fill(p.background);
-    // Position runs on a fixed cell grid. Wide glyphs get their own run so
-    // fallback-font advances cannot shift the cells following them.
+    // Glyphs sit on a fixed cell grid. Adjacent ASCII cells of one style share
+    // a text run whose tracking makes every advance exactly one cell, so a
+    // full screen lays out a few runs per row instead of one per cell. Other
+    // glyphs (wide, combining, fallback-font) keep a run of their own, so
+    // their advances can never shift the cells after them.
+    let spacing = metrics.spacing;
+    let styles = RunStyles::new(metrics.style, cw);
+    let mut run: Option<Run> = None;
     for r in 0..rows {
         let mut c = 0;
         while c < cols {
@@ -42,13 +50,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             }
             let selected = |c| selection.is_some_and(|(a, b)| (r, c) >= a && (r, c) < b);
             let start = c;
-            // Each terminal cell has an explicit origin. Font fallback, ligatures,
-            // combining sequences and pixel rounding must never shift later cells.
-            let content = if cell.contents().is_empty() {
-                " "
-            } else {
-                cell.contents()
-            };
+            let content = cell.contents();
             let end = c + if cell.is_wide() { 2 } else { 1 };
             // Colors resolve from the cell's color index on every frame, so a
             // theme change recolors retained output without new output.
@@ -85,14 +87,30 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
                         .fill(background),
                 );
             }
-            if !content.trim().is_empty() {
-                let mut style = metrics.style;
-                if cell.bold() {
-                    style.weight = 600.0;
+            let (bold, italic) = (cell.bold(), cell.italic());
+            if content.trim().is_empty() {
+                // A blank cell joins the open run only if a glyph follows it.
+                if let Some(open) = &mut run {
+                    open.blanks += 1;
                 }
-                style.italic = cell.italic();
+            } else if !cell.is_wide() && content.len() == 1 && content.is_ascii() {
+                match &mut run {
+                    Some(open) if open.fg == fg && open.bold == bold && open.italic == italic => {
+                        open.push(content);
+                    }
+                    _ => {
+                        grid = flush(grid, run.take(), &styles, cw, ch, spacing);
+                        run = Some(Run::new(r, start, content, fg, bold, italic));
+                    }
+                }
+            } else {
+                grid = flush(grid, run.take(), &styles, cw, ch, spacing);
+                let mut style = metrics.style;
+                if bold {
+                    style.weight = BOLD;
+                }
+                style.italic = italic;
                 // Letter spacing widens the cell; the glyph sits centered in it.
-                let spacing = metrics.spacing;
                 grid = grid.child(
                     text(content)
                         .key(format!("terminal-cell-{r}-{start}"))
@@ -111,6 +129,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             }
             c = end.max(c + 1);
         }
+        grid = flush(grid, run.take(), &styles, cw, ch, spacing);
     }
     if !screen.hide_cursor() && screen.scrollback() == 0 {
         let (r, c) = screen.cursor_position();
@@ -163,6 +182,38 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
                 (x / cw).floor().clamp(0.0, cols as f32) as u16,
             )
         };
+        // A mouse-aware application gets the press, its motion and its
+        // release; the terminal selects nothing.
+        let mods = mouse::Modifiers::from(tx.mods());
+        let cell = mouse_cell(rows, cols, cw, ch, drag.x, drag.y);
+        if matches!(drag.phase, Phase::Down)
+            && s.with_screen(|screen| mouse::reporting(screen, mods))
+        {
+            s.selection = None;
+            s.drag_origin = None;
+            s.mouse_press = Some(cell);
+            s.report_mouse(mouse::Action::Press(mouse::Button::Left), cell, mods);
+            return;
+        }
+        if let Some(last) = s.mouse_press {
+            match drag.phase {
+                Phase::Down => {}
+                Phase::Move => {
+                    if cell != last {
+                        s.mouse_press = Some(cell);
+                        let held = mouse::Action::Motion(Some(mouse::Button::Left));
+                        s.report_mouse(held, cell, mods);
+                    }
+                }
+                // A cancelled press still releases, or the application
+                // would think the button is held.
+                Phase::Up => {
+                    s.mouse_press = None;
+                    s.report_mouse(mouse::Action::Release(mouse::Button::Left), cell, mods);
+                }
+            }
+            return;
+        }
         if drag.cancelled() {
             s.selection = None;
             s.drag_origin = None;
@@ -204,15 +255,181 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             }
         }
     })
+    .on_pointer_move_local(move |s: &mut State, pointer, tx| {
+        // Only the view's input changes here, never what it draws.
+        tx.live_only();
+        if s.mouse_press.is_some() {
+            return;
+        }
+        let mods = mouse::Modifiers::from(tx.mods());
+        let Some((rows, cols, any_motion)) = s.active().map(|session| {
+            session.with_screen(|screen| {
+                let (rows, cols) = screen.size();
+                let any = screen.mouse_protocol_mode() == vt100::MouseProtocolMode::AnyMotion;
+                (rows, cols, any && mouse::reporting(screen, mods))
+            })
+        }) else {
+            return;
+        };
+        if !any_motion {
+            s.mouse_hover = None;
+            return;
+        }
+        let cell = mouse_cell(rows, cols, cw, ch, pointer.x, pointer.y);
+        if s.mouse_hover != Some(cell) {
+            s.mouse_hover = Some(cell);
+            s.report_mouse(mouse::Action::Motion(None), cell, mods);
+        }
+    })
     .on_wheel(move |s: &mut State, event, _| {
-        if let Some(session) = s.active() {
-            session.scroll((-event.dy / ch).round() as isize);
+        // Trackpads deliver fractions of a line; keep them until they add up.
+        s.wheel_remainder += event.dy;
+        let lines = (s.wheel_remainder / ch).trunc();
+        s.wheel_remainder -= lines * ch;
+        let steps = lines.abs() as usize;
+        let Some(session) = s.active().filter(|_| steps > 0) else {
+            return true;
+        };
+        // Positive `dy` moves content down, revealing what is above: wheel up.
+        let up = lines > 0.0;
+        let mods = mouse::Modifiers::from(event.mods);
+        let bytes = session.with_screen(|screen| {
+            let (rows, cols) = screen.size();
+            if mouse::reporting(screen, mods) {
+                let cell = mouse_cell(rows, cols, cw, ch, event.x, event.y);
+                let action = if up {
+                    mouse::Action::WheelUp
+                } else {
+                    mouse::Action::WheelDown
+                };
+                mouse::encode(screen, action, cell.0, cell.1, mods)
+                    .map(|report| report.repeat(steps))
+                    .or(Some(Vec::new()))
+            } else if screen.alternate_screen() && !mods.shift {
+                // The alternate screen keeps no scrollback; the application
+                // scrolls its own view by the arrow keys.
+                Some(mouse::wheel_arrow(screen, up).repeat(steps))
+            } else {
+                None
+            }
+        });
+        match bytes {
+            Some(bytes) if !bytes.is_empty() => {
+                let _ = session.send(bytes);
+            }
+            Some(_) => {}
+            // Revealing what is above means going further back in history.
+            None => session.scroll(lines as isize),
         }
         true
     })
 }
 
+/// The weight bold cells take.
+const BOLD: f32 = 600.0;
+
+/// Adjacent single-cell ASCII glyphs of one style, drawn as one text run.
+struct Run {
+    row: u16,
+    start: u16,
+    text: String,
+    /// Blank cells after the last glyph, added only if another glyph follows.
+    blanks: u16,
+    fg: Color,
+    bold: bool,
+    italic: bool,
+}
+
+impl Run {
+    fn new(row: u16, start: u16, glyph: &str, fg: Color, bold: bool, italic: bool) -> Self {
+        Self {
+            row,
+            start,
+            text: glyph.to_owned(),
+            blanks: 0,
+            fg,
+            bold,
+            italic,
+        }
+    }
+
+    fn push(&mut self, glyph: &str) {
+        self.text
+            .extend(std::iter::repeat_n(' ', usize::from(self.blanks)));
+        self.blanks = 0;
+        self.text.push_str(glyph);
+    }
+}
+
+/// The terminal style in each of its four weight and slant variants, each
+/// tracked so one glyph advances exactly one cell.
+struct RunStyles([TextStyle; 4]);
+
+impl RunStyles {
+    fn new(base: TextStyle, cw: f32) -> Self {
+        Self(
+            [(false, false), (false, true), (true, false), (true, true)].map(|(bold, italic)| {
+                let mut style = base;
+                if bold {
+                    style.weight = BOLD;
+                }
+                style.italic = italic;
+                // Measured over ten glyphs, as the cell width is, so rounding in
+                // one advance doesn't skew the tracking.
+                let natural = rune::text::advance("MMMMMMMMMM", style) / 10.0;
+                style.tracking += cw - natural;
+                style
+            }),
+        )
+    }
+
+    fn get(&self, bold: bool, italic: bool) -> TextStyle {
+        self.0[usize::from(bold) * 2 + usize::from(italic)]
+    }
+}
+
+/// Adds `run`, if any, to `grid`.
+fn flush(grid: El, run: Option<Run>, styles: &RunStyles, cw: f32, ch: f32, spacing: f32) -> El {
+    let Some(run) = run else {
+        return grid;
+    };
+    let cells = run.text.len() as f32;
+    // Letter spacing widens the cell; the glyph sits centered in it.
+    grid.child(
+        text(run.text)
+            .key(format!("terminal-cell-{}-{}", run.row, run.start))
+            .font(styles.get(run.bold, run.italic))
+            .color(run.fg)
+            .absolute(
+                f32::from(run.start) * cw + spacing / 2.0,
+                f32::from(run.row) * ch,
+            )
+            .size(cells * cw + 1.0 + spacing.abs(), ch),
+    )
+}
+
+/// The cell under (`x`, `y`) in the grid's own points, clamped to the screen.
+fn mouse_cell(rows: u16, cols: u16, cw: f32, ch: f32, x: f32, y: f32) -> (u16, u16) {
+    let clamp = |v: f32, cell: f32, count: u16| {
+        (v / cell)
+            .floor()
+            .clamp(0.0, f32::from(count.saturating_sub(1))) as u16
+    };
+    (clamp(y, ch, rows), clamp(x, cw, cols))
+}
+
 impl State {
+    /// Sends `action` at `cell` to the active session's application when its
+    /// mouse mode reports it.
+    fn report_mouse(&self, action: mouse::Action, cell: (u16, u16), mods: mouse::Modifiers) {
+        if let Some(session) = self.active()
+            && let Some(bytes) =
+                session.with_screen(|screen| mouse::encode(screen, action, cell.0, cell.1, mods))
+        {
+            let _ = session.send(bytes);
+        }
+    }
+
     /// Notes new output in every session since the last poll, and reports
     /// whether there was any. Output moves the cells a selection or search
     /// highlight was drawn over, so those are dropped rather than left over

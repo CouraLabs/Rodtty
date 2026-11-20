@@ -67,6 +67,13 @@ pub(crate) struct State {
     /// Where the current terminal press started, before it has travelled far
     /// enough to be a selection. `None` between gestures.
     pub(crate) drag_origin: Option<(f32, f32)>,
+    /// The cell a press reported to a mouse-aware application last named,
+    /// while that press is held. `None` when the terminal owns the gesture.
+    pub(crate) mouse_press: Option<(u16, u16)>,
+    /// The cell the last reported button-less motion named.
+    pub(crate) mouse_hover: Option<(u16, u16)>,
+    /// Wheel travel in points not yet worth a whole line.
+    pub(crate) wheel_remainder: f32,
     pub(crate) terminal_context_open: bool,
     pub(crate) message: String,
     pub(crate) preview: Option<vt100::Screen>,
@@ -177,6 +184,9 @@ impl State {
             explorer_search: Default::default(),
             pending: None,
             selection: None,
+            mouse_press: None,
+            mouse_hover: None,
+            wheel_remainder: 0.0,
             terminal_context_open: false,
             message,
             preview: None,
