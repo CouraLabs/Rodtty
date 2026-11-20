@@ -377,15 +377,23 @@ impl Session {
         let replies = Arc::downgrade(&input);
         std::thread::spawn(move || {
             let mut buffer = [0; 16_384];
+            // The start of an activity marker the last read cut off, held
+            // until its end arrives so the marker's offset stays exact.
+            let mut carry: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(count) => {
                         let mut state = read_state.lock().unwrap_or_else(|e| e.into_inner());
+                        carry.extend_from_slice(&buffer[..count]);
+                        let held = incomplete_marker(&carry).unwrap_or(carry.len());
+                        let pending = carry.split_off(held);
+                        let data = std::mem::replace(&mut carry, pending);
+                        let count = data.len();
                         // Feed the parser up to the end of each activity
                         // marker separately, so a command's recorded output
                         // range starts and ends exactly at its markers.
-                        let chunk = &buffer[..count];
+                        let chunk = &data[..];
                         let mut from = 0;
                         for end in marker_ends(chunk).chain([count]) {
                             if end <= from {
@@ -709,6 +717,38 @@ impl Drop for Session {
 }
 
 /// Offsets just past each complete `OSC 777;rodtty` marker in `chunk`.
+/// Where an activity marker, or a prefix of one, starts at the end of
+/// `chunk` without its terminator. Very long unterminated text is not held.
+fn incomplete_marker(chunk: &[u8]) -> Option<usize> {
+    const START: &[u8] = b"\x1b]777;rodtty;";
+    const LIMIT: usize = 4096;
+    let from = chunk.len().saturating_sub(LIMIT);
+    let window = &chunk[from..];
+    if let Some(at) = window.windows(START.len()).rposition(|w| w == START) {
+        let body = &window[at + START.len()..];
+        let ended = body.contains(&0x07) || body.windows(2).any(|w| w == b"\x1b\\");
+        if !ended {
+            return Some(from + at);
+        }
+    }
+    // The chunk ends partway into a marker's opening bytes.
+    (1..START.len().min(chunk.len() + 1))
+        .rev()
+        .find(|&n| chunk.ends_with(&START[..n]))
+        .map(|n| chunk.len() - n)
+}
+
+#[cfg(test)]
+#[test]
+fn split_markers_are_held_until_complete() {
+    assert_eq!(incomplete_marker(b"out\x1b]777;rod"), Some(3));
+    assert_eq!(incomplete_marker(b"out\x1b]777;rodtty;tag;C"), Some(3));
+    assert_eq!(incomplete_marker(b"out\x1b]777;rodtty;tag;C\x1b"), Some(3));
+    assert_eq!(incomplete_marker(b"out\x1b]777;rodtty;tag;C\x07more"), None);
+    assert_eq!(incomplete_marker(b"plain text"), None);
+    assert_eq!(incomplete_marker(b"color \x1b[31m"), None);
+}
+
 fn marker_ends(chunk: &[u8]) -> impl Iterator<Item = usize> + '_ {
     const START: &[u8] = b"\x1b]777;rodtty;";
     let mut at = 0;
