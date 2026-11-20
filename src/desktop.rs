@@ -23,6 +23,7 @@ mod codex;
 mod folders;
 mod fonts;
 mod motion;
+mod overview;
 mod search;
 mod tasks;
 use motion::{Enters, Entrance};

@@ -43,6 +43,10 @@ impl State {
             AppAction::EditTasks => self.edit_tasks(),
             AppAction::FolderTerminal(i) => self.folder_open_terminal(usize::from(i)),
             AppAction::FolderChange(i) => self.folder_change_directory(usize::from(i)),
+            AppAction::FocusSession(i) => self.focus_listed_session(usize::from(i)),
+            AppAction::SwitchWorkspace(i) => self.switch_listed_workspace(usize::from(i), tx),
+            AppAction::AddWorkspace => self.add_workspace(),
+            AppAction::RemoveWorkspace => self.remove_active_workspace(),
             AppAction::ClearFolderHistory => {
                 self.folder_history.clear();
                 self.refresh_folder_commands();
@@ -133,6 +137,7 @@ impl State {
             AppAction::CommandPalette => {
                 self.refresh_task_commands();
                 self.refresh_folder_commands();
+                self.refresh_session_commands();
                 self.open_palette(tx)
             }
             AppAction::NewTerminal => {

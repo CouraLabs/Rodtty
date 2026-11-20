@@ -100,6 +100,9 @@ pub(crate) struct State {
     pub(crate) folder_history: Vec<PathBuf>,
     /// Each session's directory as last recorded, so only changes count.
     pub(crate) folder_seen: std::collections::HashMap<usize, PathBuf>,
+    /// Session and workspace identities behind the palette's overview rows.
+    pub(crate) session_rows: Vec<usize>,
+    pub(crate) workspace_rows: Vec<String>,
     #[cfg(feature = "browser")]
     pub(crate) browsers: browser::Browsers,
     /// A diff an automation client asked to show once its file has opened.
@@ -223,6 +226,8 @@ impl State {
             passthrough: None,
             folder_history: Vec::new(),
             folder_seen: Default::default(),
+            session_rows: Vec::new(),
+            workspace_rows: Vec::new(),
             #[cfg(feature = "browser")]
             browsers: Default::default(),
             pending_diff: None,

@@ -260,6 +260,18 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "add-workspace",
+            "Workspaces: Add Explorer Folder as Workspace",
+            "",
+            AppAction::AddWorkspace,
+        ),
+        (
+            "remove-workspace",
+            "Workspaces: Remove Active Workspace (keeps its files)",
+            "",
+            AppAction::RemoveWorkspace,
+        ),
+        (
             "clear-folder-history",
             "Folders: Clear Recent Folders",
             "",
