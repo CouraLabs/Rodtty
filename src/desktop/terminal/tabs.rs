@@ -21,18 +21,34 @@ pub(crate) fn terminal_tabs(state: &State, a: &Appearance) -> El {
         .scroll_x()
         .gap(4.0)
         .center_y();
-    let count = state.sessions.len();
+    // A split tab's second pane draws inside the first's tab.
+    let count = state
+        .sessions
+        .iter()
+        .filter(|s| !state.is_second_pane(s.id()))
+        .count();
+    let active_id = state.active().map(Session::id);
+    let mut position = 0;
     for (i, session) in state.sessions.iter().enumerate() {
-        let label = session.tab_title();
+        if state.is_second_pane(session.id()) {
+            continue;
+        }
+        let split = state.split_of(session.id());
+        let label = match split {
+            Some(_) => format!("{} ⫴", session.tab_title()),
+            None => session.tab_title(),
+        };
         // The label names the program; the tooltip says where it runs.
         let location = tilde_path(&session.cwd());
         let id = tabs::session_id(session);
-        let selected = i == state.active;
+        let selected = i == state.active || split.is_some_and(|x| Some(x.second) == active_id);
+        let shown = position;
+        position += 1;
         // The label carries the activation, because interactive()'s drag and
         // middle handlers make it its own press target and would otherwise
         // swallow a press on the pill.
         let tab = tabs::interactive(
-            terminal_tab(a, i, count, &label, selected)
+            terminal_tab(a, i, shown, count, &label, selected)
                 .help(location)
                 .on_press_tx(move |s: &mut State, tx| {
                     tx.blur();
@@ -45,13 +61,13 @@ pub(crate) fn terminal_tabs(state: &State, a: &Appearance) -> El {
             format!("terminal-close-{i}"),
             &rune_kit::glyphs::CLOSE,
             "End terminal session",
-            move |s, tx| s.dispatch(AppAction::CloseTerminal(id), tx),
+            move |s, tx| s.dispatch(AppAction::CloseTab(id), tx),
         )
         // Each close button names the tab it ends, since every tab has one
         // and a reader meets them out of the strip.
         .label(format!(
             "End terminal session: {label} (tab {} of {count})",
-            i + 1
+            shown + 1
         ))
         .description("")
         .w(22.0)
@@ -99,6 +115,7 @@ pub(crate) fn terminal_tabs(state: &State, a: &Appearance) -> El {
 pub(crate) fn terminal_tab(
     a: &Appearance,
     i: usize,
+    shown: usize,
     count: usize,
     label: &str,
     selected: bool,
@@ -111,7 +128,7 @@ pub(crate) fn terminal_tab(
         .label(label)
         .focusable(true)
         .focus_selected(selected)
-        .position_in_set(i + 1, count)
+        .position_in_set(shown + 1, count)
         .focus_ring(2.0, 1.0, a.accent())
         .radius(6.0)
         .no_window_drag()

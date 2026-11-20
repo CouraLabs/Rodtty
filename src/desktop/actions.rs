@@ -93,6 +93,10 @@ pub(super) enum AppAction {
     NextChange,
     PreviousChange,
     RecoverDrafts,
+    SplitRight,
+    SplitDown,
+    FocusOtherPane,
+    CloseTab(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

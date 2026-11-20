@@ -84,6 +84,7 @@ impl State {
         self.workspace.layout.explorer_revealed = self.workspace.explorer_revealed;
         self.workspace.layout.terminals = self.sessions.iter().map(Session::cwd).collect();
         self.workspace.layout.active_terminal = self.active;
+        self.workspace.layout.splits = self.saved_splits();
         self.workspace.layout.terminal_focus =
             self.workspace.terminal_focus() || self.settings || self.search_tab;
         if let Some(selected) = self.workspace.tree.cursor() {

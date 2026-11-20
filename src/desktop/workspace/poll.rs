@@ -45,6 +45,7 @@ impl State {
         changed |= self.poll_log_filter();
         changed |= self.poll_changes();
         self.poll_drafts();
+        self.prune_splits();
         tx.wake_after(Duration::from_millis(200));
         changed
     }

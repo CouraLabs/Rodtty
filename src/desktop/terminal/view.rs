@@ -6,22 +6,44 @@ use crate::desktop::*;
 use terminal::mouse;
 
 pub(crate) fn grid(state: &State, a: &Appearance) -> El {
-    state.with_screen(|screen| grid_view(state, screen, a))
+    state.with_screen(|screen| grid_view(state, screen, a, None))
 }
 
-fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
+/// Session `id`'s screen as an unfocused split pane: drawn as the terminal
+/// draws, without selection or search highlights. A press focuses it.
+pub(crate) fn passive_grid(state: &State, a: &Appearance, id: usize) -> El {
+    let Some(session) = state.sessions.iter().find(|s| s.id() == id) else {
+        return el();
+    };
+    let title = session.tab_title();
+    session
+        .with_screen(|screen| grid_view(state, screen, a, Some(id)))
+        .label(format!("Terminal: {title} (press to focus)"))
+        .on_layout(move |s: &mut State, rect| s.resize_pane(id, rect))
+        .on_background_press_tx(move |s: &mut State, tx| {
+            tx.blur();
+            s.focus_session(id);
+        })
+}
+
+fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance, passive: Option<usize>) -> El {
     let metrics = fonts::Metrics::measure();
     let (cw, ch) = (metrics.width, metrics.height);
     let (rows, cols) = screen.size();
     let selection = state
         .selection
+        .filter(|_| passive.is_none())
         .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
     let p = a.terminal_palette();
-    let highlight = state
-        .terminal_search
-        .highlighter(screen, state.screen_key());
+    let highlight = state.terminal_search.highlighter(
+        screen,
+        passive.map_or_else(|| state.screen_key(), |id| usize::MAX - id),
+    );
     let mut grid = el()
-        .key("terminal")
+        .key(passive.map_or_else(
+            || "terminal".to_owned(),
+            |id| format!("terminal-passive-{id}"),
+        ))
         .instant_changes()
         .role("terminal")
         .label("Terminal")
@@ -131,7 +153,7 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         }
         grid = flush(grid, run.take(), &styles, cw, ch, spacing);
     }
-    if !screen.hide_cursor() && screen.scrollback() == 0 {
+    if passive.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
         let (r, c) = screen.cursor_position();
         grid = grid.child(
             el().key("terminal-caret")
@@ -140,6 +162,9 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
                 .fill(p.cursor)
                 .ime_cursor(),
         );
+    }
+    if passive.is_some() {
+        return grid;
     }
     // A metric/session probe also reports when the viewport itself has not changed.
     // Rune's on_layout fires only for changed rectangles; a font-only update still

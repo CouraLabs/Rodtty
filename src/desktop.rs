@@ -30,6 +30,7 @@ mod overview;
 mod runs;
 mod search;
 mod send;
+mod split;
 mod tasks;
 use motion::{Enters, Entrance};
 mod tabs;

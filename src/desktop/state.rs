@@ -89,6 +89,12 @@ pub(crate) struct State {
     pub(crate) pinned_run: Option<runs::PinnedRun>,
     pub(crate) changes: changes::ChangesView,
     pub(crate) drafts: drafts::DraftState,
+    pub(crate) splits: Vec<split::Split>,
+    pub(crate) split_drag: f32,
+    pub(crate) split_rect: Option<[f32; 4]>,
+    /// A split tab being closed: the pane named in `Pending::Tab` and the
+    /// other pane, which ends with it.
+    pub(crate) closing_partner: Option<(usize, usize)>,
     pub(crate) run_comparison: Option<runs::RunComparison>,
     pub(crate) run_diff: rune_kit::diff::DiffState,
     pub(crate) window_focused: bool,
@@ -234,6 +240,10 @@ impl State {
             pinned_run: None,
             changes: Default::default(),
             drafts: Default::default(),
+            splits: Vec::new(),
+            split_drag: 0.5,
+            split_rect: None,
+            closing_partner: None,
             run_comparison: None,
             run_diff: rune_kit::diff::DiffState::default(),
             window_focused: true,
@@ -478,6 +488,33 @@ impl State {
                 tx.quit();
             }
             Some(Pending::Tab(id)) => {
+                let partner = self
+                    .closing_partner
+                    .take()
+                    .filter(|(closing, _)| *closing == id)
+                    .map(|(_, other)| other);
+                // A closed pane's partner fills the tab and takes focus.
+                let survivor = self.split_of(id).and_then(|s| s.partner(id));
+                let was_active = self.active().map(tabs::session_id) == Some(id);
+                for id in std::iter::once(id).chain(partner) {
+                    self.remove_session(id);
+                }
+                self.prune_splits();
+                if was_active
+                    && partner.is_none()
+                    && let Some(other) = survivor
+                    && let Some(i) = self.sessions.iter().position(|s| s.id() == other)
+                {
+                    self.active = i;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn remove_session(&mut self, id: usize) {
+        {
+            {
                 if let Some(index) = self.sessions.iter().position(|s| tabs::session_id(s) == id) {
                     let active = self.active().map(tabs::session_id);
                     self.sessions.remove(index);
@@ -495,7 +532,6 @@ impl State {
                     }
                 }
             }
-            _ => {}
         }
     }
 }

@@ -8,6 +8,10 @@ fn state() -> (tempfile::TempDir, State) {
     (root, state)
 }
 
+pub(super) fn tests_state_for_restore() -> (tempfile::TempDir, State) {
+    state()
+}
+
 fn grant(workspaces: &[String]) -> ClientGrant {
     ClientGrant {
         id: "cl_test".into(),
@@ -579,4 +583,134 @@ fn a_pinned_failing_run_compares_with_its_rerun_and_clearing_leaves_the_terminal
     assert!(runtime.find("run-comparison").is_none());
     assert!(runtime.state.pinned_run.is_none());
     assert_eq!(runtime.state.sessions[0].screen().contents(), before);
+}
+
+#[test]
+fn split_panes_keep_their_own_sizes_input_close_policy_and_restore_both_orientations() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    state.split_active(true);
+    assert_eq!(state.sessions.len(), 2);
+    wait(&state, 1, "rodtty:");
+    let (first, second) = (state.sessions[0].id(), state.sessions[1].id());
+    assert_eq!(state.active, 1, "the new pane has focus");
+    let mut runtime = crate::desktop::tests::runtime_for(state);
+    for _ in 0..4 {
+        runtime.frame(1.0);
+    }
+    let size = |rt: &rune::Runtime<State>, i: usize| rt.state.sessions[i].size();
+    let (a, b) = (size(&runtime, 0), size(&runtime, 1));
+    assert!(
+        a.1 < 100 && b.1 < 100 && a.1 > 20,
+        "side-by-side panes are each narrower: {a:?} {b:?}"
+    );
+    // Drag the divider: the first pane grows, the second shrinks.
+    runtime.update(|s, _| s.set_split_share(first, 0.7));
+    for _ in 0..4 {
+        runtime.frame(1.0);
+    }
+    let (a2, b2) = (size(&runtime, 0), size(&runtime, 1));
+    assert!(a2.1 > a.1 && b2.1 < b.1, "{a2:?} {b2:?}");
+    // Each app sees its own size; typing reaches only the focused pane.
+    runtime.update(|s, _| {
+        s.sessions[1]
+            .send(b"stty size; echo ONLY_SECOND\r".to_vec())
+            .unwrap();
+    });
+    runtime.state.sessions[1]
+        .wait_for("ONLY_SECOND", Duration::from_secs(10))
+        .unwrap();
+    assert!(
+        runtime.state.sessions[1]
+            .screen()
+            .contents()
+            .contains(&format!("{} {}", b2.0, b2.1))
+    );
+    assert!(
+        !runtime.state.sessions[0]
+            .screen()
+            .contents()
+            .contains("ONLY_SECOND")
+    );
+    runtime.update(|s, _| s.paste("pasted-here"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        runtime.state.sessions[1]
+            .screen()
+            .contents()
+            .contains("pasted-here")
+    );
+    assert!(
+        !runtime.state.sessions[0]
+            .screen()
+            .contents()
+            .contains("pasted-here")
+    );
+    runtime.update(|s, _| s.focus_other_pane());
+    assert_eq!(runtime.state.active, 0);
+    // The tab strip shows one tab for both panes.
+    runtime.frame(1.0);
+    assert!(runtime.find("tab-0").is_some() && runtime.find("tab-1").is_none());
+    // Saved layouts keep the orientation, share and positions.
+    let saved = runtime.state.saved_splits();
+    assert_eq!(saved.len(), 1);
+    assert!(saved[0].side_by_side && (saved[0].share - 0.7).abs() < 1e-3);
+    // Cold restoration rebuilds the split over fresh shells.
+    let (root2, mut cold) = tests_state_for_restore();
+    cold.start_tab(root2.path().into());
+    cold.start_tab(root2.path().into());
+    let down = crate::work::SavedSplit {
+        first: 0,
+        second: 1,
+        side_by_side: false,
+        share: 0.4,
+    };
+    cold.restore_splits(&[down], 2);
+    assert!(
+        cold.split_of(cold.sessions[0].id())
+            .is_some_and(|s| !s.side_by_side)
+    );
+    cold.restore_splits(&[down], 3);
+    // A running command in the focused pane: cancel keeps both; confirm keeps the other.
+    runtime.update(|s, _| {
+        s.sessions[0].send(b"sleep 30\r".to_vec()).unwrap();
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    runtime.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+    assert!(matches!(runtime.state.pending, Some(Pending::Tab(id)) if id == first));
+    runtime.update(|s, _| s.pending = None);
+    assert_eq!(
+        runtime.state.sessions.len(),
+        2,
+        "cancel keeps both sessions"
+    );
+    runtime.update(|s, tx| s.dispatch(AppAction::EndTerminal, tx));
+    runtime.update(|s, tx| s.confirm(tx));
+    assert_eq!(runtime.state.sessions.len(), 1);
+    assert_eq!(
+        runtime.state.sessions[0].id(),
+        second,
+        "the other pane keeps running"
+    );
+    assert!(runtime.state.splits.is_empty(), "and fills the tab");
+    // Compact windows: both panes stay reachable through the switcher.
+    runtime.update(|s, _| {
+        s.split_active(false);
+    });
+    runtime.state.sessions[1]
+        .wait_for("rodtty:", Duration::from_secs(10))
+        .unwrap();
+    let mut compact = rune::Runtime::new(
+        std::mem::replace(&mut runtime.state, State::with_root(root.path().into())),
+        view,
+        (480.0, 600.0),
+        rune::Env::new(true, 1.0),
+    );
+    compact.frame(0.0);
+    compact.frame(1.0);
+    assert!(compact.find("split-switch").is_some());
+    let before = compact.state.active;
+    compact.update(|s, _| s.focus_other_pane());
+    assert_ne!(compact.state.active, before);
 }

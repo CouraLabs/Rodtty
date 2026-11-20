@@ -29,12 +29,24 @@ pub struct Layout {
     /// Ordered last directories, never commands, labels, or process identities.
     pub terminals: Vec<PathBuf>,
     pub active_terminal: usize,
+    /// Split tabs, by positions in `terminals`.
+    pub splits: Vec<SavedSplit>,
     pub terminal_focus: bool,
     pub selected_path: Option<PathBuf>,
     /// Where the window sat when it was last saved, so relaunching reopens it
     /// there instead of at the host's default placement. `None` before the
     /// first save on a build that records it.
     pub window: Option<WindowGeometry>,
+}
+
+/// A split terminal tab: the positions of its two sessions among the saved
+/// terminals, its orientation and the first pane's share.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedSplit {
+    pub first: usize,
+    pub second: usize,
+    pub side_by_side: bool,
+    pub share: f32,
 }
 
 /// A window's place on the desktop, saved so a relaunch reopens it there.
@@ -103,6 +115,7 @@ impl Default for Layout {
             active_file: None,
             terminals: Vec::new(),
             active_terminal: 0,
+            splits: Vec::new(),
             terminal_focus: true,
             selected_path: None,
             window: None,

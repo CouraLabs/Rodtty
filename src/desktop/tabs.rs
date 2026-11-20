@@ -160,7 +160,7 @@ impl State {
 
 fn close(target: Target) -> AppAction {
     match target {
-        Target::Terminal(id) => AppAction::CloseTerminal(id),
+        Target::Terminal(id) => AppAction::CloseTab(id),
         Target::Editor(id) => AppAction::CloseEditor(Some(id)),
         Target::Settings => AppAction::CloseSettings,
         Target::Search => AppAction::CloseSearch,
@@ -214,7 +214,10 @@ pub(super) fn context_menu(s: &mut State, target: Target, point: rune::PointerPr
     };
     let mut menu = rune::PopupMenu::new();
     if matches!(target, Target::Terminal(_)) {
-        menu = menu.item(rune::PopupItem::new("new", "New terminal tab"));
+        menu = menu
+            .item(rune::PopupItem::new("new", "New terminal tab"))
+            .item(rune::PopupItem::new("split-right", "Split right"))
+            .item(rune::PopupItem::new("split-down", "Split down"));
     } else if matches!(target, Target::Editor(_)) {
         menu = menu.item(rune::PopupItem::new("save", "Save file"));
     }
@@ -228,6 +231,17 @@ pub(super) fn context_menu(s: &mut State, target: Target, point: rune::PointerPr
         s.tab_strips.context_open = false;
         let action = match chosen {
             Some("new") => Some(AppAction::NewTerminal),
+            Some(split @ ("split-right" | "split-down")) => {
+                // Split the tab that was right-clicked, not the one in front.
+                if let Target::Terminal(id) = target {
+                    s.focus_session(id);
+                }
+                Some(if split == "split-right" {
+                    AppAction::SplitRight
+                } else {
+                    AppAction::SplitDown
+                })
+            }
             Some("save") => match target {
                 Target::Editor(id) => Some(AppAction::SaveEditor(Some(id))),
                 _ => None,

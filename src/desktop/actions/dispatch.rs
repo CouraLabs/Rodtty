@@ -78,6 +78,32 @@ impl State {
             AppAction::FilterTerminal => self.open_log_filter(tx),
             AppAction::SendToTerminal => self.begin_send_to_terminal(),
             AppAction::PinRun => self.pin_last_run(),
+            AppAction::SplitRight => self.split_active(true),
+            AppAction::SplitDown => self.split_active(false),
+            AppAction::FocusOtherPane => self.focus_other_pane(),
+            AppAction::CloseTab(id) => {
+                // A split tab ends both of its sessions, asking as the
+                // tab-close policy asks for either one's running command.
+                let ids = self.tab_sessions(id);
+                let other = ids.iter().copied().find(|x| *x != id);
+                let running = ids.iter().any(|x| {
+                    self.sessions
+                        .iter()
+                        .find(|s| s.id() == *x)
+                        .is_some_and(Session::has_running_commands)
+                });
+                let confirm = match self.config.behavior.terminal_tab_close {
+                    crate::config::TerminalClosePolicy::ConfirmRunning => running,
+                    crate::config::TerminalClosePolicy::AlwaysConfirm => true,
+                    crate::config::TerminalClosePolicy::CloseImmediately => false,
+                };
+                tx.blur();
+                self.closing_partner = other.map(|o| (id, o));
+                self.pending = Some(Pending::Tab(id));
+                if !confirm {
+                    self.confirm(tx);
+                }
+            }
             AppAction::RecoverDrafts => {
                 self.drafts.dialog =
                     !self.drafts.pending.is_empty() || !self.drafts.unreadable.is_empty();
@@ -181,6 +207,7 @@ impl State {
             AppAction::CloseTerminal(id) => {
                 if self.sessions.iter().any(|s| tabs::session_id(s) == id) {
                     tx.blur();
+                    self.closing_partner = None;
                     let confirm = match self.config.behavior.terminal_tab_close {
                         crate::config::TerminalClosePolicy::ConfirmRunning => self
                             .sessions

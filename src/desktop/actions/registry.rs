@@ -290,6 +290,24 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "split-right",
+            "Terminal: Split Right",
+            app("Ctrl+Shift+5", "Cmd+\\"),
+            AppAction::SplitRight,
+        ),
+        (
+            "split-down",
+            "Terminal: Split Down",
+            "",
+            AppAction::SplitDown,
+        ),
+        (
+            "focus-other-pane",
+            "Terminal: Focus Other Pane",
+            app("Ctrl+Alt+O", "Cmd+Alt+O"),
+            AppAction::FocusOtherPane,
+        ),
+        (
             "recover-drafts",
             "File: Recover Unsaved Edits…",
             "",

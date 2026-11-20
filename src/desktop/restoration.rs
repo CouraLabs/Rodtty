@@ -22,9 +22,12 @@ impl State {
             .unwrap_or_else(|| self.directory.clone());
             self.start_restored_terminal(directory);
         } else {
+            let count = directories.len();
             for directory in directories {
                 self.start_restored_terminal(directory);
             }
+            let splits = self.workspace.layout.splits.clone();
+            self.restore_splits(&splits, count);
             self.active = active.min(self.sessions.len().saturating_sub(1));
         }
         self.workspace
