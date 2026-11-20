@@ -96,6 +96,10 @@ pub(crate) struct State {
     /// The session whose terminal receives Rodtty's shortcuts, while
     /// keyboard passthrough is on. Never saved: a cold start begins without it.
     pub(crate) passthrough: Option<usize>,
+    /// Folders terminals reported, most recent first; memory only.
+    pub(crate) folder_history: Vec<PathBuf>,
+    /// Each session's directory as last recorded, so only changes count.
+    pub(crate) folder_seen: std::collections::HashMap<usize, PathBuf>,
     #[cfg(feature = "browser")]
     pub(crate) browsers: browser::Browsers,
     /// A diff an automation client asked to show once its file has opened.
@@ -217,6 +221,8 @@ impl State {
             owner_instance: false,
             task_sessions: Default::default(),
             passthrough: None,
+            folder_history: Vec::new(),
+            folder_seen: Default::default(),
             #[cfg(feature = "browser")]
             browsers: Default::default(),
             pending_diff: None,

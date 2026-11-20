@@ -260,6 +260,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "clear-folder-history",
+            "Folders: Clear Recent Folders",
+            "",
+            AppAction::ClearFolderHistory,
+        ),
+        (
             "terminal-passthrough",
             "Terminal: Toggle Keyboard Passthrough",
             "Ctrl+Shift+F12",

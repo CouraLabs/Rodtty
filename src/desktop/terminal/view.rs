@@ -435,6 +435,14 @@ impl State {
     /// highlight was drawn over, so those are dropped rather than left over
     /// the wrong text.
     pub(crate) fn observe_terminal_output(&mut self) -> bool {
+        let folders: Vec<(usize, PathBuf)> =
+            self.sessions.iter().map(|s| (s.id(), s.cwd())).collect();
+        for (id, folder) in folders {
+            if self.folder_seen.get(&id) != Some(&folder) {
+                self.folder_seen.insert(id, folder.clone());
+                self.note_folder(folder);
+            }
+        }
         let generations: Vec<_> = self
             .sessions
             .iter()

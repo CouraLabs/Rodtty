@@ -41,6 +41,13 @@ impl State {
             AppAction::CodexApprove => self.codex_decide("accept"),
             AppAction::ShowServices => self.show_services(),
             AppAction::EditTasks => self.edit_tasks(),
+            AppAction::FolderTerminal(i) => self.folder_open_terminal(usize::from(i)),
+            AppAction::FolderChange(i) => self.folder_change_directory(usize::from(i)),
+            AppAction::ClearFolderHistory => {
+                self.folder_history.clear();
+                self.refresh_folder_commands();
+                self.message = "Folder history cleared.".into();
+            }
             AppAction::TogglePassthrough => {
                 let id = self.active().map(Session::id);
                 self.passthrough = if self.passthrough.is_some() { None } else { id };
@@ -125,6 +132,7 @@ impl State {
             }
             AppAction::CommandPalette => {
                 self.refresh_task_commands();
+                self.refresh_folder_commands();
                 self.open_palette(tx)
             }
             AppAction::NewTerminal => {
