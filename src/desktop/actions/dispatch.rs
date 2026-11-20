@@ -38,6 +38,14 @@ impl State {
                 crate::automation::grants::Status::Revoked,
             ),
             AppAction::AutomationTakeOver => self.automation_take_over(),
+            #[cfg(feature = "browser")]
+            AppAction::OpenBrowser => self.open_browser_view(tx),
+            #[cfg(feature = "browser")]
+            AppAction::CloseBrowser => self.close_browser_view(tx),
+            #[cfg(not(feature = "browser"))]
+            AppAction::OpenBrowser | AppAction::CloseBrowser => {
+                self.message = "This Rodtty build has no embedded browser.".into()
+            }
             AppAction::AutomationReturn => self.automation_return_target(),
             AppAction::TrashFile => self.begin_removal(tx),
             AppAction::ToggleDeletionConfirmation => {

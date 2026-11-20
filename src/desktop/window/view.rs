@@ -84,6 +84,7 @@ pub(crate) fn view_with_frame(
                     a,
                     if width < 880.0 { 140.0 } else { 220.0 },
                 ))
+                .children(browser_button(state, a))
                 .child(
                     icon_button(
                         a,
@@ -281,4 +282,15 @@ pub(crate) fn view_with_frame(
     // whose shortcut dispatches `PasteTerminal` to the one terminal paste
     // handler; focused text fields still paste on their own.
     root.children(settings::overlays(state, a, width))
+}
+
+/// The Open Browser icon, immediately after Search and before File Explorer
+/// at every width, in builds with the embedded browser.
+fn browser_button(state: &State, a: &Appearance) -> Option<El> {
+    #[cfg(feature = "browser")]
+    if crate::desktop::browser::available() {
+        return Some(crate::desktop::browser::open_browser_button(state, a));
+    }
+    let _ = (state, a);
+    None
 }

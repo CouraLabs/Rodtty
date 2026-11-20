@@ -330,7 +330,7 @@ pub(crate) struct PointerStep {
 
 /// Type text one character at a time, stopping at once on takeover, pause,
 /// revocation, cancellation or closure.
-pub(super) fn type_text(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn type_text(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
     let target = arg_str(args, "target")?.to_owned();
     let text = arg_str(args, "text")?.to_owned();
     if text.len() > 16_384 {
@@ -357,7 +357,7 @@ pub(super) fn type_text(host: &Host, grant: &ClientGrant, args: &Value, cancel: 
 
 /// Build a gesture's steps, then deliver them in order with the pointer
 /// visibly progressing between points.
-pub(super) fn pointer(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn pointer(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
     let target = arg_str(args, "target")?.to_owned();
     let action = arg_str(args, "action")?;
     let button = arg_opt_str(args, "button")?.unwrap_or("left").to_owned();

@@ -11,6 +11,8 @@ default-run = "rodtty"
 default = ["desktop"]
 desktop = ["dep:rune", "dep:rune-kit", "dep:fontique", "dep:read-fonts", "dep:swash", "dep:png", "rune-kit/markdown"]
 
+browser = ["desktop", "dep:cef", "dep:image", "dep:objc2", "dep:objc2-app-kit"]
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
@@ -38,6 +40,13 @@ fontique = { version = "0.12", features = ["std", "system", "fontconfig-dlopen"]
 read-fonts = { version = "0.41", optional = true }
 trash = { version = "=5.3.0", default-features = false, features = ["chrono", "coinit_apartmentthreaded", "freedesktop"] }
 
+cef = { version = "=156.7.0", optional = true, default-features = false, features = ["sandbox"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder"] }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }
 
@@ -59,6 +68,11 @@ required-features = ["desktop"]
 [[bin]]
 name = "rodtty-shell"
 path = "src/bin/shell.rs"
+
+[[bin]]
+name = "rodtty-browser-helper"
+path = "src/bin/browser_helper.rs"
+required-features = ["browser"]
 
 [[bin]]
 name = "rodtty-probe"

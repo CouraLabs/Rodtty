@@ -26,7 +26,7 @@ use std::{
 };
 
 mod editor;
-mod input;
+pub(crate) mod input;
 mod terminal;
 #[cfg(test)]
 mod tests;

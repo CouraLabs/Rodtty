@@ -248,6 +248,18 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CommandPalette,
         ),
         (
+            "open-browser",
+            "Browser: Open Browser",
+            "",
+            AppAction::OpenBrowser,
+        ),
+        (
+            "close-browser",
+            "Browser: Close Browser",
+            "",
+            AppAction::CloseBrowser,
+        ),
+        (
             "automation-approve",
             "Automation: Approve Pending Client",
             "",
@@ -290,6 +302,9 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::Quit,
         ),
     ] {
+        if matches!(action, AppAction::OpenBrowser | AppAction::CloseBrowser) && !browser_available() {
+            continue;
+        }
         commands.push(Command {
             id,
             title,
@@ -308,5 +323,18 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
                 _ => ShortcutContext::Global,
             },
         });
+    }
+}
+
+/// Whether the Browser actions exist in this build: compiled with CEF and
+/// shipped with its runtime.
+fn browser_available() -> bool {
+    #[cfg(feature = "browser")]
+    {
+        crate::desktop::browser::available()
+    }
+    #[cfg(not(feature = "browser"))]
+    {
+        false
     }
 }

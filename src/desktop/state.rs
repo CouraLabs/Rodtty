@@ -85,6 +85,8 @@ pub(crate) struct State {
     pub(crate) automation: automation::Automation,
     /// Whether this process holds the owner instance lock, and so serves automation.
     pub(crate) owner_instance: bool,
+    #[cfg(feature = "browser")]
+    pub(crate) browsers: browser::Browsers,
     /// A diff an automation client asked to show once its file has opened.
     pub(crate) pending_diff: Option<(PathBuf, crate::git::Comparison)>,
 }
@@ -202,6 +204,8 @@ impl State {
             font_terminal: Default::default(),
             automation: Default::default(),
             owner_instance: false,
+            #[cfg(feature = "browser")]
+            browsers: Default::default(),
             pending_diff: None,
         }
     }

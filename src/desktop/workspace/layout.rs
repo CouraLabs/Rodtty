@@ -43,6 +43,14 @@ pub(crate) fn body(s: &State, a: &Appearance, width: f32) -> El {
                     }),
             );
     }
+    #[cfg(feature = "browser")]
+    let (terminal, show_editor) = if s.browser_view_visible() {
+        // Wide windows keep the terminal beside the Browser; narrow ones
+        // focus the Browser, whose close returns to the terminal.
+        (width >= 880.0 && terminal, true)
+    } else {
+        (terminal, show_editor)
+    };
     let mut main = row().grow(1.0).min_w(0.0).h_full().min_h(0.0);
     if terminal {
         let mut pane = col().key("terminal-pane").h_full().min_h(0.0).min_w(0.0);
@@ -88,7 +96,15 @@ pub(crate) fn body(s: &State, a: &Appearance, width: f32) -> El {
                     }),
             );
         }
-        main = main.child(editor(s, a, width).grow(if terminal {
+        #[cfg(feature = "browser")]
+        let content = if s.browser_view_visible() {
+            crate::desktop::browser::browser_pane(s, a)
+        } else {
+            editor(s, a, width)
+        };
+        #[cfg(not(feature = "browser"))]
+        let content = editor(s, a, width);
+        main = main.child(content.grow(if terminal {
             workspace.layout.editor_share
         } else {
             1.0

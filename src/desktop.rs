@@ -15,6 +15,8 @@ mod accessibility;
 mod actions;
 mod appearance;
 pub(crate) mod automation;
+#[cfg(feature = "browser")]
+pub(crate) mod browser;
 mod capture;
 mod codex;
 mod autosave;
@@ -108,6 +110,12 @@ pub fn run() -> Result<()> {
     if args.get(1).map(String::as_str) == Some("automation") {
         return automation::cli(&config::app_root()?, &args[2..]);
     }
+    // CEF needs its application class to be the shared NSApplication,
+    // before winit or anything else creates one.
+    #[cfg(all(feature = "browser", target_os = "macos"))]
+    if browser::available() {
+        browser::mac::install();
+    }
     if std::env::args().any(|arg| arg == "--paths") {
         let root = config::app_root()?;
         println!(
@@ -191,11 +199,20 @@ pub fn run() -> Result<()> {
         .keep_running()
         .on_close(State::on_window_close)
         .on_quit(|s, _| {
+            #[cfg(feature = "browser")]
+            s.shutdown_browsers();
             s.persist_workspace();
             s.shutdown_saved = true;
             s.sessions.clear();
         })
         .on_ime(|s, event, _| {
+            #[cfg(feature = "browser")]
+            if !s.application_overlay_open()
+                && let rune::Ime::Commit(content) = &event
+                && s.browser_owner_text(content)
+            {
+                return true;
+            }
             if s.application_overlay_open() || !s.workspace.terminal_focus() {
                 return true;
             }

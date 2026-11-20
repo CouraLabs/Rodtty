@@ -63,6 +63,8 @@ pub(super) enum AppAction {
     AutomationRevokeAll,
     AutomationTakeOver,
     AutomationReturn,
+    OpenBrowser,
+    CloseBrowser,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

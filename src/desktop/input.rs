@@ -120,6 +120,10 @@ pub(crate) fn on_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if state.dispatch_shortcut(event, tx) {
         return true;
     }
+    #[cfg(feature = "browser")]
+    if tx.focused() == Some("browser-surface") && state.browser_owner_key(event) {
+        return true;
+    }
     if tx.focused().is_some() {
         return false;
     }
