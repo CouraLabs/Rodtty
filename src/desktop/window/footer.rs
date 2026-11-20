@@ -88,6 +88,17 @@ pub(crate) fn app_footer(state: &State, a: &Appearance, cwd: &std::path::Path) -
                         .min_w(0.0)
                         .grow(1.0),
                 )
+                .children(state.remote_indicator().map(|indicator| {
+                    text(indicator.clone())
+                        .key("footer-remote")
+                        .role("status")
+                        .label(indicator)
+                        .font(ui_label())
+                        .color(a.accent())
+                        .truncate()
+                        .min_w(0.0)
+                        .shrink()
+                }))
                 .children(state.automation_indicator().map(|indicator| {
                     // Automation is never silent: pending approvals, agent
                     // activity and recordings show here; the palette has the controls.

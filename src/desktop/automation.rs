@@ -489,6 +489,11 @@ impl State {
             Err(error) => eprintln!("rodtty: automation channel unavailable: {error}"),
         }
         self.automation_refresh_grants(true);
+        if self.config.behavior.remote_access
+            && let Err(e) = self.start_remote()
+        {
+            self.message = format!("Remote access is off: {e:#}");
+        }
     }
 
     pub(crate) fn emit(&self, kind: &str, target: Option<&str>, data: Value) {
@@ -757,6 +762,7 @@ impl State {
 
     /// The active terminal's target ID, for owner input routing.
     pub(crate) fn owner_terminal_input(&mut self) {
+        self.owner_takes_remote_control();
         if let Some(target) = self.active().map(|s| self.terminal_target(s)) {
             self.owner_input(&target);
         }

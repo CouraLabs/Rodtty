@@ -28,6 +28,7 @@ pub mod paths;
 pub mod profile;
 pub mod prompt;
 pub mod references;
+pub mod remote;
 pub mod services;
 pub mod session;
 pub mod tasks;

@@ -714,3 +714,230 @@ fn split_panes_keep_their_own_sizes_input_close_policy_and_restore_both_orientat
     compact.update(|s, _| s.focus_other_pane());
     assert_ne!(compact.state.active, before);
 }
+
+#[test]
+fn remote_devices_pair_attach_read_type_resize_follow_control_and_lose_access_when_revoked_or_quit()
+{
+    use std::io::{Read, Write};
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    state.sessions[0]
+        .send(b"for i in 1 2 3; do echo WATCH_$i; done\r".to_vec())
+        .unwrap();
+    wait(&state, 0, "WATCH_3");
+    let (dispatch, rx) = crate::remote::channel_dispatch();
+    let server = crate::remote::start("127.0.0.1:0".parse().unwrap(), dispatch).unwrap();
+    let addr = server.addr;
+    state.remote.server = Some(server);
+    let req = |state: &mut State,
+               method: &str,
+               path: &str,
+               token: Option<&str>,
+               body: serde_json::Value|
+     -> (u16, serde_json::Value) {
+        let (method, path, token, body) = (
+            method.to_owned(),
+            path.to_owned(),
+            token.map(str::to_owned),
+            body.to_string(),
+        );
+        let client = std::thread::spawn(move || {
+            let mut s = std::net::TcpStream::connect(addr).ok()?;
+            let auth = token
+                .map(|t| format!("Authorization: Bearer {t}\r\n"))
+                .unwrap_or_default();
+            write!(
+                s,
+                "{method} {path} HTTP/1.1\r\nHost: x\r\n{auth}Content-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .ok()?;
+            let mut out = String::new();
+            s.read_to_string(&mut out).ok()?;
+            let status = out.split_whitespace().nth(1)?.parse().ok()?;
+            let json = out.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            Some((
+                status,
+                serde_json::from_str(json).unwrap_or(serde_json::Value::Null),
+            ))
+        });
+        loop {
+            while let Ok((call, reply)) = rx.recv_timeout(Duration::from_millis(10)) {
+                let _ = reply.send(state.remote_call(call));
+            }
+            if client.is_finished() {
+                return client
+                    .join()
+                    .unwrap()
+                    .unwrap_or((0, serde_json::Value::Null));
+            }
+        }
+    };
+    let none = serde_json::Value::Null;
+    // Unauthenticated: no list, output or input.
+    assert_eq!(
+        req(&mut state, "GET", "/api/sessions", None, none.clone()).0,
+        401
+    );
+    assert_eq!(
+        req(
+            &mut state,
+            "GET",
+            "/api/sessions",
+            Some("forged"),
+            none.clone()
+        )
+        .0,
+        401
+    );
+    let id = state.sessions[0].id();
+    assert_eq!(
+        req(
+            &mut state,
+            "POST",
+            &format!("/api/sessions/{id}/input"),
+            Some("forged"),
+            json!({"text": "x"})
+        )
+        .0,
+        401
+    );
+    // Pair.
+    let code = state.remote.pairing.new_code().unwrap();
+    let (status, paired) = req(
+        &mut state,
+        "POST",
+        "/api/pair",
+        None,
+        json!({"code": code, "name": "phone"}),
+    );
+    assert_eq!(status, 200, "{paired}");
+    let token = paired["token"].as_str().unwrap().to_owned();
+    let t = Some(token.as_str());
+    let (_, list) = req(&mut state, "GET", "/api/sessions", t, none.clone());
+    assert_eq!(list["sessions"][0]["id"], id);
+    // Attach: recent output arrives.
+    let (_, read) = req(
+        &mut state,
+        "GET",
+        &format!("/api/sessions/{id}/output?cursor=0"),
+        t,
+        none.clone(),
+    );
+    let decode = |b64: &str| {
+        let t = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut bits = 0u32;
+        let mut n = 0;
+        let mut out = Vec::new();
+        for c in b64.bytes().filter(|c| *c != b'=') {
+            bits = (bits << 6) | t.iter().position(|x| *x == c).unwrap() as u32;
+            n += 6;
+            if n >= 8 {
+                n -= 8;
+                out.push((bits >> n) as u8);
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    assert!(decode(read["data"].as_str().unwrap()).contains("WATCH_3"));
+    let cursor = read["next"].as_u64().unwrap();
+    // Typing needs control; the device takes it.
+    let input = format!("/api/sessions/{id}/input");
+    assert_eq!(
+        req(
+            &mut state,
+            "POST",
+            &input,
+            t,
+            json!({"text": "echo REMOTE_TYPED\r"})
+        )
+        .0,
+        409
+    );
+    assert_eq!(
+        req(
+            &mut state,
+            "POST",
+            &format!("/api/sessions/{id}/control"),
+            t,
+            json!({})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        req(
+            &mut state,
+            "POST",
+            &input,
+            t,
+            json!({"text": "echo REMOTE_TYPED\r"})
+        )
+        .0,
+        200
+    );
+    wait(&state, 0, "\nREMOTE_TYPED");
+    // Disconnect and reconnect from the cursor: continued output.
+    let (_, more) = req(
+        &mut state,
+        "GET",
+        &format!("/api/sessions/{id}/output?cursor={cursor}"),
+        t,
+        none.clone(),
+    );
+    assert!(decode(more["data"].as_str().unwrap()).contains("REMOTE_TYPED"));
+    assert!(state.remote_indicator().unwrap().contains("1 device"));
+    // Resize from the device.
+    assert_eq!(
+        req(
+            &mut state,
+            "POST",
+            &format!("/api/sessions/{id}/resize"),
+            t,
+            json!({"rows": 20, "cols": 60})
+        )
+        .0,
+        200
+    );
+    assert_eq!(state.sessions[0].size(), (20, 60));
+    // The owner types locally: the desktop takes control back.
+    state.active = 0;
+    state.send(b"echo LOCAL\r".to_vec());
+    assert_eq!(
+        req(&mut state, "POST", &input, t, json!({"text": "x"})).0,
+        409
+    );
+    // Revoked: nothing.
+    state.revoke_remote_devices();
+    assert_eq!(
+        req(&mut state, "GET", "/api/sessions", t, none.clone()).0,
+        401
+    );
+    assert_eq!(
+        req(
+            &mut state,
+            "GET",
+            &format!("/api/sessions/{id}/output?cursor=0"),
+            t,
+            none
+        )
+        .0,
+        401
+    );
+    // Quit ends the sessions and closes the listener.
+    state.pending = Some(Pending::Quit);
+    state.confirm(&mut Tx::default());
+    assert!(state.sessions.is_empty() && state.remote.server.is_none());
+    std::thread::sleep(Duration::from_millis(300));
+    let refused = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map(|mut s| {
+            let _ = write!(s, "GET / HTTP/1.1\r\n\r\n");
+            let mut out = String::new();
+            s.read_to_string(&mut out)
+                .map(|_| out.is_empty())
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
+    assert!(refused, "the port no longer serves");
+}

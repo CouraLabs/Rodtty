@@ -90,6 +90,7 @@ pub(crate) struct State {
     pub(crate) changes: changes::ChangesView,
     pub(crate) drafts: drafts::DraftState,
     pub(crate) splits: Vec<split::Split>,
+    pub(crate) remote: remote::RemoteState,
     pub(crate) split_drag: f32,
     pub(crate) split_rect: Option<[f32; 4]>,
     /// A split tab being closed: the pane named in `Pending::Tab` and the
@@ -241,6 +242,7 @@ impl State {
             changes: Default::default(),
             drafts: Default::default(),
             splits: Vec::new(),
+            remote: Default::default(),
             split_drag: 0.5,
             split_rect: None,
             closing_partner: None,
@@ -484,6 +486,8 @@ impl State {
             Some(Pending::Quit) => {
                 self.persist_workspace();
                 self.shutdown_saved = true;
+                // Quit ends remote access with the sessions.
+                self.remote = Default::default();
                 self.sessions.clear();
                 tx.quit();
             }

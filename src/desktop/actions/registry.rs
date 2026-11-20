@@ -290,6 +290,30 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "remote-enable",
+            "Remote: Enable Access over Tailscale",
+            "",
+            AppAction::RemoteEnable,
+        ),
+        (
+            "remote-disable",
+            "Remote: Disable Access",
+            "",
+            AppAction::RemoteDisable,
+        ),
+        (
+            "remote-pair",
+            "Remote: Pair Device…",
+            "",
+            AppAction::RemotePair,
+        ),
+        (
+            "remote-revoke",
+            "Remote: Disconnect and Revoke All Devices",
+            "",
+            AppAction::RemoteRevoke,
+        ),
+        (
             "split-right",
             "Terminal: Split Right",
             app("Ctrl+Shift+5", "Cmd+\\"),

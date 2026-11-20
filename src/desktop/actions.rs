@@ -97,6 +97,10 @@ pub(super) enum AppAction {
     SplitDown,
     FocusOtherPane,
     CloseTab(usize),
+    RemoteEnable,
+    RemoteDisable,
+    RemotePair,
+    RemoteRevoke,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

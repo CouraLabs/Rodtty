@@ -551,6 +551,8 @@ pub struct BehaviorPreferences {
     /// Stop keeping recovery drafts of unsaved editor buffers in
     /// `<app root>/drafts`.
     pub disable_draft_recovery: bool,
+    /// Serve paired devices over Tailscale (off unless the owner enables it).
+    pub remote_access: bool,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
