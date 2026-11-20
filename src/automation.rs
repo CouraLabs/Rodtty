@@ -5,6 +5,7 @@
 //! instance, which runs them against its own state with the same actions the
 //! UI uses. The owner approves, pauses and revokes clients ([`grants`]).
 pub mod channel;
+pub mod codex;
 pub mod events;
 pub mod grants;
 pub mod keys;

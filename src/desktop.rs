@@ -199,6 +199,7 @@ pub fn run() -> Result<()> {
         .keep_running()
         .on_close(State::on_window_close)
         .on_quit(|s, _| {
+            codex::shutdown();
             #[cfg(feature = "browser")]
             s.shutdown_browsers();
             s.persist_workspace();
@@ -320,6 +321,17 @@ pub fn run() -> Result<()> {
                         }
                     }
                     "open" => handle.open(),
+                    // The owner's own palette actions, for scripted native checks.
+                    line if line.starts_with("action ") => {
+                        let id = line["action ".len()..].trim().to_owned();
+                        handle.update(move |s, tx| {
+                            if let Some(action) =
+                                s.commands.iter().find(|c| c.id == id).map(|c| c.action)
+                            {
+                                s.dispatch(action, tx);
+                            }
+                        });
+                    }
                     "close" => handle.close(),
                     "quit" => {
                         handle.open();

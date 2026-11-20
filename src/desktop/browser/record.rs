@@ -283,7 +283,8 @@ fn encode(
                 status.lock().unwrap_or_else(|e| e.into_inner()).dropped += skipped;
                 // Keep the timeline: repeat the last frame for skipped ticks,
                 // never past the duration limit.
-                let budget = (u64::from(limits.max_seconds) * u64::from(limits.fps)).saturating_sub(writer.frames + 1);
+                let budget = (u64::from(limits.max_seconds) * u64::from(limits.fps))
+                    .saturating_sub(writer.frames + 1);
                 if let Some(jpeg) = &last_jpeg {
                     for _ in 0..skipped.min(budget) {
                         writer.frame(jpeg).map_err(|e| e.to_string())?;

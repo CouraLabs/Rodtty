@@ -64,6 +64,8 @@ pub(super) enum AppAction {
     AutomationTakeOver,
     AutomationReturn,
     OpenBrowser,
+    CodexApprove,
+    CodexDecline,
     CloseBrowser,
 }
 

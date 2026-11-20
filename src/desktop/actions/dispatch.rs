@@ -38,6 +38,8 @@ impl State {
                 crate::automation::grants::Status::Revoked,
             ),
             AppAction::AutomationTakeOver => self.automation_take_over(),
+            AppAction::CodexApprove => self.codex_decide("accept"),
+            AppAction::CodexDecline => self.codex_decide("decline"),
             #[cfg(feature = "browser")]
             AppAction::OpenBrowser => self.open_browser_view(tx),
             #[cfg(feature = "browser")]

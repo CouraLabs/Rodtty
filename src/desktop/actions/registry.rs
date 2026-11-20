@@ -260,6 +260,18 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "codex-approve",
+            "Codex: Approve Pending Request",
+            "",
+            AppAction::CodexApprove,
+        ),
+        (
+            "codex-decline",
+            "Codex: Decline Pending Request",
+            "",
+            AppAction::CodexDecline,
+        ),
+        (
             "automation-approve",
             "Automation: Approve Pending Client",
             "",

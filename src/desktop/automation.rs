@@ -579,13 +579,13 @@ impl State {
             let commands: Vec<Value> = self
                 .commands
                 .iter()
-                .filter(|c| !c.id.starts_with("automation-"))
+                .filter(|c| !c.id.starts_with("automation-") && !c.id.starts_with("codex-"))
                 .map(|c| json!({"id": c.id, "title": c.title, "disabled": self.action_disabled(c.action)}))
                 .collect();
             return Ok(json!({"commands": commands}));
         };
         // The owner's automation controls stay with the owner.
-        if id.starts_with("automation-") || id == "quit" {
+        if id.starts_with("automation-") || id.starts_with("codex-") || id == "quit" {
             return Err(ToolError::new(
                 ErrorCode::ScopeDenied,
                 "That action is reserved for the owner",
@@ -825,6 +825,12 @@ impl State {
     pub(crate) fn automation_indicator(&self) -> Option<String> {
         let recording = self.recording_indicator();
         let agents = !self.automation.agent_focus.is_empty();
+        if let Some((_, _, summary)) = crate::desktop::codex::pending_approvals()
+            .into_iter()
+            .next()
+        {
+            return Some(format!("Codex needs approval: {summary}"));
+        }
         match (self.automation.pending.first(), recording, agents) {
             (_, Some(recording), _) => Some(recording),
             (Some(pending), _, _) => Some(format!("Automation: {} wants access", pending.name)),

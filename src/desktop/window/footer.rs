@@ -88,6 +88,19 @@ pub(crate) fn app_footer(state: &State, a: &Appearance, cwd: &std::path::Path) -
                         .min_w(0.0)
                         .grow(1.0),
                 )
+                .children(state.automation_indicator().map(|indicator| {
+                    // Automation is never silent: pending approvals, agent
+                    // activity and recordings show here; the palette has the controls.
+                    text(indicator.clone())
+                        .key("footer-automation")
+                        .role("status")
+                        .label(indicator)
+                        .font(ui_label())
+                        .color(a.danger())
+                        .truncate()
+                        .min_w(0.0)
+                        .shrink()
+                }))
                 .child(footer_message(state, a)),
         )
 }
