@@ -84,6 +84,8 @@ pub(crate) struct State {
     /// The command Previous/Next Command last scrolled to: session and command ID.
     pub(crate) command_cursor: Option<(usize, u64)>,
     pub(crate) log_filter: terminal::filter::LogFilter,
+    pub(crate) send_preview: Option<send::SendPreview>,
+    pub(crate) send_text: TextEdit,
     pub(crate) window_focused: bool,
     /// Commands already considered for a notification.
     pub(crate) notified: std::collections::VecDeque<(usize, u64)>,
@@ -222,6 +224,8 @@ impl State {
             terminal_context_open: false,
             command_cursor: None,
             log_filter: Default::default(),
+            send_preview: None,
+            send_text: TextEdit::new(""),
             window_focused: true,
             notified: Default::default(),
             notifications_sent: 0,
@@ -380,7 +384,7 @@ impl State {
         self.message = "Pasted.".into();
     }
 
-    fn deliver_paste(&mut self, content: &str) {
+    pub(crate) fn deliver_paste(&mut self, content: &str) {
         self.owner_terminal_input();
         if let Some(session) = self.active()
             && let Err(error) = session.paste(content)

@@ -132,7 +132,13 @@ pub(crate) fn mode_controls(s: &State, a: &Appearance, tab: &Tab) -> El {
                 |s: &mut State, tx| {
                     s.workspace.diff.next_hunk(true, tx);
                 },
-            ));
+            ))
+            .child(
+                button(a, "diff-send", "Send Hunk", |s, _| {
+                    s.begin_send_to_terminal()
+                })
+                .help("Send this hunk to a terminal"),
+            );
     }
     let save_help = s.shortcut_help("save-file", "Save file");
     modes = modes.child(separator()).child(

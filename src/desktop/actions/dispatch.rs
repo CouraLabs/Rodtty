@@ -76,6 +76,7 @@ impl State {
             AppAction::RunTask(index) => self.run_task_index(usize::from(index)),
             AppAction::CheckEnvironment => self.check_environment(),
             AppAction::FilterTerminal => self.open_log_filter(tx),
+            AppAction::SendToTerminal => self.begin_send_to_terminal(),
             AppAction::PreviousCommand => self.step_command(true),
             AppAction::NextCommand => self.step_command(false),
             AppAction::ToggleCommandNotifications => {

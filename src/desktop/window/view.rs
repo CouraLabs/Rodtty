@@ -280,6 +280,13 @@ pub(crate) fn view_with_frame(
             Entrance::Dialog,
         ));
     }
+    if let Some(dialog) = crate::desktop::send::dialog(state, a) {
+        root = root.child(motion::modal(
+            a,
+            el().center().child(dialog),
+            Entrance::Dialog,
+        ));
+    }
     if matches!(state.pending, Some(Pending::Window)) {
         root = root.child(motion::modal(
             a,

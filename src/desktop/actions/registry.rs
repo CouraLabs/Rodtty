@@ -290,6 +290,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "send-to-terminal",
+            "Editor: Send Selection or Diff Hunk to Terminal…",
+            "",
+            AppAction::SendToTerminal,
+        ),
+        (
             "filter-terminal",
             "Terminal: Filter Output…",
             app("Ctrl+Shift+L", "Cmd+Shift+L"),

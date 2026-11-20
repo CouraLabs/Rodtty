@@ -520,6 +520,23 @@ impl DiffState {
         self.nav = Some(r);
     }
 
+    /// The hunk the view is at, as (file, hunk): the one holding the selection, else the
+    /// one holding (or next after) the row below the header, as hunk navigation counts.
+    pub fn current_hunk(&self) -> Option<(usize, usize)> {
+        let from = match self.selection().and_then(|sel| self.selected_rows(&sel)) {
+            Some((a, _)) => a,
+            None => self.position(),
+        };
+        let hunk_of = |row: &Row| match *row {
+            Row::Line { f, h, .. } | Row::Pair { f, h, .. } => Some((f as usize, h as usize)),
+            Row::Gap { f, gap } if (gap as usize) < self.files.get(f as usize).map_or(0, |d| d.hunks.len()) => {
+                Some((f as usize, gap as usize))
+            }
+            _ => None,
+        };
+        self.rows.get(from as usize..).into_iter().flatten().find_map(hunk_of).or_else(|| self.rows.iter().find_map(hunk_of))
+    }
+
     /// Bring the next (or previous) hunk to just below the sticky header.
     pub fn next_hunk(&mut self, forward: bool, tx: &mut Tx) -> bool {
         let from = self.position();

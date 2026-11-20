@@ -4900,3 +4900,114 @@ fn diff_lines_carry_plus_and_minus_signs_beside_their_tints_in_both_layouts() {
         "Split diff layout"
     );
 }
+
+#[test]
+fn send_to_terminal_previews_an_unsaved_multibyte_selection_and_a_staged_hunk_for_the_chosen_session_only()
+ {
+    let root = crate::test_support::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    let file = root.path().join("src/naïve.rs");
+    std::fs::write(&file, "fn a() {}\nfn b() {}\nfn c() {}\n").unwrap();
+    let mut state = state(root.path());
+    state.shell = Some(crate::test_support::shell_binary().unwrap());
+    state.start_tab(root.path().into());
+    state.start_tab(root.path().into());
+    for s in &state.sessions {
+        s.wait_for("rodtty:", Duration::from_secs(15)).unwrap();
+    }
+    open(&mut state, &file);
+    // An unsaved edit with multibyte text, selected across two lines.
+    let tab = &mut state.workspace.tabs[state.workspace.active];
+    tab.edit
+        .replace_text("fn a() {}\nlet s = \"żółw ✓\";\nfn c() {}\n");
+    let start = tab.edit.text.find("let").unwrap();
+    let end = tab
+        .edit
+        .text
+        .find("}\n")
+        .map(|_| tab.edit.text.rfind('}').unwrap() + 1)
+        .unwrap();
+    tab.edit.set_selection(start, end);
+    state.active = 0;
+    state.begin_send_to_terminal();
+    let expected = "src/naïve.rs:2-3 (unsaved):\n```rust\nlet s = \"żółw ✓\";\nfn c() {}\n```";
+    assert_eq!(state.send_text.text, expected);
+    // Aim at the second terminal, which then ends: nothing goes anywhere.
+    state.cycle_send_destination();
+    let second = state.sessions[1].id();
+    assert_eq!(state.send_preview.as_ref().unwrap().session, Some(second));
+    state.sessions.remove(1);
+    state.confirm_send_to_terminal();
+    assert!(
+        state.send_preview.is_some(),
+        "the preview stays for another choice"
+    );
+    assert!(state.message.contains("ended"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!state.sessions[0].screen().contents().contains("żółw"));
+    // Cancel sends nothing either.
+    state.send_preview = None;
+    // An interactive program with bracketed paste, as coding agents use,
+    // receives the snippet as one paste and waits for Enter.
+    let program = root.path().join("tui.py");
+    std::fs::write(
+        &program,
+        r#"import os, sys, tty
+tty.setraw(0)
+os.write(1, b"\x1b[?2004hTUI_READY\r\n")
+buf = b""
+while True:
+    buf += os.read(0, 65536)
+    if b"\x1b[201~" in buf:
+        body = buf.split(b"\x1b[200~", 1)[1].split(b"\x1b[201~", 1)[0]
+        ok = "żółw ✓".encode() in body and body.count(b"\n") + body.count(b"\r") == 4
+        os.write(1, b"PASTE_OK\r\n" if ok else b"PASTE_BAD\r\n")
+        rest = buf.split(b"\x1b[201~", 1)[1]
+        if b"\r" in rest:
+            os.write(1, b"SUBMITTED\r\n")
+"#,
+    )
+    .unwrap();
+    if std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        state.sessions[0]
+            .send(format!("python3 '{}'\r", program.display()).into_bytes())
+            .unwrap();
+        state.sessions[0]
+            .wait_for("TUI_READY", Duration::from_secs(10))
+            .unwrap();
+        state.begin_send_to_terminal();
+        state.cycle_send_destination();
+        state.confirm_send_to_terminal();
+        state.sessions[0]
+            .wait_for("PASTE_OK", Duration::from_secs(10))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!state.sessions[0].screen().contents().contains("SUBMITTED"));
+    }
+    assert!(
+        state.workspace.tabs[state.workspace.active].dirty(),
+        "the editor keeps its draft"
+    );
+    let (a, b) = state.workspace.tabs[state.workspace.active].edit.range();
+    assert_eq!((a, b), (start, end), "the selection stays");
+
+    // A staged diff hunk.
+    let tab = &mut state.workspace.tabs[state.workspace.active];
+    tab.mode = View::Diff(Comparison::Staged);
+    state.workspace.diff = DiffState::new(vec![rune_kit::diff::FileDiff::from_texts(
+        "src/naïve.rs",
+        "fn a() {}\nfn b() {}\nfn c() {}\n",
+        "fn a() {}\nfn β() {}\nfn c() {}\n",
+    )]);
+    let (text, source) = state.send_snippet().unwrap();
+    assert!(source.contains("staged hunk"), "{source}");
+    assert!(
+        text.starts_with("src/naïve.rs:1-3 (staged change):\n```diff\n@@ -1,3 +1,3 @@"),
+        "{text}"
+    );
+    assert!(text.contains("\n-fn b() {}\n+fn β() {}\n"), "{text}");
+}

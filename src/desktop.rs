@@ -26,6 +26,7 @@ mod fonts;
 mod motion;
 mod overview;
 mod search;
+mod send;
 mod tasks;
 use motion::{Enters, Entrance};
 mod tabs;
