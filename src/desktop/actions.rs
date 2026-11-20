@@ -73,6 +73,7 @@ pub(super) enum AppAction {
     FolderChange(u16),
     ClearFolderHistory,
     FocusSession(u16),
+    CopyTerminalMarkdown,
     SwitchWorkspace(u16),
     AddWorkspace,
     RemoveWorkspace,
@@ -182,7 +183,9 @@ impl State {
             {
                 Some("No active terminal session")
             }
-            AppAction::CopyTerminal if self.selection.is_none_or(|(a, b)| a == b) => {
+            AppAction::CopyTerminal | AppAction::CopyTerminalMarkdown
+                if self.selection.is_none_or(|(a, b)| a == b) =>
+            {
                 Some("No terminal selection")
             }
             AppAction::SaveEditor(id)

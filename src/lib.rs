@@ -17,6 +17,7 @@ pub mod ansi;
 pub mod automation;
 pub mod config;
 pub mod environment;
+pub mod excerpt;
 pub mod files;
 pub mod git;
 pub mod instance;

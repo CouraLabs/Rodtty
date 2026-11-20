@@ -260,6 +260,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "copy-terminal-markdown",
+            "Terminal: Copy Selection as Markdown",
+            "",
+            AppAction::CopyTerminalMarkdown,
+        ),
+        (
             "add-workspace",
             "Workspaces: Add Explorer Folder as Workspace",
             "",

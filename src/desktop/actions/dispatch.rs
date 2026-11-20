@@ -256,6 +256,7 @@ impl State {
             }
             AppAction::ActivateEditor(index) => self.activate_editor(index),
             AppAction::CopyTerminal => self.copy(tx),
+            AppAction::CopyTerminalMarkdown => self.copy_markdown(tx),
             AppAction::PasteTerminal => {
                 self.workspace.set_terminal_focus(true);
                 self.workspace.layout.terminal = true;
