@@ -91,6 +91,8 @@ pub(crate) struct State {
     pub(crate) drafts: drafts::DraftState,
     pub(crate) splits: Vec<split::Split>,
     pub(crate) remote: remote::RemoteState,
+    pub(crate) excerpt: Option<excerpt::ExcerptPreview>,
+    pub(crate) excerpt_text: TextEdit,
     pub(crate) split_drag: f32,
     pub(crate) split_rect: Option<[f32; 4]>,
     /// A split tab being closed: the pane named in `Pending::Tab` and the
@@ -243,6 +245,8 @@ impl State {
             drafts: Default::default(),
             splits: Vec::new(),
             remote: Default::default(),
+            excerpt: None,
+            excerpt_text: TextEdit::new(""),
             split_drag: 0.5,
             split_rect: None,
             closing_partner: None,

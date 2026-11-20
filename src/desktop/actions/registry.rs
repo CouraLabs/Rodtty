@@ -261,7 +261,7 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
         ),
         (
             "copy-terminal-markdown",
-            "Terminal: Copy Selection as Markdown",
+            "Terminal: Copy Selection as Markdown…",
             "",
             AppAction::CopyTerminalMarkdown,
         ),

@@ -29,6 +29,10 @@ pub(crate) fn terminal_menu(
             .enabled(s.action_disabled(AppAction::CopyTerminal).is_none()),
         )
         .item(
+            rune::PopupItem::new("copy-markdown", "Copy as Markdown…")
+                .enabled(s.action_disabled(AppAction::CopyTerminal).is_none()),
+        )
+        .item(
             rune::PopupItem::new(
                 "paste-terminal",
                 s.action_help(AppAction::PasteTerminal, "Paste"),
@@ -41,6 +45,7 @@ pub(crate) fn terminal_menu(
         match chosen {
             Some("copy-terminal") => s.dispatch(AppAction::CopyTerminal, tx),
             Some("paste-terminal") => s.dispatch(AppAction::PasteTerminal, tx),
+            Some("copy-markdown") => s.dispatch(AppAction::CopyTerminalMarkdown, tx),
             Some("open-reference") => {
                 if let Some((row, col)) = reference {
                     s.open_terminal_reference(row, col, tx);

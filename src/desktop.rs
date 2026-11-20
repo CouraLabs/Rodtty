@@ -23,6 +23,7 @@ mod changes;
 mod codex;
 mod commands;
 mod drafts;
+mod excerpt;
 mod folders;
 mod fonts;
 mod motion;

@@ -508,18 +508,6 @@ impl State {
         changed
     }
 
-    /// Copies the selection as a fenced Markdown block. Plain Copy is unchanged.
-    pub(crate) fn copy_markdown(&mut self, tx: &mut Tx) {
-        if let Some((a, b)) = self.selection {
-            let (a, b) = if a <= b { (a, b) } else { (b, a) };
-            let text = self.with_screen(|screen| screen.contents_between(a.0, a.1, b.0, b.1));
-            if !text.is_empty() {
-                tx.copy(crate::excerpt::markdown(&text, None, None));
-                self.message = "Copied the selection as Markdown.".into();
-            }
-        }
-    }
-
     /// Copies the terminal selection's text, when it covers any.
     pub(crate) fn copy(&self, tx: &mut Tx) {
         if let Some((a, b)) = self.selection {

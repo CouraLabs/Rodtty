@@ -310,3 +310,47 @@ fn terminal_clipboard_actions_reach_real_pty_and_overlay_keeps_input_out() {
         .wait_for("INTERRUPT_OK", std::time::Duration::from_secs(5))
         .unwrap();
 }
+
+#[test]
+fn markdown_excerpts_preview_redact_snapshot_and_copy_only_what_is_approved() {
+    let root = crate::test_support::tempdir().unwrap();
+    let mut state = State::with_root(root.path().into());
+    let mut parser = vt100::Parser::new(28, 100, 0);
+    parser.process("\x1b[31mtoken=sk-SECRET\x1b[0m use ```x``` ✓".as_bytes());
+    state.preview = Some(parser.screen().clone());
+    state.selection = Some(((0, 0), (0, 40)));
+    let mut rt = runtime_for(state);
+    let board = rune::clipboard::memory();
+    board.set_text("prior");
+    rt.use_clipboard(&board);
+    // Cancel leaves the clipboard alone.
+    rt.update(|s, tx| s.dispatch(AppAction::CopyTerminalMarkdown, tx));
+    rt.frame(0.0);
+    assert!(rt.find("excerpt-preview").is_some());
+    rt.update(|s, _| s.excerpt = None);
+    assert_eq!(board.text().unwrap().as_str(), "prior");
+    // Preview, then the screen changes: the snapshot is what's copied.
+    rt.update(|s, tx| s.dispatch(AppAction::CopyTerminalMarkdown, tx));
+    let mut changed = vt100::Parser::new(28, 100, 0);
+    changed.process(b"something else entirely");
+    rt.update(|s, _| s.preview = Some(changed.screen().clone()));
+    // Redact the token.
+    rt.update(|s, _| {
+        let start = s.excerpt_text.text.find("sk-").unwrap();
+        s.excerpt_text
+            .set_selection(start, start + "sk-SECRET".len());
+        s.redact_excerpt();
+    });
+    let directory_hidden = rt.state.excerpt_markdown().unwrap();
+    assert!(
+        !directory_hidden.starts_with("In `"),
+        "the folder is off by default"
+    );
+    rt.update(|s, tx| s.confirm_markdown_excerpt(tx));
+    let copied = board.text().unwrap().as_str().to_owned();
+    assert_eq!(
+        copied,
+        "````console\ntoken=[REDACTED] use ```x``` ✓\n````\n"
+    );
+    assert!(!copied.contains("SECRET") && !copied.contains("something else"));
+}
