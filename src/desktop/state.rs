@@ -82,6 +82,11 @@ pub(crate) struct State {
     pub(crate) font_catalog: fonts::Catalog,
     pub(crate) font_ui: rune_kit::ComboboxState,
     pub(crate) font_terminal: rune_kit::ComboboxState,
+    pub(crate) automation: automation::Automation,
+    /// Whether this process holds the owner instance lock, and so serves automation.
+    pub(crate) owner_instance: bool,
+    /// A diff an automation client asked to show once its file has opened.
+    pub(crate) pending_diff: Option<(PathBuf, crate::git::Comparison)>,
 }
 
 impl State {
@@ -195,6 +200,9 @@ impl State {
             font_catalog: fonts::Catalog::default(),
             font_ui: Default::default(),
             font_terminal: Default::default(),
+            automation: Default::default(),
+            owner_instance: false,
+            pending_diff: None,
         }
     }
 
@@ -240,20 +248,33 @@ impl State {
     }
 
     pub(crate) fn start_tab(&mut self, cwd: PathBuf) {
-        if !self.config_valid {
+        if let Err(message) = self.spawn_session(cwd) {
+            if !message.is_empty() {
+                self.message = message;
+            }
             return;
+        }
+        self.workspace.set_terminal_focus(true);
+        self.active = self.sessions.len() - 1;
+        self.workspace.note_session_switch();
+        self.selection = None;
+        self.preview = None;
+    }
+
+    /// Start a session in `cwd` as the last tab without showing it. Returns
+    /// its index, or why it could not start (empty when settings are invalid).
+    pub(crate) fn spawn_session(&mut self, cwd: PathBuf) -> Result<usize, String> {
+        if !self.config_valid {
+            return Err(String::new());
         }
         let cwd = match cwd.canonical() {
             Ok(cwd) if cwd.is_dir() => cwd,
             _ => {
-                self.message = format!("Could not open terminal directory: {}", cwd.display());
-                return;
+                return Err(format!("Could not open terminal directory: {}", cwd.display()));
             }
         };
         let Some(shell) = &self.shell else {
-            self.message =
-                "Build rodtty-shell with cargo build --bins before starting Rodtty.".into();
-            return;
+            return Err("Build rodtty-shell with cargo build --bins before starting Rodtty.".into());
         };
         match Session::spawn(
             shell,
@@ -265,18 +286,15 @@ impl State {
             self.wake.clone(),
         ) {
             Ok(session) => {
-                self.workspace.set_terminal_focus(true);
                 self.sessions.push(session);
-                self.active = self.sessions.len() - 1;
-                self.workspace.note_session_switch();
-                self.selection = None;
-                self.preview = None;
+                Ok(self.sessions.len() - 1)
             }
-            Err(error) => self.message = format!("Could not start session: {error:#}"),
+            Err(error) => Err(format!("Could not start session: {error:#}")),
         }
     }
 
     pub(crate) fn send(&mut self, bytes: impl Into<Vec<u8>>) {
+        self.owner_terminal_input();
         if let Some(session) = self.active() {
             session.scroll(isize::MIN);
             if let Err(error) = session.send(bytes) {
@@ -287,6 +305,7 @@ impl State {
     }
 
     pub(crate) fn paste(&mut self, content: &str) {
+        self.owner_terminal_input();
         if let Some(session) = self.active()
             && let Err(error) = session.paste(content)
         {

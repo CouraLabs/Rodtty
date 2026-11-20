@@ -57,6 +57,12 @@ pub(super) enum AppAction {
     SearchFiles,
     ShowSearch,
     CloseSearch,
+    AutomationApprove,
+    AutomationPauseAll,
+    AutomationResumeAll,
+    AutomationRevokeAll,
+    AutomationTakeOver,
+    AutomationReturn,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

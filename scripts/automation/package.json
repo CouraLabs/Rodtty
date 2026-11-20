@@ -1,0 +1,9 @@
+{
+  "name": "rodtty-automation-checks",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end checks that drive Rodtty through a real MCP client (the official TypeScript SDK).",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

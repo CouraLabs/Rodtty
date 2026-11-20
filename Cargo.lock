@@ -4271,6 +4271,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4328,13 +4334,16 @@ dependencies = [
  "fs2",
  "nix 0.31.3",
  "notify",
+ "png 0.18.1",
  "portable-pty",
  "read-fonts",
+ "regex-lite",
  "rune",
  "rune-kit",
  "serde",
  "serde_json",
  "similar",
+ "swash",
  "tempfile",
  "toml",
  "trash",

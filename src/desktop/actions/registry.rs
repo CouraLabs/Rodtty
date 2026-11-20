@@ -248,6 +248,42 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CommandPalette,
         ),
         (
+            "automation-approve",
+            "Automation: Approve Pending Client",
+            "",
+            AppAction::AutomationApprove,
+        ),
+        (
+            "automation-pause",
+            "Automation: Pause All Clients",
+            "",
+            AppAction::AutomationPauseAll,
+        ),
+        (
+            "automation-resume",
+            "Automation: Resume Paused Clients",
+            "",
+            AppAction::AutomationResumeAll,
+        ),
+        (
+            "automation-revoke",
+            "Automation: Revoke All Clients",
+            "",
+            AppAction::AutomationRevokeAll,
+        ),
+        (
+            "automation-take-over",
+            "Automation: Take Over Agent Target",
+            "",
+            AppAction::AutomationTakeOver,
+        ),
+        (
+            "automation-return",
+            "Automation: Return Target to Agent",
+            "",
+            AppAction::AutomationReturn,
+        ),
+        (
             "quit",
             "Application: Quit Rodtty",
             app("Ctrl+Q", "Cmd+Q"),

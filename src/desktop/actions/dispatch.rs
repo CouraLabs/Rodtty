@@ -20,6 +20,25 @@ impl State {
             self.supersede_pending_preview();
         }
         match action {
+            AppAction::AutomationApprove => self.automation_approve_pending(),
+            AppAction::AutomationPauseAll => self.automation_set_all(
+                &[crate::automation::grants::Status::Approved],
+                crate::automation::grants::Status::Paused,
+            ),
+            AppAction::AutomationResumeAll => self.automation_set_all(
+                &[crate::automation::grants::Status::Paused],
+                crate::automation::grants::Status::Approved,
+            ),
+            AppAction::AutomationRevokeAll => self.automation_set_all(
+                &[
+                    crate::automation::grants::Status::Approved,
+                    crate::automation::grants::Status::Paused,
+                    crate::automation::grants::Status::Pending,
+                ],
+                crate::automation::grants::Status::Revoked,
+            ),
+            AppAction::AutomationTakeOver => self.automation_take_over(),
+            AppAction::AutomationReturn => self.automation_return_target(),
             AppAction::TrashFile => self.begin_removal(tx),
             AppAction::ToggleDeletionConfirmation => {
                 self.save_config(|c| c.explorer.confirm_deletion = !c.explorer.confirm_deletion);

@@ -2,3 +2,5 @@
 /.rodtty/
 *.log
 /dist/
+.tasks/
+scripts/automation/node_modules/

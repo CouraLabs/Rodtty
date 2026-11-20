@@ -14,6 +14,9 @@ use std::{path::PathBuf, sync::Arc};
 mod accessibility;
 mod actions;
 mod appearance;
+pub(crate) mod automation;
+mod capture;
+mod codex;
 mod autosave;
 mod fonts;
 mod motion;
@@ -52,6 +55,9 @@ fn setup(state: &mut State, wake: rune::Waker) {
     state.font_catalog.start(state.wake.clone());
     if rune::tooling::headless_run().is_none() {
         state.restore_startup();
+        if state.owner_instance {
+            state.start_automation();
+        }
     }
 }
 fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
@@ -70,10 +76,12 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
     tx.set_font_families(sans, mono);
     let metrics_changed = state.refresh_terminal_metrics();
     let workspace_changed = state.workspace_poll(tx);
+    let automation_changed = state.automation_poll(tx);
     if state.workspace.last_persist.elapsed() >= std::time::Duration::from_secs(1) {
         state.persist_workspace();
     }
     workspace_changed
+        || automation_changed
         || changed
         || settings_changed
         || metrics_changed
@@ -86,6 +94,20 @@ fn poll(state: &mut State, _: f64, tx: &mut Tx) -> bool {
 const APP_ICON: &[u8] = asset_bytes!("app-icon/rodtty-1024.png");
 
 pub fn run() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    // `rodtty mcp` serves MCP on stdio for a running instance; it never
+    // becomes the owner instance itself.
+    if args.get(1).map(String::as_str) == Some("mcp") {
+        let name = args
+            .iter()
+            .skip_while(|a| *a != "--client-name")
+            .nth(1)
+            .cloned();
+        return crate::automation::mcp::serve(config::app_root()?, name);
+    }
+    if args.get(1).map(String::as_str) == Some("automation") {
+        return automation::cli(&config::app_root()?, &args[2..]);
+    }
     if std::env::args().any(|arg| arg == "--paths") {
         let root = config::app_root()?;
         println!(
@@ -200,9 +222,11 @@ pub fn run() -> Result<()> {
         native_state.update(move |s, _| s.window = Some(window));
     });
     let state_handle = handle.clone();
+    let owner_instance = instance.is_some();
     app = app.init(move || {
         let mut state = State::init();
         state.handle = Some(state_handle.clone());
+        state.owner_instance = owner_instance;
         state
     });
     let launch_handle = handle.clone();

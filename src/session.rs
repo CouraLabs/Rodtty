@@ -251,6 +251,12 @@ pub const FALLBACK_TAB_TITLE: &str = "Terminal";
 
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Whether this process ever gave a session `id`, so a missing one has ended
+/// rather than never existed.
+pub fn issued(id: usize) -> bool {
+    id > 0 && id < NEXT_SESSION_ID.load(Ordering::Relaxed)
+}
+
 pub struct Session {
     id: usize,
     pub initial_cwd: PathBuf,

@@ -270,6 +270,126 @@ fn line_changes(root: &Path) -> Result<BTreeMap<PathBuf, (u32, u32)>> {
     Ok(lines)
 }
 
+/// One changed file in one group of [`Changes`].
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ChangedFile {
+    pub path: PathBuf,
+    /// The path under the repository root, `/`-separated.
+    pub relative: String,
+    /// The file name, with enough of its folder to tell it apart from
+    /// another changed file of the same name.
+    pub label: String,
+    /// `M` modified, `A` added, `D` deleted, `R` renamed, `C` copied, `T`
+    /// type changed, `U` unmerged, `?` untracked.
+    pub kind: char,
+    /// A rename's or copy's original path.
+    pub original: Option<PathBuf>,
+}
+
+/// A repository's changes, grouped as `git status` groups them. A file
+/// staged and then edited again appears in both `staged` and `unstaged`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Changes {
+    pub root: PathBuf,
+    /// Whether `root` is a linked worktree rather than the main one.
+    pub linked_worktree: bool,
+    /// Whether HEAD names a commit yet.
+    pub has_commits: bool,
+    pub staged: Vec<ChangedFile>,
+    pub unstaged: Vec<ChangedFile>,
+    pub untracked: Vec<ChangedFile>,
+}
+
+impl Changes {
+    pub fn is_empty(&self) -> bool {
+        self.staged.is_empty() && self.unstaged.is_empty() && self.untracked.is_empty()
+    }
+    /// Every row in display order: staged, then unstaged, then untracked.
+    pub fn rows(&self) -> impl Iterator<Item = (Comparison, &ChangedFile)> {
+        self.staged
+            .iter()
+            .map(|f| (Comparison::Staged, f))
+            .chain(self.unstaged.iter().map(|f| (Comparison::Unstaged, f)))
+            .chain(self.untracked.iter().map(|f| (Comparison::Unstaged, f)))
+    }
+}
+
+/// The changes in the repository or worktree containing `directory`, or
+/// `None` outside one. Read-only: never touches the index or working tree.
+pub fn changes(directory: &Path) -> Result<Option<Changes>> {
+    let Some(repo) = inspect(directory)? else {
+        return Ok(None);
+    };
+    let relative = |path: &Path| {
+        path.strip_prefix(&repo.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut staged = Vec::new();
+    let mut unstaged = Vec::new();
+    let mut untracked = Vec::new();
+    for (path, status) in &repo.files {
+        let mut code = status.code.chars();
+        let (index, worktree) = (code.next().unwrap_or(' '), code.next().unwrap_or(' '));
+        let file = |kind: char| ChangedFile {
+            path: path.clone(),
+            relative: relative(path),
+            label: String::new(),
+            kind,
+            original: status.original.clone(),
+        };
+        if status.code == "??" {
+            untracked.push(file('?'));
+            continue;
+        }
+        if index == 'U' || worktree == 'U' || (index == 'A' && worktree == 'A') || (index == 'D' && worktree == 'D') {
+            unstaged.push(file('U'));
+            continue;
+        }
+        if index != ' ' {
+            staged.push(file(index));
+        }
+        if worktree != ' ' {
+            unstaged.push(ChangedFile { original: None, ..file(worktree) });
+        }
+    }
+    // Label each file by its name, adding parent folders until no two
+    // different paths share a label.
+    let all: Vec<String> = staged
+        .iter()
+        .chain(&unstaged)
+        .chain(&untracked)
+        .map(|f| f.relative.clone())
+        .collect();
+    let label = |relative: &str| {
+        let parts: Vec<&str> = relative.split('/').collect();
+        for take in 1..=parts.len() {
+            let tail = parts[parts.len() - take..].join("/");
+            let clash = all.iter().any(|other| {
+                other != relative && (other == &tail || other.ends_with(&format!("/{tail}")))
+            });
+            if !clash {
+                return tail;
+            }
+        }
+        relative.to_owned()
+    };
+    for file in staged.iter_mut().chain(unstaged.iter_mut()).chain(untracked.iter_mut()) {
+        file.label = label(&file.relative);
+    }
+    let linked_worktree = repo.root.join(".git").is_file();
+    let has_commits = run(&repo.root, ["rev-parse", "--verify", "--quiet", "HEAD"])?.status.success();
+    Ok(Some(Changes {
+        root: repo.root,
+        linked_worktree,
+        has_commits,
+        staged,
+        unstaged,
+        untracked,
+    }))
+}
+
 /// Git's own exclude engine honors nested .gitignore, info/exclude, global
 /// excludes and negations, including repositories opened through linked worktrees.
 pub fn ignored(repo: &Repository) -> Result<Vec<PathBuf>> {
