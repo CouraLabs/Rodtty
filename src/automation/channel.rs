@@ -49,6 +49,14 @@ pub trait Handler: Send + Sync + 'static {
     fn call(&self, client: &str, tool: &str, args: Value, cancel: Arc<AtomicBool>) -> ToolResult;
     /// The client's connection closed: cancel its queued input.
     fn disconnected(&self, client: &str);
+    /// `rodtty open`: open a file for the owner. Needs no client grant: it
+    /// can only open an existing file in the owner's own editor.
+    fn open(&self, _request: Value) -> ToolResult {
+        Err(ToolError::new(
+            ErrorCode::Unavailable,
+            "opening files is not supported",
+        ))
+    }
 }
 
 /// Keeps the listener running; dropping it stops accepting and removes the endpoint.
@@ -181,6 +189,10 @@ fn connection(
                         .and_then(Value::as_str)
                         .map(str::to_owned);
                 }
+                write_message(&writer, &reply_message(id, reply))?;
+            }
+            Some("open") => {
+                let reply = handler.open(message.get("request").cloned().unwrap_or(Value::Null));
                 write_message(&writer, &reply_message(id, reply))?;
             }
             Some("cancel") => {

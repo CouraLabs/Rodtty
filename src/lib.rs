@@ -19,6 +19,7 @@ pub mod config;
 pub mod files;
 pub mod git;
 pub mod instance;
+pub mod open;
 pub mod paths;
 pub mod profile;
 pub mod prompt;

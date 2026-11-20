@@ -107,6 +107,9 @@ pub fn run() -> Result<()> {
             .cloned();
         return crate::automation::mcp::serve(config::app_root()?, name);
     }
+    if args.get(1).map(String::as_str) == Some("open") {
+        std::process::exit(automation::open_cli(&config::app_root()?, &args[2..]));
+    }
     if args.get(1).map(String::as_str) == Some("automation") {
         return automation::cli(&config::app_root()?, &args[2..]);
     }

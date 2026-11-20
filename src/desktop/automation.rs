@@ -256,6 +256,16 @@ impl Handler for Host {
         result
     }
 
+    fn open(&self, request: Value) -> ToolResult {
+        let request: crate::open::OpenRequest =
+            serde_json::from_value(request).map_err(|e| ToolError::invalid(e.to_string()))?;
+        let handle = self.handle.clone();
+        let result = on_ui(&self.handle, move |s, tx| s.open_request(request, tx))?;
+        // Reveal the window only for this explicit open.
+        handle.open();
+        result
+    }
+
     fn disconnected(&self, client: &str) {
         let client = client.to_owned();
         self.handle
@@ -878,6 +888,103 @@ impl State {
         );
         self.message = format!("Switched to {}.", registry.label(&target.id));
         Ok(())
+    }
+}
+
+impl State {
+    /// Open a file for `rodtty open`, through the editor's own open path: an
+    /// open buffer (with any unsaved changes) is focused, not reloaded.
+    pub(crate) fn open_request(
+        &mut self,
+        request: crate::open::OpenRequest,
+        tx: &mut Tx,
+    ) -> ToolResult {
+        let path = request.path.clone();
+        match request.line {
+            Some(line) => {
+                self.open_file_at(
+                    path.clone(),
+                    false,
+                    workspace::SourceLocation {
+                        line,
+                        column: request.column.unwrap_or(1),
+                        length: 0,
+                    },
+                );
+                self.apply_pending_location(tx);
+            }
+            None => self.open_file(path.clone()),
+        }
+        let open = self
+            .workspace
+            .tabs
+            .iter()
+            .filter(|t| t.document.path == path)
+            .count();
+        Ok(
+            json!({"path": path, "line": request.line, "column": request.column, "tabs_for_file": open}),
+        )
+    }
+}
+
+/// `rodtty open …`: deliver an open request to the owner instance, starting
+/// Rodtty first when it isn't running.
+pub(crate) fn open_cli(root: &Path, args: &[String]) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let request = match crate::open::parse(args, &cwd) {
+        Ok(request) => request,
+        Err(error) => {
+            if error.status == 0 {
+                println!("{}", error.message);
+            } else {
+                eprintln!("rodtty open: {}", error.message);
+            }
+            return error.status;
+        }
+    };
+    let send = || -> Result<Value, ToolError> {
+        let client = channel::Client::connect(root)
+            .map_err(|e| ToolError::new(ErrorCode::Disconnected, e.to_string()))?;
+        client.request(
+            json!({"op": "open", "request": request}),
+            Duration::from_secs(20),
+        )
+    };
+    let result = send().or_else(|error| {
+        if error.code != ErrorCode::Disconnected {
+            return Err(error);
+        }
+        // Not running: start the owner instance, then deliver once it listens.
+        let exe = std::env::current_exe()
+            .map_err(|e| ToolError::new(ErrorCode::Disconnected, e.to_string()))?;
+        std::process::Command::new(exe)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                ToolError::new(
+                    ErrorCode::Disconnected,
+                    format!("could not start Rodtty: {e}"),
+                )
+            })?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            match send() {
+                Err(e) if e.code == ErrorCode::Disconnected && Instant::now() < deadline => {
+                    continue;
+                }
+                other => return other,
+            }
+        }
+    });
+    match result {
+        Ok(_) => 0,
+        Err(error) => {
+            eprintln!("rodtty open: {}", error.message);
+            crate::open::EXIT_DELIVERY
+        }
     }
 }
 
