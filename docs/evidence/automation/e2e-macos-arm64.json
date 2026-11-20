@@ -1,8 +1,8 @@
 {
-  "started": "2026-11-20T13:32:47.270Z",
+  "started": "2026-11-20T16:11:39.448Z",
   "checks": [
     {
-      "message": "client cl_9602332c5c26cab5 approved for /private/var/folders/wk/rcttcp_n6f121l53tv5m5l6w0000gn/T/rodtty-e2e-S0bYi7",
+      "message": "client cl_7a8313e2b1e4ed9b approved for /private/var/folders/wk/rcttcp_n6f121l53tv5m5l6w0000gn/T/rodtty-e2e-8l6Fbp",
       "passed": true
     },
     {
@@ -14,11 +14,11 @@
       "passed": true
     },
     {
-      "message": "playable video /tmp/rt-b/artifacts/browser-1795181568263-d7585005.avi: 45 frames, 3.000000s",
+      "message": "playable video /tmp/rt-e2e/artifacts/browser-1795191100466-10605715.avi: 48 frames, 3.200000s",
       "passed": true
     },
     {
-      "message": "browser screenshot /tmp/rt-b/artifacts/browser-1795181571430-31b40740.png",
+      "message": "browser screenshot /tmp/rt-e2e/artifacts/browser-1795191103816-92a80f75.png",
       "passed": true
     },
     {
@@ -66,7 +66,7 @@
       "passed": true
     },
     {
-      "message": "the owner's frontmost app stayed \"Google Chrome\"",
+      "message": "the owner's frontmost app stayed \"‎WhatsApp\"",
       "passed": true
     },
     {
@@ -82,42 +82,43 @@
     {
       "label": "before",
       "pointer": [
-        1832,
-        160.7
+        765.7,
+        1240.9
       ],
-      "front": "\"Google Chrome\""
+      "front": "\"‎WhatsApp\""
     },
     {
       "label": "during browser workflow",
       "pointer": [
-        1832,
-        160.7
+        765.7,
+        1240.9
       ],
-      "front": "\"Google Chrome\""
+      "front": "\"‎WhatsApp\""
     },
     {
       "label": "after",
       "pointer": [
-        1832,
-        160.7
+        878.7,
+        844.5
       ],
-      "front": "\"Google Chrome\""
+      "front": "\"‎WhatsApp\""
     }
   ],
-  "instance": "788d8c60",
+  "instance": "d3054012",
   "features": [
     "terminal",
     "workspaces",
     "editor",
     "git",
     "browser",
-    "recording"
+    "recording",
+    "codex"
   ],
-  "terminal_screenshot": "/tmp/rt-b/artifacts/terminal-1795181567787-1a159e6c.png",
+  "terminal_screenshot": "/tmp/rt-e2e/artifacts/terminal-1795191100033-1dcb2e38.png",
   "video": {
-    "path": "/tmp/rt-b/artifacts/browser-1795181568263-d7585005.avi",
-    "frames": 45,
-    "duration_ms": 3000,
+    "path": "/tmp/rt-e2e/artifacts/browser-1795191100466-10605715.avi",
+    "frames": 48,
+    "duration_ms": 3200,
     "ffprobe": {
       "programs": [],
       "stream_groups": [],
@@ -126,29 +127,16 @@
           "codec_name": "mjpeg",
           "width": 1100,
           "height": 760,
-          "nb_read_frames": "45"
+          "nb_read_frames": "48"
         }
       ],
       "format": {
-        "duration": "3.000000"
+        "duration": "3.200000"
       }
     }
   },
-  "browser_screenshot": "/tmp/rt-b/artifacts/browser-1795181571430-31b40740.png",
+  "browser_screenshot": "/tmp/rt-e2e/artifacts/browser-1795191103816-92a80f75.png",
   "diff": "--- a/greeting.txt\n+++ b/greeting.txt\n@@ -1,2 +1,2 @@\n Hello from the fixture.\n-Status: draft\n+Status: reviewed by the agent\n",
-  "finished": "2026-11-20T13:32:58.422Z",
-  "passed": true,
-  "platform": {
-    "os": "27.2.1",
-    "build": "26B131",
-    "arch": "arm64",
-    "rodtty": "0.1.1 debug dev bundle (scripts/browser/dev-app.sh)",
-    "cef": "156.0.31+ge603d97+chromium-156.0.8078.100 (cef crate 156.7.0)",
-    "mcp_client": "@modelcontextprotocol/sdk 1.32.2 (node v24.22.3)"
-  },
-  "artifact_sha256": {
-    "video": "5e030da4679af2f2ff99e0142ba43a3427bc297920daed1e64c986c0b7d95889",
-    "browser_screenshot": "f53ee2353eb16412430207425eb39c40c7aceaaee0c9f449a6a477c15fde6394",
-    "terminal_screenshot": "a5183b072c340e3c9c1128dff9229757eb1d0c3bb09638a89bd3896a1efd5e0f"
-  }
+  "finished": "2026-11-20T16:11:51.044Z",
+  "passed": true
 }

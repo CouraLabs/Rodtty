@@ -6,6 +6,24 @@ The release workflow publishes the section whose heading matches the tagged vers
 
 ## [Unreleased]
 
+### Added
+
+- Split terminals: two independent sessions per tab, side by side or stacked, with a divider, focus switching and saved layouts.
+- Previous Command and Next Command, and opt-in notifications for long commands that finish in the background.
+- A Changes view listing staged, unstaged and untracked files, opening each one's diff.
+- Remote session handoff over Tailscale with one-time pairing codes, a control policy and revocation. Off by default.
+- Cmd-click (Ctrl-click) or Open Reference opens printed `path:line[:column]` references in the editor.
+- Recovery of unsaved editor edits after an unexpected exit.
+- Send to Terminal for editor selections and diff hunks, with an editable preview.
+- Filter Terminal Output, with substring and regular-expression modes.
+- A local agent status interface shown on terminal tabs.
+- Copy as Markdown opens an editable preview with redaction.
+- Pin a command's output and compare it with a rerun.
+
+### Fixed
+
+- A shell activity marker split across two PTY reads no longer shifts the next command's recorded output.
+
 ## [0.1.1] - 2026-11-20
 
 ### Added
