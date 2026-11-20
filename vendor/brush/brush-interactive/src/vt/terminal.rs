@@ -196,9 +196,10 @@ mod console {
 
     use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Console::{
-        CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
-        ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode, GetConsoleScreenBufferInfo, INPUT_RECORD,
-        KEY_EVENT, PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode,
+        CONSOLE_SCREEN_BUFFER_INFO, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT,
+        ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode,
+        GetConsoleScreenBufferInfo, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, ReadConsoleInputW,
+        SetConsoleMode,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -206,9 +207,14 @@ mod console {
         std::io::stdin().as_raw_handle()
     }
 
-    /// The console's input mode before raw mode, restored on drop.
+    fn output() -> HANDLE {
+        std::io::stdout().as_raw_handle()
+    }
+
+    /// The console's input and output modes before raw mode, restored on drop.
     pub(super) struct RawMode {
         original: u32,
+        output: Option<u32>,
     }
 
     impl RawMode {
@@ -226,14 +232,33 @@ mod console {
             if unsafe { SetConsoleMode(input(), raw) } == 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            Ok(Self { original })
+            // As on Unix, a newline the editor draws also returns to the
+            // start of the line.
+            let mut output_mode = 0;
+            // SAFETY: as above, for the console output handle.
+            let output_original = (unsafe { GetConsoleMode(output(), &raw mut output_mode) } != 0)
+                .then_some(output_mode);
+            if let Some(mode) = output_original
+                && mode & DISABLE_NEWLINE_AUTO_RETURN != 0
+            {
+                // SAFETY: as above.
+                let _ = unsafe { SetConsoleMode(output(), mode & !DISABLE_NEWLINE_AUTO_RETURN) };
+            }
+            Ok(Self {
+                original,
+                output: output_original,
+            })
         }
     }
 
     impl Drop for RawMode {
         fn drop(&mut self) {
-            // SAFETY: restores the mode read from the same handle.
+            // SAFETY: restores the modes read from the same handles.
             let _ = unsafe { SetConsoleMode(input(), self.original) };
+            if let Some(mode) = self.output {
+                // SAFETY: as above.
+                let _ = unsafe { SetConsoleMode(output(), mode) };
+            }
         }
     }
 
@@ -241,9 +266,8 @@ mod console {
     pub(super) fn columns() -> Option<usize> {
         // SAFETY: an all-zero CONSOLE_SCREEN_BUFFER_INFO is a valid value.
         let mut info: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
-        let output = std::io::stdout().as_raw_handle();
         // SAFETY: `info` outlives the call.
-        if unsafe { GetConsoleScreenBufferInfo(output, &raw mut info) } == 0 {
+        if unsafe { GetConsoleScreenBufferInfo(output(), &raw mut info) } == 0 {
             return None;
         }
         usize::try_from(i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1).ok()

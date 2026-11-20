@@ -38,6 +38,9 @@ trash = { version = "=5.3.0", default-features = false, features = ["chrono", "c
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+
 [patch.crates-io]
 trash = { path = "vendor/trash" }
 vte = { path = "vendor/vte" }

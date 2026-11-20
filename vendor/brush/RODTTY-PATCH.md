@@ -30,3 +30,9 @@ Every change to Brush's source is listed here, newest last.
   reports its width, and waits for key events, so the VT line editor works on
   Windows. `brush-shell`'s build script offers the VT backend on Windows.
   Adds a Windows-only `windows-sys` dependency to `brush-interactive`.
+- `brush-interactive`, VT backend on Windows: raw mode also clears the console
+  output's `DISABLE_NEWLINE_AUTO_RETURN`, so a newline the editor draws returns
+  to the start of the line, as `ONLCR` does on Unix.
+- `brush-core`, Windows: `exec` runs the command to its end and exits with its
+  status, since Windows can't replace a process's image. Before, it failed with
+  "unsupported".

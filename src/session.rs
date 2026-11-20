@@ -99,7 +99,6 @@ pub struct Session {
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     size: (u16, u16),
-    #[cfg(unix)]
     shell_pid: Option<u32>,
     jobs: PathBuf,
     job_pids: PathBuf,
@@ -150,7 +149,6 @@ impl Session {
             .spawn_command(command)
             .context("start Brush in PTY")?;
         drop(pair.slave);
-        #[cfg(unix)]
         let shell_pid = child.process_id();
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader()?;
@@ -241,7 +239,6 @@ impl Session {
             master: pair.master,
             killer,
             size: (rows, cols),
-            #[cfg(unix)]
             shell_pid,
             jobs,
             job_pids,
@@ -297,8 +294,9 @@ impl Session {
         }
         #[cfg(not(unix))]
         {
-            // ConPTY has no foreground-group or process-liveness query.
-            !jobs.is_empty()
+            // ConPTY has no foreground process group. A command or job the shell
+            // started is a live child process of the shell.
+            !jobs.is_empty() || self.shell_pid.is_none_or(has_child_process)
         }
     }
 
@@ -461,4 +459,40 @@ impl Drop for Session {
         }
         self.input.take();
     }
+}
+
+/// Whether process `parent` has a live child process. When the process list
+/// can't be read, the answer is yes: an unreadable state can't prove a
+/// session idle.
+#[cfg(windows)]
+fn has_child_process(parent: u32) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    // SAFETY: a process snapshot handle, closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return true;
+    }
+    // SAFETY: an all-zero PROCESSENTRY32W is valid once its size is set.
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut found = false;
+    // SAFETY: `entry` outlives each call and records its own size.
+    let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) } != 0;
+    while more {
+        if entry.th32ParentProcessID == parent && entry.th32ProcessID != parent {
+            found = true;
+            break;
+        }
+        // SAFETY: as above.
+        more = unsafe { Process32NextW(snapshot, &raw mut entry) } != 0;
+    }
+    // SAFETY: closes the snapshot opened above.
+    unsafe { CloseHandle(snapshot) };
+    found
 }
