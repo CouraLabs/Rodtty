@@ -253,6 +253,9 @@ pub(crate) fn explorer_menu(s: &State, a: &Appearance) -> Option<El> {
 }
 
 pub(crate) fn explorer(s: &State, a: &Appearance, width: f32) -> El {
+    if s.changes.open {
+        return changes::view(s, a, width);
+    }
     let workspace = &s.workspace;
     let mut pane = col()
         .key("explorer")

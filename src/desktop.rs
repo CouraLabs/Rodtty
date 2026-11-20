@@ -19,6 +19,7 @@ mod autosave;
 #[cfg(feature = "browser")]
 pub(crate) mod browser;
 mod capture;
+mod changes;
 mod codex;
 mod commands;
 mod folders;

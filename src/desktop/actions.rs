@@ -89,6 +89,9 @@ pub(super) enum AppAction {
     PinRun,
     CompareRuns,
     ClearPinnedRun,
+    ToggleChanges,
+    NextChange,
+    PreviousChange,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

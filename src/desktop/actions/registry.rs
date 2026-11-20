@@ -290,6 +290,24 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "toggle-changes",
+            "Git: Show Changes",
+            app("Ctrl+Shift+G", "Ctrl+Shift+G"),
+            AppAction::ToggleChanges,
+        ),
+        (
+            "next-change",
+            "Git: Open Next Changed File",
+            "",
+            AppAction::NextChange,
+        ),
+        (
+            "previous-change",
+            "Git: Open Previous Changed File",
+            "",
+            AppAction::PreviousChange,
+        ),
+        (
             "pin-run",
             "Terminal: Pin Last Command Output for Comparison",
             "",

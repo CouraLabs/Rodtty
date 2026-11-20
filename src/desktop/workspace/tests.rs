@@ -5011,3 +5011,149 @@ while True:
     );
     assert!(text.contains("\n-fn b() {}\n+fn β() {}\n"), "{text}");
 }
+
+#[test]
+fn the_changes_view_lists_a_linked_worktree_opens_diffs_keeps_drafts_and_follows_root_switches() {
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let main = crate::test_support::tempdir().unwrap();
+    git(main.path(), &["init", "-b", "main"]);
+    std::fs::create_dir_all(main.path().join("a")).unwrap();
+    std::fs::create_dir_all(main.path().join("b")).unwrap();
+    for (name, body) in [
+        ("a/mod.rs", "a\n"),
+        ("b/mod.rs", "b\n"),
+        ("old.txt", "old\n"),
+        ("gone.txt", "gone\n"),
+        ("both.txt", "1\n"),
+    ] {
+        std::fs::write(main.path().join(name), body).unwrap();
+    }
+    git(main.path(), &["add", "."]);
+    git(main.path(), &["commit", "-m", "base"]);
+    let holder = crate::test_support::tempdir().unwrap();
+    let linked = holder.path().join("linked");
+    git(
+        main.path(),
+        &["worktree", "add", "-b", "feature", linked.to_str().unwrap()],
+    );
+    // Staged, unstaged, renamed, deleted, untracked, and one file in two groups.
+    std::fs::write(linked.join("a/mod.rs"), "a changed\n").unwrap();
+    std::fs::write(linked.join("b/mod.rs"), "b staged\n").unwrap();
+    git(&linked, &["add", "b/mod.rs"]);
+    git(&linked, &["mv", "old.txt", "new.txt"]);
+    std::fs::remove_file(linked.join("gone.txt")).unwrap();
+    std::fs::write(linked.join("both.txt"), "2\n").unwrap();
+    git(&linked, &["add", "both.txt"]);
+    std::fs::write(linked.join("both.txt"), "3\n").unwrap();
+    std::fs::write(linked.join("fresh.txt"), "new\n").unwrap();
+    let index = std::fs::read(main.path().join(".git/worktrees/linked/index")).unwrap();
+
+    let mut state = state(&linked);
+    state.navigate(linked.clone());
+    state.toggle_changes_view();
+    wait(&mut state, |s| {
+        matches!(s.changes.result, Some(Ok(Some(_))))
+    });
+    let rows: Vec<(String, String, char)> = state
+        .changes
+        .rows()
+        .into_iter()
+        .map(|(_, f, g)| (g.to_owned(), f.label, f.kind))
+        .collect();
+    let has = |g: &str, label: &str, kind: char| {
+        rows.iter()
+            .any(|r| r == &(g.to_owned(), label.to_owned(), kind))
+    };
+    assert!(has("Staged", "b/mod.rs", 'M'), "{rows:?}");
+    assert!(
+        has("Unstaged", "a/mod.rs", 'M'),
+        "duplicate basenames get folders: {rows:?}"
+    );
+    assert!(has("Staged", "new.txt", 'R'), "{rows:?}");
+    assert!(has("Unstaged", "gone.txt", 'D'), "{rows:?}");
+    assert!(
+        has("Staged", "both.txt", 'M') && has("Unstaged", "both.txt", 'M'),
+        "{rows:?}"
+    );
+    assert!(has("Untracked", "fresh.txt", '?'), "{rows:?}");
+    let Some(Ok(Some(changes))) = &state.changes.result else {
+        unreachable!()
+    };
+    assert!(changes.linked_worktree && changes.has_commits);
+
+    // A dirty buffer stays dirty while its diff opens.
+    open(&mut state, &linked.join("a/mod.rs"));
+    let tab = state.workspace.active;
+    state.workspace.tabs[tab].edit.replace_text("draft\n");
+    assert!(state.workspace.tabs[tab].dirty());
+    let index_of = |state: &State, label: &str, group: &str| {
+        state
+            .changes
+            .rows()
+            .iter()
+            .position(|(_, f, g)| f.label == label && *g == group)
+            .unwrap()
+    };
+    let i = index_of(&state, "a/mod.rs", "Unstaged");
+    state.open_change(i, &mut Tx::default());
+    wait(&mut state, |s| {
+        s.workspace
+            .tabs
+            .iter()
+            .any(|t| matches!(t.mode, View::Diff(Comparison::Unstaged)))
+    });
+    assert!(
+        state
+            .workspace
+            .tabs
+            .iter()
+            .find(|t| t.document.path.ends_with("a/mod.rs"))
+            .unwrap()
+            .dirty()
+    );
+    // Keyboard order: next from the first row, then a deleted file explains itself.
+    let deleted = index_of(&state, "gone.txt", "Unstaged");
+    state.changes.selected = deleted - 1;
+    state.step_change(true, &mut Tx::default());
+    assert_eq!(state.changes.selected, deleted);
+    assert!(state.message.contains("deleted"), "{}", state.message);
+
+    // Switch roots during a refresh: the new root's result wins.
+    state.refresh_changes();
+    let elsewhere = crate::test_support::tempdir().unwrap();
+    state.navigate(elsewhere.path().to_owned());
+    wait(&mut state, |s| {
+        s.changes.root.as_deref() == Some(elsewhere.path())
+            && matches!(s.changes.result, Some(Ok(None)))
+    });
+    assert!(state.changes.rows().is_empty());
+    assert_eq!(
+        std::fs::read(main.path().join(".git/worktrees/linked/index")).unwrap(),
+        index,
+        "the index is untouched"
+    );
+    assert_eq!(
+        std::fs::read_to_string(linked.join("a/mod.rs")).unwrap(),
+        "a changed\n"
+    );
+}
