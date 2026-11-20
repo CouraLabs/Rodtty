@@ -86,6 +86,9 @@ pub(super) enum AppAction {
     ToggleCommandNotifications,
     FilterTerminal,
     SendToTerminal,
+    PinRun,
+    CompareRuns,
+    ClearPinnedRun,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

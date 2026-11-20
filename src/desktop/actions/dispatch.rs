@@ -77,6 +77,9 @@ impl State {
             AppAction::CheckEnvironment => self.check_environment(),
             AppAction::FilterTerminal => self.open_log_filter(tx),
             AppAction::SendToTerminal => self.begin_send_to_terminal(),
+            AppAction::PinRun => self.pin_last_run(),
+            AppAction::CompareRuns => self.compare_with_pinned(),
+            AppAction::ClearPinnedRun => self.clear_pinned_run(),
             AppAction::PreviousCommand => self.step_command(true),
             AppAction::NextCommand => self.step_command(false),
             AppAction::ToggleCommandNotifications => {

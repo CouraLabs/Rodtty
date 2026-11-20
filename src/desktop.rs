@@ -25,6 +25,7 @@ mod folders;
 mod fonts;
 mod motion;
 mod overview;
+mod runs;
 mod search;
 mod send;
 mod tasks;

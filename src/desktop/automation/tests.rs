@@ -517,3 +517,66 @@ fn filtering_a_live_session_lists_incoming_matches_jumps_and_restores_the_termin
             .contains(before.lines().last().unwrap())
     );
 }
+
+#[test]
+fn a_pinned_failing_run_compares_with_its_rerun_and_clearing_leaves_the_terminal_intact() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    let finished = |state: &State| {
+        state.sessions[0]
+            .commands()
+            .iter()
+            .filter(|c| c.ended.is_some())
+            .count()
+    };
+    let run = |state: &mut State, line: &str| {
+        let before = finished(state);
+        state.sessions[0]
+            .send(format!("{line}\r").into_bytes())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while finished(state) == before {
+            assert!(Instant::now() < deadline, "{line} never finished");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // A failing build with colors and a line wider than the terminal.
+    let wide = "w".repeat(300);
+    run(
+        &mut state,
+        &format!("printf '\\033[32mok\\033[0m a\\nFAIL b\\n{wide}\\n'; false"),
+    );
+    state.pin_last_run();
+    assert!(
+        state.message.contains("failed (exit 1)"),
+        "{}",
+        state.message
+    );
+    run(&mut state, &format!("printf 'ok a\\nok b\\n{wide}\\n'"));
+    state.compare_with_pinned();
+    let c = state.run_comparison.as_ref().expect(&state.message);
+    assert_eq!(
+        (c.added, c.removed),
+        (1, 1),
+        "colors and wraps make no changes"
+    );
+    assert!(c.before.contains("failed (exit 1)") && c.after.contains("succeeded"));
+    assert!(!c.before.contains("incomplete"));
+    let hunk = &state.run_diff.files()[0].hunks[0];
+    assert!(hunk.lines.iter().any(|l| l.text == "FAIL b"));
+    // A run longer than retention is labeled incomplete.
+    run(&mut state, "seq 1 250000");
+    state.compare_with_pinned();
+    let c = state.run_comparison.as_ref().unwrap();
+    assert!(c.after.contains("incomplete"), "{}", c.after);
+    let before = state.sessions[0].screen().contents();
+    let mut runtime = crate::desktop::tests::runtime_for(state);
+    runtime.frame(1.0);
+    assert!(runtime.find("run-diff").is_some());
+    runtime.update(|s, _| s.clear_pinned_run());
+    runtime.frame(1.0);
+    assert!(runtime.find("run-comparison").is_none());
+    assert!(runtime.state.pinned_run.is_none());
+    assert_eq!(runtime.state.sessions[0].screen().contents(), before);
+}

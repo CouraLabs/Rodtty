@@ -290,6 +290,24 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::TogglePassthrough,
         ),
         (
+            "pin-run",
+            "Terminal: Pin Last Command Output for Comparison",
+            "",
+            AppAction::PinRun,
+        ),
+        (
+            "compare-runs",
+            "Terminal: Compare Last Command with Pinned Run",
+            "",
+            AppAction::CompareRuns,
+        ),
+        (
+            "clear-pinned-run",
+            "Terminal: Clear Pinned Run",
+            "",
+            AppAction::ClearPinnedRun,
+        ),
+        (
             "send-to-terminal",
             "Editor: Send Selection or Diff Hunk to Terminal…",
             "",
