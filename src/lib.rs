@@ -15,6 +15,7 @@ macro_rules! asset_str {
 
 pub mod ansi;
 pub mod automation;
+pub mod compare;
 pub mod config;
 pub mod environment;
 pub mod excerpt;

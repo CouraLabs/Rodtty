@@ -486,6 +486,58 @@ impl State {
     }
 }
 
+impl State {
+    /// A finished run of `session`'s command `id`, for comparison.
+    pub(crate) fn command_run(session: &Session, id: u64) -> Option<crate::compare::Run> {
+        let command = session
+            .commands()
+            .into_iter()
+            .find(|c| c.id == id && c.ended.is_some())?;
+        let (text, complete) = session.command_output(id)?;
+        Some(crate::compare::Run {
+            command: id,
+            outcome: outcome_name(command.outcome()).into(),
+            exit_status: command.exit,
+            elapsed_ms: command.elapsed().as_millis() as u64,
+            complete,
+            text,
+        })
+    }
+
+    pub(crate) fn auto_terminal_compare(
+        &mut self,
+        grant: &ClientGrant,
+        args: &Value,
+    ) -> ToolResult {
+        let index = self.find_terminal(grant, arg_str(args, "terminal")?)?;
+        let session = &self.sessions[index];
+        let finished: Vec<u64> = session
+            .commands()
+            .iter()
+            .filter(|c| c.ended.is_some())
+            .map(|c| c.id)
+            .collect();
+        let pick = |key: &str, from_end: usize| -> Result<u64, ToolError> {
+            match args.get(key).and_then(Value::as_u64) {
+                Some(id) => Ok(id),
+                None => finished.iter().rev().nth(from_end).copied().ok_or_else(|| {
+                    ToolError::new(ErrorCode::UnknownTarget, "Fewer than two finished commands")
+                }),
+            }
+        };
+        let (before, after) = (pick("before", 1)?, pick("after", 0)?);
+        let run = |id| {
+            Self::command_run(session, id).ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::UnknownTarget,
+                    format!("Command {id} is not a finished, retained run"),
+                )
+            })
+        };
+        Ok(json!(crate::compare::compare(run(before)?, run(after)?)))
+    }
+}
+
 /// POSIX single quotes, as Brush reads them on every platform.
 pub(crate) fn quote(word: &str) -> String {
     if !word.is_empty()

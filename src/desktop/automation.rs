@@ -338,6 +338,7 @@ impl Host {
             "terminal_send_text" => ui!(|s, tx| s.auto_terminal_text(&g, &args)),
             "terminal_send_keys" => ui!(|s, tx| s.auto_terminal_keys(&g, &args)),
             "terminal_interrupt" => ui!(|s, tx| s.auto_terminal_interrupt(&g, &args)),
+            "terminal_compare" => ui!(|s, tx| s.auto_terminal_compare(&g, &args)),
             "terminal_close" => ui!(|s, tx| s.auto_terminal_close(&g, &args, tx)),
             "input_state" => ui!(|s, tx| s.auto_input_state(&g, &args)),
             "input_key" => ui!(|s, tx| s.auto_input_key(&g, &args)),

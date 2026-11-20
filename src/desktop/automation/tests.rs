@@ -255,3 +255,50 @@ fn multiline_paste_waits_for_confirmation_and_never_reaches_another_session() {
     state.paste("echo single");
     assert!(state.pending.is_none());
 }
+
+#[test]
+fn two_runs_compare_with_their_exit_statuses() {
+    let (root, mut state) = state();
+    let (workspace, _) = state.workspace_of(root.path());
+    let g = grant(&[workspace]);
+    let t = state
+        .auto_terminal_create(&g, &json!({"cwd": root.path()}))
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait(&state, 0, "rodtty:");
+    std::fs::write(root.path().join("state"), "1").unwrap();
+    let build = "if [ \"$(cat state)\" = 1 ]; then printf '\\033[31mFAIL\\033[0m step b\\n'; false; else printf 'ok step b\\n'; fi";
+    for (n, _) in [(1, ()), (2, ())] {
+        state
+            .auto_terminal_text(
+                &g,
+                &json!({"terminal": t, "text": format!("printf 'ok step a\\n'; {build}\r")}),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while state.sessions[0]
+            .commands()
+            .iter()
+            .filter(|c| c.ended.is_some())
+            .count()
+            < n
+        {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::fs::write(root.path().join("state"), "2").unwrap();
+    }
+    let c = state
+        .auto_terminal_compare(&g, &json!({"terminal": t}))
+        .unwrap();
+    assert_eq!(c["before"]["exit_status"], 1);
+    assert_eq!(c["after"]["exit_status"], 0);
+    assert_eq!(
+        (c["added"].as_u64(), c["removed"].as_u64()),
+        (Some(1), Some(1)),
+        "{c}"
+    );
+    assert!(c["unified"].as_str().unwrap().contains("-FAIL step b"));
+}

@@ -217,6 +217,15 @@ pub static TOOLS: &[Tool] = &[
         required: &["terminal", "keys"],
     },
     Tool {
+        name: "terminal_compare",
+        description: "Compare two finished command runs in a terminal by their command IDs (from terminal_screen recent_commands; default: the last two). Returns each run's exit status and whether its output was complete, plus a unified diff with formatting normalized.",
+        scope: Some(Scope::Read),
+        feature: None,
+        mutating: false,
+        properties: props!("terminal": terminal(), "before": json!({"type":"integer"}), "after": json!({"type":"integer"})),
+        required: &["terminal"],
+    },
+    Tool {
         name: "terminal_interrupt",
         description: "Send an interrupt (Ctrl+C) to the terminal's foreground program.",
         scope: Some(Scope::Terminal),
