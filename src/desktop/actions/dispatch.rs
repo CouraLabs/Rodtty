@@ -41,6 +41,16 @@ impl State {
             AppAction::CodexApprove => self.codex_decide("accept"),
             AppAction::ShowServices => self.show_services(),
             AppAction::EditTasks => self.edit_tasks(),
+            AppAction::TogglePasteConfirmation => {
+                self.save_config(|c| {
+                    c.behavior.confirm_multiline_paste = !c.behavior.confirm_multiline_paste
+                });
+                self.message = if self.config.behavior.confirm_multiline_paste {
+                    "Multiline terminal pastes now ask before sending.".into()
+                } else {
+                    "Multiline terminal pastes are sent without asking.".into()
+                };
+            }
             AppAction::RunTask(index) => self.run_task_index(usize::from(index)),
             AppAction::CheckEnvironment => self.check_environment(),
             AppAction::CodexDecline => self.codex_decide("decline"),

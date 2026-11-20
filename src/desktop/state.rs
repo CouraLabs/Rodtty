@@ -11,6 +11,12 @@ pub(crate) enum Pending {
     File(workspace::FilePrompt),
     Operation(explorer::operations::OperationPrompt),
     Removal(explorer::removal::RemovalPrompt),
+    /// Multiline text waiting for the owner's Paste or Cancel, bound to the
+    /// session it was meant for.
+    Paste {
+        session: usize,
+        text: String,
+    },
 }
 
 pub(crate) struct State {
@@ -317,6 +323,37 @@ impl State {
     }
 
     pub(crate) fn paste(&mut self, content: &str) {
+        if self.config.behavior.confirm_multiline_paste
+            && (content.contains('\n') || content.contains('\r'))
+            && self.pending.is_none()
+            && let Some(session) = self.active()
+        {
+            // Nothing reaches the terminal until the owner approves.
+            self.pending = Some(Pending::Paste {
+                session: session.id(),
+                text: content.to_owned(),
+            });
+            return;
+        }
+        self.deliver_paste(content);
+    }
+
+    /// Deliver a confirmed paste to the session it was meant for, or drop it
+    /// when that session closed or is no longer the one in front.
+    pub(crate) fn confirm_paste(&mut self) {
+        let Some(Pending::Paste { session, text }) = self.pending.take() else {
+            return;
+        };
+        if self.active().map(Session::id) != Some(session) {
+            self.message =
+                "The paste was discarded: its terminal closed or is no longer in front.".into();
+            return;
+        }
+        self.deliver_paste(&text);
+        self.message = "Pasted.".into();
+    }
+
+    fn deliver_paste(&mut self, content: &str) {
         self.owner_terminal_input();
         if let Some(session) = self.active()
             && let Err(error) = session.paste(content)

@@ -260,6 +260,12 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::CloseBrowser,
         ),
         (
+            "toggle-paste-confirmation",
+            "Terminal: Toggle Multiline Paste Confirmation",
+            "",
+            AppAction::TogglePasteConfirmation,
+        ),
+        (
             "edit-tasks",
             "Tasks: Edit Project Tasks",
             "",

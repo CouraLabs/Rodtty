@@ -210,6 +210,75 @@ pub(crate) fn view_with_frame(
             Entrance::Dialog,
         ));
     }
+    if let Some(Pending::Paste {
+        session,
+        text: content,
+    }) = &state.pending
+    {
+        let destination = state
+            .sessions
+            .iter()
+            .find(|s| s.id() == *session)
+            .map(|s| format!("Paste into “{}” ({})", s.tab_title(), tilde_path(&s.cwd())))
+            .unwrap_or_else(|| "Its terminal has closed".into());
+        let lines = content.lines().count().max(1);
+        let trailing = content.ends_with('\n') || content.ends_with('\r');
+        let mut preview: String = content.chars().take(2000).collect();
+        if preview.len() < content.len() {
+            preview.push('…');
+        }
+        let summary = format!(
+            "{lines} lines{}",
+            if trailing {
+                ", ending with a newline that may run the last line"
+            } else {
+                ""
+            }
+        );
+        root = root.child(motion::modal(
+            a,
+            el().center().child(
+                col()
+                    .key("paste-confirmation")
+                    .role("alertdialog")
+                    .label("Paste multiple lines?")
+                    .description(format!("{destination}. {summary}."))
+                    .modal(false, |s: &mut State| s.pending = None)
+                    .w(520.0)
+                    .px(24.0)
+                    .py(24.0)
+                    .gap(12.0)
+                    .radius(10.0)
+                    .fill(a.panel())
+                    .child(
+                        text("Paste multiple lines?")
+                            .font(ui_style(17.0, 600.0))
+                            .color(a.ink()),
+                    )
+                    .child(text(destination).font(ui_label()).color(a.muted()).wrap())
+                    .child(text(summary).font(ui_label()).color(a.muted()).wrap())
+                    .child(
+                        el().key("paste-preview")
+                            .w_full()
+                            .max_h(220.0)
+                            .px(10.0)
+                            .py(8.0)
+                            .radius(6.0)
+                            .fill(a.bg())
+                            .child(text(preview).font(ui_label()).color(a.ink()).wrap()),
+                    )
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .child(button(a, "paste-cancel", "Cancel", |s, _| s.pending = None))
+                            .child(button(a, "paste-confirm", "Paste", |s, _| {
+                                s.confirm_paste()
+                            })),
+                    ),
+            ),
+            Entrance::Dialog,
+        ));
+    }
     if matches!(state.pending, Some(Pending::Window)) {
         root = root.child(motion::modal(
             a,

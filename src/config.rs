@@ -542,6 +542,8 @@ pub struct BehaviorPreferences {
     /// The folder for `StartupDirectory::Specified`.
     pub startup_specified_directory: PathBuf,
     pub terminal_startup: TerminalStartup,
+    /// Preview multiline terminal pastes and wait for Paste or Cancel.
+    pub confirm_multiline_paste: bool,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }

@@ -203,3 +203,55 @@ fn command_results_record_success_failure_interrupts_and_builtins() {
         .unwrap();
     assert_eq!(screen["recent_commands"][0]["outcome"], "interrupted");
 }
+
+#[test]
+fn multiline_paste_waits_for_confirmation_and_never_reaches_another_session() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    wait(&state, 1, "rodtty:");
+    state.save_config(|c| c.behavior.confirm_multiline_paste = true);
+    state.active = 0;
+    // An app with bracketed paste reads exactly what arrives.
+    state.sessions[0]
+        .send(b"stty raw -echo; printf '\\033[?2004hREADY\\n'; head -c 40 | od -c | head -3; stty sane\r".to_vec())
+        .unwrap();
+    wait(&state, 0, "READY");
+    let before = state.sessions[0].state.lock().unwrap().output.end();
+    state.paste("one\r\ntwo\nthree\n");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(matches!(state.pending, Some(Pending::Paste { .. })));
+    assert_eq!(
+        state.sessions[0].state.lock().unwrap().output.end(),
+        before,
+        "no bytes before confirmation"
+    );
+    // Cancel delivers nothing.
+    state.pending = None;
+    // Approval delivers one paste, bracketed, to the intended session.
+    state.paste("one\r\ntwo\nthree\n");
+    state.confirm_paste();
+    state.sessions[0].send(b"Z".repeat(40)).unwrap();
+    wait(&state, 0, "0000040");
+    let screen = state.sessions[0].screen().contents();
+    assert!(
+        screen.contains("[   2   0   0   ~"),
+        "bracketed paste start arrived once: {screen}"
+    );
+    // A focus change before confirmation discards the text.
+    state.paste("x\ny\n");
+    state.active = 1;
+    let other = state.sessions[1].state.lock().unwrap().output.end();
+    state.confirm_paste();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        state.sessions[1].state.lock().unwrap().output.end(),
+        other,
+        "the other session got nothing"
+    );
+    assert!(state.message.contains("discarded"));
+    // Single lines are never held.
+    state.paste("echo single");
+    assert!(state.pending.is_none());
+}
