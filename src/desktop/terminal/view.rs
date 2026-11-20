@@ -170,7 +170,12 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
         // clearing here would erase every selection the moment it was made.
         tx.blur();
     })
-    .on_secondary_press(terminal::clipboard::terminal_menu)
+    .on_secondary_press_local(move |s: &mut State, pointer, tx| {
+        let (rows, cols) = s.with_screen(vt100::Screen::size);
+        let (row, col) = mouse_cell(rows, cols, cw, ch, pointer.x, pointer.y);
+        let reference = s.terminal_reference_at(row, col).map(|_| (row, col));
+        terminal::clipboard::terminal_menu(s, pointer.window(), reference, tx);
+    })
     .on_drag(move |s: &mut State, drag, tx| {
         s.supersede_pending_preview();
         s.workspace.set_terminal_focus(true);
@@ -245,6 +250,12 @@ fn grid_view(state: &State, screen: &vt100::Screen, a: &Appearance) -> El {
             Phase::Up => {
                 let extended = s.selection.is_some();
                 s.drag_origin = None;
+                // Cmd-click (Ctrl-click off macOS) opens a printed
+                // `path:line[:column]` reference; a drag still selects.
+                if !extended && tx.mods().cmd {
+                    let (row, col) = point(drag.x, drag.y);
+                    s.open_terminal_reference(row, col, tx);
+                }
                 if extended && s.config.terminal_clipboard.copy_on_selection {
                     s.copy(tx);
                 }

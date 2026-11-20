@@ -302,3 +302,72 @@ fn two_runs_compare_with_their_exit_statuses() {
     );
     assert!(c["unified"].as_str().unwrap().contains("-FAIL step b"));
 }
+
+#[test]
+fn the_same_relative_reference_printed_in_two_directories_opens_each_ones_file() {
+    let (root, mut state) = state();
+    let (workspace, _) = state.workspace_of(root.path());
+    let g = grant(&[workspace]);
+    for name in ["one", "two"] {
+        std::fs::create_dir_all(root.path().join(name).join("src")).unwrap();
+        std::fs::write(
+            root.path().join(name).join("src/a.rs"),
+            format!("{name}\nsecond line\n"),
+        )
+        .unwrap();
+    }
+    let t = state
+        .auto_terminal_create(&g, &json!({"cwd": root.path()}))
+        .unwrap();
+    let t = t["id"].as_str().unwrap().to_owned();
+    wait(&state, 0, "rodtty:");
+    state.active = 0;
+    let run = |state: &mut State, line: &str, marker: &str| {
+        state
+            .auto_terminal_text(&g, &json!({"terminal": t, "text": line}))
+            .unwrap();
+        state
+            .auto_terminal_keys(&g, &json!({"terminal": t, "keys": ["Enter"]}))
+            .unwrap();
+        wait(state, 0, marker);
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    run(&mut state, "cd one; echo IN_ONE", "\nIN_ONE");
+    run(
+        &mut state,
+        "printf 'src/a.rs:2:3\\n'; echo ONE_DONE",
+        "\nONE_DONE",
+    );
+    run(&mut state, "cd ../two; echo IN_TWO", "\nIN_TWO");
+    run(
+        &mut state,
+        "printf 'src/a.rs:2:3\\n'; echo TWO_DONE",
+        "\nTWO_DONE",
+    );
+    run(&mut state, "cd ..; echo BACK", "\nBACK");
+    let rows: Vec<u16> = state.sessions[0].with_screen(|screen| {
+        screen
+            .rows(0, screen.size().1)
+            .enumerate()
+            .filter(|(_, r)| r.trim_end() == "src/a.rs:2:3")
+            .map(|(i, _)| i as u16)
+            .collect()
+    });
+    assert_eq!(rows.len(), 2, "{}", state.sessions[0].screen().contents());
+    for (row, name) in rows.iter().zip(["one", "two"]) {
+        assert!(state.open_terminal_reference(*row, 4, &mut Tx::default()));
+        let opened = state
+            .workspace
+            .latest_activation
+            .clone()
+            .expect(&state.message);
+        assert_eq!(
+            dunce::canonicalize(&opened).unwrap(),
+            dunce::canonicalize(root.path().join(name).join("src/a.rs")).unwrap(),
+            "{}",
+            state.message
+        );
+    }
+    // A prompt or blank cell is no reference.
+    assert!(!state.open_terminal_reference(rows[0], 30, &mut Tx::default()));
+}

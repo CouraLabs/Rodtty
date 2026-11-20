@@ -1,6 +1,11 @@
 use crate::desktop::*;
 
-pub(crate) fn terminal_menu(s: &mut State, point: rune::PointerPress, tx: &mut Tx) {
+pub(crate) fn terminal_menu(
+    s: &mut State,
+    point: rune::PointerPress,
+    reference: Option<(u16, u16)>,
+    tx: &mut Tx,
+) {
     if s.application_overlay_open() {
         return;
     }
@@ -11,7 +16,11 @@ pub(crate) fn terminal_menu(s: &mut State, point: rune::PointerPress, tx: &mut T
         s.dispatch(AppAction::PasteTerminal, tx);
         return;
     }
-    let menu = rune::PopupMenu::new()
+    let mut menu = rune::PopupMenu::new();
+    if reference.is_some() {
+        menu = menu.item(rune::PopupItem::new("open-reference", "Open Reference"));
+    }
+    let menu = menu
         .item(
             rune::PopupItem::new(
                 "copy-terminal",
@@ -27,11 +36,16 @@ pub(crate) fn terminal_menu(s: &mut State, point: rune::PointerPress, tx: &mut T
             .enabled(s.action_disabled(AppAction::PasteTerminal).is_none()),
         );
     s.terminal_context_open = true;
-    tx.popup_menu(menu, point, |s: &mut State, chosen, tx| {
+    tx.popup_menu(menu, point, move |s: &mut State, chosen, tx| {
         s.terminal_context_open = false;
         match chosen {
             Some("copy-terminal") => s.dispatch(AppAction::CopyTerminal, tx),
             Some("paste-terminal") => s.dispatch(AppAction::PasteTerminal, tx),
+            Some("open-reference") => {
+                if let Some((row, col)) = reference {
+                    s.open_terminal_reference(row, col, tx);
+                }
+            }
             _ => {}
         }
     });
