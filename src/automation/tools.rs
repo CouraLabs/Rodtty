@@ -675,7 +675,11 @@ mod tests {
         for tool in TOOLS {
             let schema = tool.input_schema();
             for required in tool.required {
-                assert!(schema["properties"].get(*required).is_some(), "{} {required}", tool.name);
+                assert!(
+                    schema["properties"].get(*required).is_some(),
+                    "{} {required}",
+                    tool.name
+                );
             }
         }
         let terminal_only: Vec<_> = available(&[]).map(|t| t.name).collect();

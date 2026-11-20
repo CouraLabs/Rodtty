@@ -134,11 +134,7 @@ impl Registry {
             .iter()
             .any(|w| w.id != id && w.name == workspace.name);
         if collides {
-            format!(
-                "{} — {}",
-                workspace.name,
-                workspace.root.display()
-            )
+            format!("{} — {}", workspace.name, workspace.root.display())
         } else {
             workspace.name.clone()
         }
@@ -217,7 +213,10 @@ mod tests {
         registry.save(home.path()).unwrap();
         assert_eq!(Registry::load(home.path()).unwrap(), registry);
         assert!(registry.remove(&first.id).is_some());
-        assert!(a.join("src").is_dir(), "removing a workspace keeps its files");
+        assert!(
+            a.join("src").is_dir(),
+            "removing a workspace keeps its files"
+        );
     }
 
     #[test]
@@ -230,7 +229,9 @@ mod tests {
             ..Layout::default()
         };
         let mut registry = Registry::default();
-        let id = registry.migrate_single_layout(&layout, home.path()).unwrap();
+        let id = registry
+            .migrate_single_layout(&layout, home.path())
+            .unwrap();
         assert_eq!(registry.get(&id).unwrap().layout, Some(layout.clone()));
         assert_eq!(registry.migrate_single_layout(&layout, home.path()), None);
         save_selection(home.path(), Some(&id)).unwrap();

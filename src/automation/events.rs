@@ -150,10 +150,15 @@ impl Hub {
         let deadline = Instant::now() + wait;
         let mut inner = self.lock();
         loop {
-            if inner.next_seq > cursor || Instant::now() >= deadline || cancel.load(Ordering::Relaxed) {
+            if inner.next_seq > cursor
+                || Instant::now() >= deadline
+                || cancel.load(Ordering::Relaxed)
+            {
                 break;
             }
-            let left = deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(100));
+            let left = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100));
             inner = self
                 .changed
                 .wait_timeout(inner, left)
@@ -168,7 +173,10 @@ impl Hub {
             .filter(|e| e.seq > cursor)
             .take(max)
             .collect();
-        let next = events.last().map_or(cursor.max(if expired { inner.next_seq } else { cursor }), |e| e.seq);
+        let next = events.last().map_or(
+            cursor.max(if expired { inner.next_seq } else { cursor }),
+            |e| e.seq,
+        );
         json!({
             "events": events,
             "next_cursor": next,
@@ -178,7 +186,12 @@ impl Hub {
         })
     }
 
-    pub fn start_job(&self, kind: &str, client: &str, target: Option<&str>) -> (String, Arc<AtomicBool>) {
+    pub fn start_job(
+        &self,
+        kind: &str,
+        client: &str,
+        target: Option<&str>,
+    ) -> (String, Arc<AtomicBool>) {
         let id = format!("job_{}", super::token());
         let cancel = Arc::new(AtomicBool::new(false));
         let now = self.now_ms();
@@ -201,11 +214,21 @@ impl Hub {
             cancel: cancel.clone(),
         });
         drop(inner);
-        self.emit("job", Some(&id), json!({"state": "running", "kind": kind, "terminal": target}));
+        self.emit(
+            "job",
+            Some(&id),
+            json!({"state": "running", "kind": kind, "terminal": target}),
+        );
         (id, cancel)
     }
 
-    pub fn update_job(&self, id: &str, state: JobState, result: Option<Value>, error: Option<ToolError>) {
+    pub fn update_job(
+        &self,
+        id: &str,
+        state: JobState,
+        result: Option<Value>,
+        error: Option<ToolError>,
+    ) {
         let now = self.now_ms();
         let mut inner = self.lock();
         let Some(job) = inner.jobs.iter_mut().find(|j| j.id == id) else {
@@ -232,7 +255,12 @@ impl Hub {
     }
 
     pub fn jobs_for(&self, client: &str) -> Vec<Job> {
-        self.lock().jobs.iter().filter(|j| j.client == client).cloned().collect()
+        self.lock()
+            .jobs
+            .iter()
+            .filter(|j| j.client == client)
+            .cloned()
+            .collect()
     }
 
     /// Ask a job to stop. Only that operation stops: cancelling a wait
@@ -270,10 +298,13 @@ impl Hub {
         let mut inner = self.lock();
         loop {
             let job = inner.jobs.iter().find(|j| j.id == id)?.clone();
-            if job.state.finished() || Instant::now() >= deadline || cancel.load(Ordering::Relaxed) {
+            if job.state.finished() || Instant::now() >= deadline || cancel.load(Ordering::Relaxed)
+            {
                 return Some(job);
             }
-            let left = deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(100));
+            let left = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100));
             inner = self
                 .changed
                 .wait_timeout(inner, left)
@@ -296,11 +327,17 @@ impl Hub {
                         "This request_id was already used with different arguments",
                     ));
                 }
-                Some(Remembered { state: Request::Done(result), .. }) => {
+                Some(Remembered {
+                    state: Request::Done(result),
+                    ..
+                }) => {
                     return Ok(Begin::Done(result.clone()));
                 }
                 Some(_) if Instant::now() >= deadline => {
-                    return Err(ToolError::new(ErrorCode::Timeout, "The first attempt of this request is still running"));
+                    return Err(ToolError::new(
+                        ErrorCode::Timeout,
+                        "The first attempt of this request is still running",
+                    ));
                 }
                 Some(_) => {
                     inner = self
@@ -344,7 +381,12 @@ mod tests {
         hub.emit("a", None, json!(1));
         hub.emit("b", Some("t"), json!(2));
         let read = hub.read(start, 10, Duration::ZERO, &never);
-        let kinds: Vec<_> = read["events"].as_array().unwrap().iter().map(|e| e["kind"].clone()).collect();
+        let kinds: Vec<_> = read["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["kind"].clone())
+            .collect();
         assert_eq!(kinds, [json!("a"), json!("b")]);
         assert_eq!(read["expired"], false);
         for _ in 0..EVENT_HISTORY + 5 {
@@ -363,7 +405,10 @@ mod tests {
             Begin::Done(Ok(value)) => assert_eq!(value["terminal"], "t1"),
             _ => panic!("expected the remembered result"),
         }
-        assert_eq!(hub.begin("c/launch/1", "other").err().unwrap().code, ErrorCode::Conflict);
+        assert_eq!(
+            hub.begin("c/launch/1", "other").err().unwrap().code,
+            ErrorCode::Conflict
+        );
     }
 
     #[test]

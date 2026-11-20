@@ -56,6 +56,7 @@ pub fn install() -> bool {
     let Some(_mtm) = MainThreadMarker::new() else {
         return false;
     };
-    let app: Retained<NSApplication> = unsafe { msg_send![RodttyApplication::class(), sharedApplication] };
+    let app: Retained<NSApplication> =
+        unsafe { msg_send![RodttyApplication::class(), sharedApplication] };
     app.isKindOfClass(RodttyApplication::class())
 }

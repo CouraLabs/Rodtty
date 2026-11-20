@@ -66,12 +66,16 @@ impl Drop for Server {
 
 fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> std::io::Result<bool> {
     line.clear();
-    let read = <&mut _ as std::io::Read>::take(&mut *reader, MAX_MESSAGE as u64 + 1).read_until(b'\n', line)?;
+    let read = <&mut _ as std::io::Read>::take(&mut *reader, MAX_MESSAGE as u64 + 1)
+        .read_until(b'\n', line)?;
     if read == 0 {
         return Ok(false);
     }
     if line.len() > MAX_MESSAGE {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "message too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "message too large",
+        ));
     }
     Ok(true)
 }
@@ -140,7 +144,11 @@ pub fn serve(root: &Path, handler: Arc<dyn Handler>) -> std::io::Result<Server> 
     Ok(Server { path, stop })
 }
 
-fn connection(stream: Stream, handler: Arc<dyn Handler>, secret: Option<&str>) -> std::io::Result<()> {
+fn connection(
+    stream: Stream,
+    handler: Arc<dyn Handler>,
+    secret: Option<&str>,
+) -> std::io::Result<()> {
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
@@ -153,49 +161,92 @@ fn connection(stream: Stream, handler: Arc<dyn Handler>, secret: Option<&str>) -
     let in_flight: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Default::default();
     while read_line(&mut reader, &mut line)? {
         let Ok(message) = serde_json::from_slice::<Value>(&line) else {
-            write_message(&writer, &json!({"id": null, "error": ToolError::invalid("malformed message")}))?;
+            write_message(
+                &writer,
+                &json!({"id": null, "error": ToolError::invalid("malformed message")}),
+            )?;
             continue;
         };
         let id = message.get("id").and_then(Value::as_u64).unwrap_or(0);
         match message.get("op").and_then(Value::as_str) {
             Some("hello") => {
-                let name = message.get("client").and_then(Value::as_str).unwrap_or("unnamed");
+                let name = message
+                    .get("client")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unnamed");
                 let reply = handler.hello(name);
                 if let Ok(value) = &reply {
-                    client = value.get("client").and_then(Value::as_str).map(str::to_owned);
+                    client = value
+                        .get("client")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
                 }
                 write_message(&writer, &reply_message(id, reply))?;
             }
             Some("cancel") => {
                 if let Some(target) = message.get("target").and_then(Value::as_u64)
-                    && let Some(flag) = in_flight.lock().unwrap_or_else(|e| e.into_inner()).get(&target)
+                    && let Some(flag) = in_flight
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&target)
                 {
                     flag.store(true, Ordering::Relaxed);
                 }
             }
             Some("call") => {
                 let Some(client) = client.clone() else {
-                    write_message(&writer, &reply_message(id, Err(ToolError::new(ErrorCode::AuthorizationRequired, "Say hello first"))))?;
+                    write_message(
+                        &writer,
+                        &reply_message(
+                            id,
+                            Err(ToolError::new(
+                                ErrorCode::AuthorizationRequired,
+                                "Say hello first",
+                            )),
+                        ),
+                    )?;
                     continue;
                 };
                 if in_flight.lock().unwrap_or_else(|e| e.into_inner()).len() >= MAX_IN_FLIGHT {
-                    write_message(&writer, &reply_message(id, Err(ToolError::new(ErrorCode::Limit, "Too many concurrent requests"))))?;
+                    write_message(
+                        &writer,
+                        &reply_message(
+                            id,
+                            Err(ToolError::new(
+                                ErrorCode::Limit,
+                                "Too many concurrent requests",
+                            )),
+                        ),
+                    )?;
                     continue;
                 }
-                let tool = message.get("tool").and_then(Value::as_str).unwrap_or_default().to_owned();
+                let tool = message
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
                 let args = message.get("args").cloned().unwrap_or(json!({}));
                 let cancel = Arc::new(AtomicBool::new(false));
-                in_flight.lock().unwrap_or_else(|e| e.into_inner()).insert(id, cancel.clone());
+                in_flight
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(id, cancel.clone());
                 let handler = handler.clone();
                 let writer = writer.clone();
                 let in_flight = in_flight.clone();
                 std::thread::spawn(move || {
                     let reply = handler.call(&client, &tool, args, cancel);
-                    in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                    in_flight
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&id);
                     let _ = write_message(&writer, &reply_message(id, reply));
                 });
             }
-            _ => write_message(&writer, &reply_message(id, Err(ToolError::invalid("unknown op"))))?,
+            _ => write_message(
+                &writer,
+                &reply_message(id, Err(ToolError::invalid("unknown op"))),
+            )?,
         }
     }
     for flag in in_flight.lock().unwrap_or_else(|e| e.into_inner()).values() {
@@ -267,20 +318,37 @@ impl Client {
             let mut line = Vec::new();
             while let Ok(true) = read_line(&mut reader, &mut line) {
                 let Some(client) = weak.upgrade() else { return };
-                let Ok(message) = serde_json::from_slice::<Value>(&line) else { continue };
-                let Some(id) = message.get("id").and_then(Value::as_u64) else { continue };
+                let Ok(message) = serde_json::from_slice::<Value>(&line) else {
+                    continue;
+                };
+                let Some(id) = message.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
                 let reply = match message.get("error") {
-                    Some(error) => Err(serde_json::from_value(error.clone())
-                        .unwrap_or_else(|_| ToolError::new(ErrorCode::Internal, error.to_string()))),
+                    Some(error) => {
+                        Err(serde_json::from_value(error.clone()).unwrap_or_else(|_| {
+                            ToolError::new(ErrorCode::Internal, error.to_string())
+                        }))
+                    }
                     None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
                 };
-                if let Some(sender) = client.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
+                if let Some(sender) = client
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id)
+                {
                     let _ = sender.send(reply);
                 }
             }
             if let Some(client) = weak.upgrade() {
                 client.alive.store(false, Ordering::Relaxed);
-                for (_, sender) in client.pending.lock().unwrap_or_else(|e| e.into_inner()).drain() {
+                for (_, sender) in client
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .drain()
+                {
                     let _ = sender.send(Err(disconnected()));
                 }
             }
@@ -302,10 +370,16 @@ impl Client {
             let _ = sender.send(Err(disconnected()));
             return (id, receiver);
         }
-        self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender.clone());
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, sender.clone());
         if write_message(&self.writer, &message).is_err() {
             self.alive.store(false, Ordering::Relaxed);
-            self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
             let _ = sender.send(Err(disconnected()));
         }
         (id, receiver)
@@ -313,9 +387,12 @@ impl Client {
 
     pub fn request(&self, message: Value, timeout: Duration) -> ToolResult {
         let (_, receiver) = self.send(message);
-        receiver
-            .recv_timeout(timeout)
-            .unwrap_or_else(|_| Err(ToolError::new(ErrorCode::Timeout, "Rodtty didn't answer in time")))
+        receiver.recv_timeout(timeout).unwrap_or_else(|_| {
+            Err(ToolError::new(
+                ErrorCode::Timeout,
+                "Rodtty didn't answer in time",
+            ))
+        })
     }
 
     pub fn cancel(&self, id: u64) {
@@ -323,7 +400,10 @@ impl Client {
     }
 
     pub fn hello(&self, name: &str) -> ToolResult {
-        self.request(json!({"op": "hello", "client": name, "protocol": PROTOCOL}), Duration::from_secs(10))
+        self.request(
+            json!({"op": "hello", "client": name, "protocol": PROTOCOL}),
+            Duration::from_secs(10),
+        )
     }
 }
 
@@ -336,7 +416,13 @@ mod tests {
         fn hello(&self, name: &str) -> ToolResult {
             Ok(json!({"client": format!("cl_{name}")}))
         }
-        fn call(&self, client: &str, tool: &str, args: Value, cancel: Arc<AtomicBool>) -> ToolResult {
+        fn call(
+            &self,
+            client: &str,
+            tool: &str,
+            args: Value,
+            cancel: Arc<AtomicBool>,
+        ) -> ToolResult {
             if tool == "slow" {
                 while !cancel.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(5));
@@ -358,21 +444,39 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(socket_path(root.path())).unwrap().permissions().mode();
+            let mode = std::fs::metadata(socket_path(root.path()))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
         let client = Client::connect(root.path()).unwrap();
         assert_eq!(
-            client.request(json!({"op":"call","tool":"x"}), Duration::from_secs(5)).unwrap_err().code,
+            client
+                .request(json!({"op":"call","tool":"x"}), Duration::from_secs(5))
+                .unwrap_err()
+                .code,
             ErrorCode::AuthorizationRequired
         );
         assert_eq!(client.hello("codex").unwrap()["client"], "cl_codex");
         let (slow, slow_reply) = client.send(json!({"op":"call","tool":"slow"}));
-        let fast = client.request(json!({"op":"call","tool":"fast","args":{"a":1}}), Duration::from_secs(5)).unwrap();
+        let fast = client
+            .request(
+                json!({"op":"call","tool":"fast","args":{"a":1}}),
+                Duration::from_secs(5),
+            )
+            .unwrap();
         assert_eq!(fast["args"]["a"], 1);
         assert_eq!(fast["client"], "cl_codex");
         client.cancel(slow);
-        assert_eq!(slow_reply.recv_timeout(Duration::from_secs(5)).unwrap().unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(
+            slow_reply
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
         drop(client);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while echo.0.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {

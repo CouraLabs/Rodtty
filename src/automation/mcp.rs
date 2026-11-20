@@ -49,13 +49,20 @@ impl Link {
     }
 
     fn fail(&self, id: &Value, code: i64, message: &str) {
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}));
+        self.send(
+            &json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
+        );
     }
 
     fn features(&self) -> Option<Vec<String>> {
         let hello = self.hello.lock().unwrap_or_else(|e| e.into_inner());
         let features = hello.as_ref()?.get("features")?.as_array()?;
-        Some(features.iter().filter_map(|f| f.as_str().map(str::to_owned)).collect())
+        Some(
+            features
+                .iter()
+                .filter_map(|f| f.as_str().map(str::to_owned))
+                .collect(),
+        )
     }
 
     /// The live connection, connecting and introducing this client if needed.
@@ -100,8 +107,16 @@ impl Link {
         if !self.initialized.load(Ordering::Relaxed) {
             return;
         }
-        let now = if self.connected() { self.features() } else { None };
-        let listed = self.listed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let now = if self.connected() {
+            self.features()
+        } else {
+            None
+        };
+        let listed = self
+            .listed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if listed.is_some() && listed != now {
             *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = now;
             self.send(&json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}));
@@ -110,12 +125,22 @@ impl Link {
 
     fn list_tools(&self) -> Value {
         let _ = self.connect();
-        let features = if self.connected() { self.features() } else { None };
+        let features = if self.connected() {
+            self.features()
+        } else {
+            None
+        };
         *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = features.clone();
         let tools: Vec<Value> = match &features {
-            Some(features) => tools::available(features).map(tools::Tool::describe).collect(),
+            Some(features) => tools::available(features)
+                .map(tools::Tool::describe)
+                .collect(),
             // Disconnected: only the status tool, which explains how to connect.
-            None => tools::TOOLS.iter().take(1).map(tools::Tool::describe).collect(),
+            None => tools::TOOLS
+                .iter()
+                .take(1)
+                .map(tools::Tool::describe)
+                .collect(),
         };
         json!({"tools": tools})
     }
@@ -129,7 +154,8 @@ impl Link {
                     .and_then(Value::as_u64)
                     .unwrap_or(30_000)
                     .min(600_000);
-                let (host_id, reply) = client.send(json!({"op": "call", "tool": name, "args": args}));
+                let (host_id, reply) =
+                    client.send(json!({"op": "call", "tool": name, "args": args}));
                 let key = request.to_string();
                 self.in_flight
                     .lock()
@@ -137,8 +163,16 @@ impl Link {
                     .insert(key.clone(), (client.clone(), host_id));
                 let result = reply
                     .recv_timeout(Duration::from_millis(timeout) + Duration::from_secs(60))
-                    .unwrap_or_else(|_| Err(ToolError::new(ErrorCode::Timeout, "Rodtty didn't answer in time")));
-                self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
+                    .unwrap_or_else(|_| {
+                        Err(ToolError::new(
+                            ErrorCode::Timeout,
+                            "Rodtty didn't answer in time",
+                        ))
+                    });
+                self.in_flight
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
                 result
             }
             Err(error) if name == "rodtty_status" => Ok(json!({
@@ -158,7 +192,12 @@ impl Link {
 
     fn cancel(&self, request: &Value) {
         let key = request.to_string();
-        if let Some((client, host_id)) = self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        if let Some((client, host_id)) = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
             client.cancel(*host_id);
         }
     }
@@ -171,7 +210,11 @@ pub fn tool_result(result: Result<Value, ToolError>) -> Value {
         Err(error) => (json!({"error": error}), true),
     };
     let text = serde_json::to_string_pretty(&value).unwrap_or_default();
-    let structured = if value.is_object() { value } else { json!({"value": value}) };
+    let structured = if value.is_object() {
+        value
+    } else {
+        json!({"value": value})
+    };
     json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": structured,
@@ -198,7 +241,9 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(2));
-            let Some(link) = watcher.upgrade() else { return };
+            let Some(link) = watcher.upgrade() else {
+                return;
+            };
             if link.initialized.load(Ordering::Relaxed) {
                 if !link.connected() {
                     let _ = link.connect();
@@ -221,7 +266,10 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
             }
         };
         let id = message.get("id").cloned();
-        let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let params = message.get("params").cloned().unwrap_or(json!({}));
         match (method, id) {
             ("initialize", Some(id)) => {
@@ -230,7 +278,10 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
                 {
                     *link.name.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.to_owned());
                 }
-                let requested = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
+                let requested = params
+                    .get("protocolVersion")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let version = PROTOCOL_VERSIONS
                     .iter()
                     .find(|v| **v == requested)
@@ -256,7 +307,11 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
                 link.respond(&id, tools);
             }
             ("tools/call", Some(id)) => {
-                let name = params.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+                let name = params
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
                 if tools::find(&name).is_none() {
                     link.fail(&id, -32602, &format!("Unknown tool: {name}"));
                     continue;
@@ -268,7 +323,13 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
                 }
                 if link.calls.fetch_add(1, Ordering::SeqCst) >= MAX_CONCURRENT_CALLS {
                     link.calls.fetch_sub(1, Ordering::SeqCst);
-                    link.respond(&id, tool_result(Err(ToolError::new(ErrorCode::Limit, "Too many concurrent tool calls"))));
+                    link.respond(
+                        &id,
+                        tool_result(Err(ToolError::new(
+                            ErrorCode::Limit,
+                            "Too many concurrent tool calls",
+                        ))),
+                    );
                     continue;
                 }
                 let link = link.clone();

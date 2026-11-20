@@ -302,7 +302,9 @@ pub(crate) fn register(commands: &mut Vec<Command>) {
             AppAction::Quit,
         ),
     ] {
-        if matches!(action, AppAction::OpenBrowser | AppAction::CloseBrowser) && !browser_available() {
+        if matches!(action, AppAction::OpenBrowser | AppAction::CloseBrowser)
+            && !browser_available()
+        {
             continue;
         }
         commands.push(Command {

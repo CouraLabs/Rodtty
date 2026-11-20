@@ -81,8 +81,17 @@ pub struct Recording {
 }
 
 impl Recording {
-    pub fn start(id: String, target: String, final_path: PathBuf, limits: Limits, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
-        let feed = Feed { latest: Default::default(), cursor: Default::default() };
+    pub fn start(
+        id: String,
+        target: String,
+        final_path: PathBuf,
+        limits: Limits,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        let feed = Feed {
+            latest: Default::default(),
+            cursor: Default::default(),
+        };
         let status = Arc::new(Mutex::new(Status {
             id: id.clone(),
             target,
@@ -110,7 +119,11 @@ impl Recording {
                     let mut s = status.lock().unwrap_or_else(|e| e.into_inner());
                     match result {
                         Ok(limit) => {
-                            s.state = if limit.is_some() { RecordingState::StoppedAtLimit } else { RecordingState::Completed };
+                            s.state = if limit.is_some() {
+                                RecordingState::StoppedAtLimit
+                            } else {
+                                RecordingState::Completed
+                            };
                             s.stop_reason = limit.or(s.stop_reason.take());
                             s.path = Some(final_path);
                         }
@@ -125,11 +138,20 @@ impl Recording {
                 })
                 .ok()
         };
-        Self { id, status, stop, thread, feed }
+        Self {
+            id,
+            status,
+            stop,
+            thread,
+            feed,
+        }
     }
 
     pub fn status(&self) -> Status {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Ask the encoder to finish; `wait` blocks until the file is final.
@@ -149,7 +171,10 @@ impl Recording {
     }
 
     pub fn finished(&self) -> bool {
-        !matches!(self.status().state, RecordingState::Recording | RecordingState::Finalizing)
+        !matches!(
+            self.status().state,
+            RecordingState::Recording | RecordingState::Finalizing
+        )
     }
 }
 
@@ -193,14 +218,25 @@ fn jpeg(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Run the encoder until stopped or a limit is hit. Returns the limit that
 /// stopped it, if any.
-fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, status: &Mutex<Status>) -> Result<Option<String>, String> {
+fn encode(
+    final_path: &Path,
+    limits: Limits,
+    feed: &Feed,
+    stop: &AtomicBool,
+    status: &Mutex<Status>,
+) -> Result<Option<String>, String> {
     let partial = final_path.with_extension("avi.partial");
     let result = (|| {
         let interval = Duration::from_secs_f64(1.0 / f64::from(limits.fps.max(1)));
         let started = Instant::now();
         // Wait for the first frame to fix the video size.
         let first = loop {
-            if let Some(frame) = feed.latest.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            if let Some(frame) = feed
+                .latest
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+            {
                 break frame;
             }
             if stop.load(Ordering::Relaxed) {
@@ -211,9 +247,16 @@ fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, sta
             }
             std::thread::sleep(Duration::from_millis(20));
         };
-        let cursor = || if limits.cursor { *feed.cursor.lock().unwrap_or_else(|e| e.into_inner()) } else { None };
+        let cursor = || {
+            if limits.cursor {
+                *feed.cursor.lock().unwrap_or_else(|e| e.into_inner())
+            } else {
+                None
+            }
+        };
         let (width, height, _) = prepare(&first, limits.max_width, None);
-        let mut writer = AviWriter::create(&partial, width, height, limits.fps).map_err(|e| e.to_string())?;
+        let mut writer =
+            AviWriter::create(&partial, width, height, limits.fps).map_err(|e| e.to_string())?;
         {
             let mut s = status.lock().unwrap_or_else(|e| e.into_inner());
             s.width = width;
@@ -246,7 +289,11 @@ fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, sta
                 }
                 tick = elapsed_ticks - 1;
             }
-            let frame = feed.latest.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let frame = feed
+                .latest
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             let data = match frame {
                 Some(frame) if frame.id != last_id || limits.cursor => {
                     let repeated = frame.id == last_id;
@@ -254,7 +301,11 @@ fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, sta
                     // A resize changes the page's frame size; the video keeps
                     // its first size and scales into it.
                     let (w, h, rgb) = prepare(&frame, limits.max_width, cursor());
-                    let scaled = if (w, h) == (width, height) { rgb } else { resize_rgb(&rgb, w, h, width, height) };
+                    let scaled = if (w, h) == (width, height) {
+                        rgb
+                    } else {
+                        resize_rgb(&rgb, w, h, width, height)
+                    };
                     let encoded = jpeg(width, height, &scaled)?;
                     if repeated {
                         status.lock().unwrap_or_else(|e| e.into_inner()).repeated += 1;
@@ -267,7 +318,9 @@ fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, sta
                     last_jpeg.clone().ok_or("no frame")?
                 }
             };
-            writer.frame(&data).map_err(|e| format!("Writing the video failed: {e}"))?;
+            writer
+                .frame(&data)
+                .map_err(|e| format!("Writing the video failed: {e}"))?;
             tick += 1;
             let mut s = status.lock().unwrap_or_else(|e| e.into_inner());
             s.frames = writer.frames;
@@ -284,13 +337,23 @@ fn encode(final_path: &Path, limits: Limits, feed: &Feed, stop: &AtomicBool, sta
             }
         }
         if writer.frames == 0 {
-            writer.frame(&jpeg(width, height, &prepare(&first, limits.max_width, cursor()).2)?).map_err(|e| e.to_string())?;
+            writer
+                .frame(&jpeg(
+                    width,
+                    height,
+                    &prepare(&first, limits.max_width, cursor()).2,
+                )?)
+                .map_err(|e| e.to_string())?;
         }
         let written = writer.bytes;
-        writer.finish().map_err(|e| format!("Finalizing the video failed: {e}"))?;
+        writer
+            .finish()
+            .map_err(|e| format!("Finalizing the video failed: {e}"))?;
         std::fs::rename(&partial, final_path).map_err(|e| e.to_string())?;
         let mut s = status.lock().unwrap_or_else(|e| e.into_inner());
-        s.bytes = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(written);
+        s.bytes = std::fs::metadata(final_path)
+            .map(|m| m.len())
+            .unwrap_or(written);
         Ok(limit)
     })();
     if result.is_err() {
@@ -359,7 +422,8 @@ impl AviWriter {
         let f = &mut self.file;
         let frames = self.frames as u32;
         let movi_size = self.next_offset;
-        let riff_size = (Self::HEADER - 8) as u32 + movi_size - 4 + 8 + 16 * self.index.len() as u32;
+        let riff_size =
+            (Self::HEADER - 8) as u32 + movi_size - 4 + 8 + 16 * self.index.len() as u32;
         f.write_all(b"RIFF")?;
         f.write_all(&le32(riff_size))?;
         f.write_all(b"AVI ")?;
@@ -368,7 +432,22 @@ impl AviWriter {
         f.write_all(b"hdrl")?;
         f.write_all(b"avih")?;
         f.write_all(&le32(56))?;
-        for v in [1_000_000 / self.fps.max(1), self.max_frame * self.fps, 0, 0x10, frames, 0, 1, self.max_frame, self.width, self.height, 0, 0, 0, 0] {
+        for v in [
+            1_000_000 / self.fps.max(1),
+            self.max_frame * self.fps,
+            0,
+            0x10,
+            frames,
+            0,
+            1,
+            self.max_frame,
+            self.width,
+            self.height,
+            0,
+            0,
+            0,
+            0,
+        ] {
             f.write_all(&le32(v))?;
         }
         f.write_all(b"LIST")?;
@@ -377,7 +456,18 @@ impl AviWriter {
         f.write_all(b"strh")?;
         f.write_all(&le32(56))?;
         f.write_all(b"vidsMJPG")?;
-        for v in [0u32, 0, 0, 1, self.fps, 0, frames, self.max_frame, u32::MAX, 0] {
+        for v in [
+            0u32,
+            0,
+            0,
+            1,
+            self.fps,
+            0,
+            frames,
+            self.max_frame,
+            u32::MAX,
+            0,
+        ] {
             f.write_all(&le32(v))?;
         }
         for v in [0u16, 0, self.width as u16, self.height as u16] {
@@ -450,7 +540,10 @@ mod tests {
         w.finish().unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[..4], b"RIFF");
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize, bytes.len() - 8);
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize,
+            bytes.len() - 8
+        );
         assert_eq!(&bytes[8..12], b"AVI ");
         let frames = u32::from_le_bytes(bytes[48..52].try_into().unwrap());
         assert_eq!(frames, 3);

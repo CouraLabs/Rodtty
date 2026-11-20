@@ -274,11 +274,16 @@ impl State {
         let cwd = match cwd.canonical() {
             Ok(cwd) if cwd.is_dir() => cwd,
             _ => {
-                return Err(format!("Could not open terminal directory: {}", cwd.display()));
+                return Err(format!(
+                    "Could not open terminal directory: {}",
+                    cwd.display()
+                ));
             }
         };
         let Some(shell) = &self.shell else {
-            return Err("Build rodtty-shell with cargo build --bins before starting Rodtty.".into());
+            return Err(
+                "Build rodtty-shell with cargo build --bins before starting Rodtty.".into(),
+            );
         };
         match Session::spawn(
             shell,

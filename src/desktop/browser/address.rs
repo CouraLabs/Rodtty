@@ -19,7 +19,9 @@ pub fn normalize(input: &str) -> Result<String, String> {
     if let Some((scheme, rest)) = text.split_once("://") {
         let scheme = scheme.to_ascii_lowercase();
         if scheme != "http" && scheme != "https" {
-            return Err(format!("{scheme}: addresses aren't allowed; use http or https"));
+            return Err(format!(
+                "{scheme}: addresses aren't allowed; use http or https"
+            ));
         }
         if rest.is_empty() || rest.starts_with('/') {
             return Err("The address has no host".into());
@@ -34,7 +36,10 @@ pub fn normalize(input: &str) -> Result<String, String> {
     if let Some(port) = port
         && (port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()))
     {
-        return Err(format!("{}: addresses aren't allowed; use http or https", text.split(':').next().unwrap_or(text)));
+        return Err(format!(
+            "{}: addresses aren't allowed; use http or https",
+            text.split(':').next().unwrap_or(text)
+        ));
     }
     if host.is_empty() {
         return Err("The address has no host".into());
@@ -64,7 +69,9 @@ pub fn is_local(host: &str) -> bool {
         || host.ends_with(".localhost")
         || host == "0.0.0.0"
         || host == "[::1]"
-        || host.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Whether a navigation the page or a redirect starts may proceed: only
@@ -80,19 +87,45 @@ mod tests {
 
     #[test]
     fn local_addresses_use_http_and_public_hosts_https() {
-        assert_eq!(normalize("localhost:4200").unwrap(), "http://localhost:4200");
-        assert_eq!(normalize("127.0.0.1:8080/app").unwrap(), "http://127.0.0.1:8080/app");
+        assert_eq!(
+            normalize("localhost:4200").unwrap(),
+            "http://localhost:4200"
+        );
+        assert_eq!(
+            normalize("127.0.0.1:8080/app").unwrap(),
+            "http://127.0.0.1:8080/app"
+        );
         assert_eq!(normalize("[::1]:3000").unwrap(), "http://[::1]:3000");
         assert_eq!(normalize("api.localhost").unwrap(), "http://api.localhost");
         assert_eq!(normalize("docs.rs/cef").unwrap(), "https://docs.rs/cef");
-        assert_eq!(normalize("example.com:8443").unwrap(), "https://example.com:8443");
-        assert_eq!(normalize(" HTTP://Example.com ").unwrap(), "http://Example.com");
-        assert_eq!(normalize("http://[::1]:5000/").unwrap(), "http://[::1]:5000/");
+        assert_eq!(
+            normalize("example.com:8443").unwrap(),
+            "https://example.com:8443"
+        );
+        assert_eq!(
+            normalize(" HTTP://Example.com ").unwrap(),
+            "http://Example.com"
+        );
+        assert_eq!(
+            normalize("http://[::1]:5000/").unwrap(),
+            "http://[::1]:5000/"
+        );
     }
 
     #[test]
     fn other_schemes_spaces_and_empty_input_are_rejected() {
-        for bad in ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "chrome://settings", "vscode://open", "mailto:a@b.c", "", "two words", "about:config", "http://"] {
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "chrome://settings",
+            "vscode://open",
+            "mailto:a@b.c",
+            "",
+            "two words",
+            "about:config",
+            "http://",
+        ] {
             assert!(normalize(bad).is_err(), "{bad}");
         }
         assert!(allowed_navigation("https://x"));

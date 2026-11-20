@@ -343,7 +343,11 @@ pub fn changes(directory: &Path) -> Result<Option<Changes>> {
             untracked.push(file('?'));
             continue;
         }
-        if index == 'U' || worktree == 'U' || (index == 'A' && worktree == 'A') || (index == 'D' && worktree == 'D') {
+        if index == 'U'
+            || worktree == 'U'
+            || (index == 'A' && worktree == 'A')
+            || (index == 'D' && worktree == 'D')
+        {
             unstaged.push(file('U'));
             continue;
         }
@@ -351,7 +355,10 @@ pub fn changes(directory: &Path) -> Result<Option<Changes>> {
             staged.push(file(index));
         }
         if worktree != ' ' {
-            unstaged.push(ChangedFile { original: None, ..file(worktree) });
+            unstaged.push(ChangedFile {
+                original: None,
+                ..file(worktree)
+            });
         }
     }
     // Label each file by its name, adding parent folders until no two
@@ -375,11 +382,17 @@ pub fn changes(directory: &Path) -> Result<Option<Changes>> {
         }
         relative.to_owned()
     };
-    for file in staged.iter_mut().chain(unstaged.iter_mut()).chain(untracked.iter_mut()) {
+    for file in staged
+        .iter_mut()
+        .chain(unstaged.iter_mut())
+        .chain(untracked.iter_mut())
+    {
         file.label = label(&file.relative);
     }
     let linked_worktree = repo.root.join(".git").is_file();
-    let has_commits = run(&repo.root, ["rev-parse", "--verify", "--quiet", "HEAD"])?.status.success();
+    let has_commits = run(&repo.root, ["rev-parse", "--verify", "--quiet", "HEAD"])?
+        .status
+        .success();
     Ok(Some(Changes {
         root: repo.root,
         linked_worktree,

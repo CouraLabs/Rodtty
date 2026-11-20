@@ -88,7 +88,11 @@ fn locate_script(index: usize, scroll: bool) -> String {
   const r = x.e.getBoundingClientRect();
   return {{role: x.role, name: x.name, x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height}};
 }})()"#,
-        scroll = if scroll { "x.e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});" } else { "" }
+        scroll = if scroll {
+            "x.e.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});"
+        } else {
+            ""
+        }
     )
 }
 
@@ -104,18 +108,29 @@ impl State {
     /// A browser target this client may use.
     pub(crate) fn agent_browser(&self, grant: &ClientGrant, id: &str) -> Result<usize, ToolError> {
         match self.browser_index(id) {
-            Some(index) if self.browsers.targets[index].client.as_deref() == Some(grant.id.as_str()) => {
+            Some(index)
+                if self.browsers.targets[index].client.as_deref() == Some(grant.id.as_str()) =>
+            {
                 if self.browsers.targets[index].shared.lock().closed {
                     return Err(closed(id));
                 }
                 Ok(index)
             }
-            Some(_) => Err(ToolError::new(ErrorCode::ScopeDenied, "That browser belongs to the owner or another client")),
+            Some(_) => Err(ToolError::new(
+                ErrorCode::ScopeDenied,
+                "That browser belongs to the owner or another client",
+            )),
             None if self.browsers.closed.contains(id) => Err(closed(id)),
             None if id.starts_with("brw_") && !id.contains(&self.automation.instance) => {
-                Err(ToolError::new(ErrorCode::UnknownTarget, "That browser ID is from an earlier Rodtty run"))
+                Err(ToolError::new(
+                    ErrorCode::UnknownTarget,
+                    "That browser ID is from an earlier Rodtty run",
+                ))
             }
-            None => Err(ToolError::new(ErrorCode::UnknownTarget, format!("No browser {id}"))),
+            None => Err(ToolError::new(
+                ErrorCode::UnknownTarget,
+                format!("No browser {id}"),
+            )),
         }
     }
 
@@ -147,22 +162,40 @@ impl State {
         Ok(frame_revision(&self.browsers.targets[index].shared.lock()))
     }
 
-    pub(crate) fn browser_release_input(&mut self, id: &str, input: &crate::desktop::automation::VirtualInput) {
-        let Some(index) = self.browser_index(id) else { return };
+    pub(crate) fn browser_release_input(
+        &mut self,
+        id: &str,
+        input: &crate::desktop::automation::VirtualInput,
+    ) {
+        let Some(index) = self.browser_index(id) else {
+            return;
+        };
         let target = &self.browsers.targets[index];
-        let (x, y) = input.pointer.map_or((0.0, 0.0), |(x, y)| (x as f32, y as f32));
+        let (x, y) = input
+            .pointer
+            .map_or((0.0, 0.0), |(x, y)| (x as f32, y as f32));
         for button in &input.buttons {
             target.mouse_button(x, y, cef_button(button), true, 1, 0);
         }
         let m = input.modifiers;
-        for (held, key) in [(m.shift, "Shift"), (m.ctrl, "Ctrl"), (m.alt, "Alt"), (m.meta, "Meta")] {
+        for (held, key) in [
+            (m.shift, "Shift"),
+            (m.ctrl, "Ctrl"),
+            (m.alt, "Alt"),
+            (m.meta, "Meta"),
+        ] {
             if held {
                 let _ = self.browser_modifier(id, key, false);
             }
         }
     }
 
-    pub(crate) fn browser_modifier(&self, id: &str, key: &str, down: bool) -> Result<(), ToolError> {
+    pub(crate) fn browser_modifier(
+        &self,
+        id: &str,
+        key: &str,
+        down: bool,
+    ) -> Result<(), ToolError> {
         let index = self.browser_index(id).ok_or_else(|| closed(id))?;
         let (vk, native) = match key.to_ascii_lowercase().as_str() {
             "shift" => (0x10, 0x38),
@@ -172,7 +205,11 @@ impl State {
         };
         self.browsers.targets[index].key(cef::KeyEvent {
             size: std::mem::size_of::<sys::cef_key_event_t>(),
-            type_: if down { KeyEventType::RAWKEYDOWN } else { KeyEventType::KEYUP },
+            type_: if down {
+                KeyEventType::RAWKEYDOWN
+            } else {
+                KeyEventType::KEYUP
+            },
             windows_key_code: vk,
             native_key_code: native,
             ..Default::default()
@@ -180,7 +217,12 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn browser_key(&mut self, id: &str, chord: &crate::automation::keys::Chord, action: &str) -> ToolResult {
+    pub(crate) fn browser_key(
+        &mut self,
+        id: &str,
+        chord: &crate::automation::keys::Chord,
+        action: &str,
+    ) -> ToolResult {
         let index = self.browser_index(id).ok_or_else(|| closed(id))?;
         let target = &self.browsers.targets[index];
         // Select All is an editing command in windowless macOS pages, where
@@ -197,7 +239,10 @@ impl State {
         }
         let events = key_events(chord, action != "up", action != "down");
         if events.is_empty() {
-            return Err(ToolError::new(ErrorCode::Unsupported, "That key has no browser encoding"));
+            return Err(ToolError::new(
+                ErrorCode::Unsupported,
+                "That key has no browser encoding",
+            ));
         }
         for event in events {
             target.key(event);
@@ -205,7 +250,12 @@ impl State {
         Ok(json!({"target": id, "sent": true}))
     }
 
-    pub(crate) fn browser_char(&mut self, grant: &ClientGrant, id: &str, c: char) -> Result<(), ToolError> {
+    pub(crate) fn browser_char(
+        &mut self,
+        grant: &ClientGrant,
+        id: &str,
+        c: char,
+    ) -> Result<(), ToolError> {
         let index = self.agent_browser(grant, id)?;
         let target = &self.browsers.targets[index];
         let named = match c {
@@ -219,8 +269,15 @@ impl State {
             Some(key) => {
                 let shift = c.is_ascii_uppercase();
                 let chord = crate::automation::keys::Chord {
-                    key: if shift { crate::automation::keys::KeyName::Char(c.to_ascii_lowercase()) } else { key },
-                    mods: crate::automation::keys::Modifiers { shift, ..Default::default() },
+                    key: if shift {
+                        crate::automation::keys::KeyName::Char(c.to_ascii_lowercase())
+                    } else {
+                        key
+                    },
+                    mods: crate::automation::keys::Modifiers {
+                        shift,
+                        ..Default::default()
+                    },
                 };
                 for event in key_events(&chord, true, true) {
                     target.key(event);
@@ -235,30 +292,61 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn browser_pointer(&mut self, grant: &ClientGrant, id: &str, step: &crate::desktop::automation::input::PointerStep) -> Result<(), ToolError> {
+    pub(crate) fn browser_pointer(
+        &mut self,
+        grant: &ClientGrant,
+        id: &str,
+        step: &crate::desktop::automation::input::PointerStep,
+    ) -> Result<(), ToolError> {
         use crate::desktop::automation::input::StepKind;
         let index = self.agent_browser(grant, id)?;
         let target = &self.browsers.targets[index];
         let (w, h) = target.shared.lock().view;
         let (x, y) = (step.x as f32, step.y as f32);
         if x < 0.0 || y < 0.0 || x > w as f32 || y > h as f32 {
-            return Err(ToolError::invalid(format!("({x}, {y}) is outside the {w}x{h} viewport")));
+            return Err(ToolError::invalid(format!(
+                "({x}, {y}) is outside the {w}x{h} viewport"
+            )));
         }
         target.shared.lock().cursor = Some((x, y));
-        let input = self.automation.inputs.get(&(grant.id.clone(), id.to_owned()));
+        let input = self
+            .automation
+            .inputs
+            .get(&(grant.id.clone(), id.to_owned()));
         let mut modifiers = input.map_or(0, |i| {
             let m = i.modifiers;
-            (if m.shift { MOD_SHIFT } else { 0 }) | (if m.ctrl { MOD_CONTROL } else { 0 }) | (if m.alt { MOD_ALT } else { 0 }) | (if m.meta { MOD_COMMAND } else { 0 })
+            (if m.shift { MOD_SHIFT } else { 0 })
+                | (if m.ctrl { MOD_CONTROL } else { 0 })
+                | (if m.alt { MOD_ALT } else { 0 })
+                | (if m.meta { MOD_COMMAND } else { 0 })
         });
         if let Some(input) = input {
             for b in &input.buttons {
-                modifiers |= match b.as_str() { "middle" => MOD_MIDDLE, "right" => MOD_RIGHT, _ => MOD_LEFT };
+                modifiers |= match b.as_str() {
+                    "middle" => MOD_MIDDLE,
+                    "right" => MOD_RIGHT,
+                    _ => MOD_LEFT,
+                };
             }
         }
         match step.kind {
             StepKind::Move => target.mouse_move(x, y, modifiers),
-            StepKind::Down => target.mouse_button(x, y, cef_button(&step.button), false, step.click_count as i32, modifiers),
-            StepKind::Up => target.mouse_button(x, y, cef_button(&step.button), true, step.click_count as i32, modifiers),
+            StepKind::Down => target.mouse_button(
+                x,
+                y,
+                cef_button(&step.button),
+                false,
+                step.click_count as i32,
+                modifiers,
+            ),
+            StepKind::Up => target.mouse_button(
+                x,
+                y,
+                cef_button(&step.button),
+                true,
+                step.click_count as i32,
+                modifiers,
+            ),
             StepKind::Wheel { dx, dy } => {
                 target.mouse_move(x, y, modifiers);
                 // CSS-pixel deltas; positive y scrolls content up, like a wheel down.
@@ -280,7 +368,12 @@ fn cef_button(name: &str) -> MouseButtonType {
 /// The viewport's identity for coordinate actions: its size, scale and document.
 pub(crate) fn frame_revision(page: &Page) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for v in [page.view.0 as u64, page.view.1 as u64, page.scale.to_bits() as u64, page.document] {
+    for v in [
+        page.view.0 as u64,
+        page.view.1 as u64,
+        page.scale.to_bits() as u64,
+        page.document,
+    ] {
         hash ^= v;
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
@@ -288,26 +381,52 @@ pub(crate) fn frame_revision(page: &Page) -> u64 {
 }
 
 /// Evaluate a script in the page and return its value.
-fn evaluate(host: &Host, grant: &ClientGrant, id: &str, expression: String, cancel: &AtomicBool) -> ToolResult {
+fn evaluate(
+    host: &Host,
+    grant: &ClientGrant,
+    id: &str,
+    expression: String,
+    cancel: &AtomicBool,
+) -> ToolResult {
     let g = grant.clone();
     let t = id.to_owned();
-    let (shared, message) = on_ui(&host.handle, move |s, _| -> Result<(Shared, i32), ToolError> {
-        let index = s.agent_browser(&g, &t)?;
-        let target = &mut s.browsers.targets[index];
-        let message = target
+    let (shared, message) = on_ui(
+        &host.handle,
+        move |s, _| -> Result<(Shared, i32), ToolError> {
+            let index = s.agent_browser(&g, &t)?;
+            let target = &mut s.browsers.targets[index];
+            let message = target
             .devtools("Runtime.evaluate", json!({"expression": expression, "returnByValue": true, "awaitPromise": true, "userGesture": false}))
             .ok_or_else(|| ToolError::new(ErrorCode::ClosedTarget, "The page is not accepting commands"))?;
-        Ok((target.shared.clone(), message))
-    })??;
+            Ok((target.shared.clone(), message))
+        },
+    )??;
     super::schedule_pump(0);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(reply) = shared.lock().replies.remove(&message) {
-            let reply = reply.map_err(|e| ToolError::new(ErrorCode::Internal, format!("The page did not evaluate the request: {e}")))?;
+            let reply = reply.map_err(|e| {
+                ToolError::new(
+                    ErrorCode::Internal,
+                    format!("The page did not evaluate the request: {e}"),
+                )
+            })?;
             if let Some(exception) = reply.get("exceptionDetails") {
-                return Err(ToolError::new(ErrorCode::Internal, format!("Page script failed: {}", exception.pointer("/exception/description").and_then(Value::as_str).unwrap_or("error"))));
+                return Err(ToolError::new(
+                    ErrorCode::Internal,
+                    format!(
+                        "Page script failed: {}",
+                        exception
+                            .pointer("/exception/description")
+                            .and_then(Value::as_str)
+                            .unwrap_or("error")
+                    ),
+                ));
             }
-            return Ok(reply.pointer("/result/value").cloned().unwrap_or(Value::Null));
+            return Ok(reply
+                .pointer("/result/value")
+                .cloned()
+                .unwrap_or(Value::Null));
         }
         if shared.lock().closed {
             return Err(closed(id));
@@ -316,46 +435,84 @@ fn evaluate(host: &Host, grant: &ClientGrant, id: &str, expression: String, canc
             return Err(ToolError::new(ErrorCode::Cancelled, "Cancelled"));
         }
         if Instant::now() > deadline {
-            return Err(ToolError::new(ErrorCode::Timeout, "The page did not answer in time"));
+            return Err(ToolError::new(
+                ErrorCode::Timeout,
+                "The page did not answer in time",
+            ));
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
 /// Resolve an element reference to its center, scrolled into view.
-fn locate(host: &Host, grant: &ClientGrant, id: &str, reference: &str, cancel: &AtomicBool) -> Result<(f64, f64), ToolError> {
+fn locate(
+    host: &Host,
+    grant: &ClientGrant,
+    id: &str,
+    reference: &str,
+    cancel: &AtomicBool,
+) -> Result<(f64, f64), ToolError> {
     let g = grant.clone();
     let t = id.to_owned();
     let r = reference.to_owned();
-    let (document, index, print, current) = on_ui(&host.handle, move |s, _| -> Result<(u64, usize, String, u64), ToolError> {
-        let i = s.agent_browser(&g, &t)?;
-        let target = &s.browsers.targets[i];
-        let (document, index, print) = target
-            .refs
-            .get(&r)
-            .cloned()
-            .ok_or_else(|| ToolError::new(ErrorCode::Stale, "Unknown element reference; take a new browser_snapshot"))?;
-        Ok((document, index, print, target.shared.lock().document))
-    })??;
+    let (document, index, print, current) = on_ui(
+        &host.handle,
+        move |s, _| -> Result<(u64, usize, String, u64), ToolError> {
+            let i = s.agent_browser(&g, &t)?;
+            let target = &s.browsers.targets[i];
+            let (document, index, print) = target.refs.get(&r).cloned().ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::Stale,
+                    "Unknown element reference; take a new browser_snapshot",
+                )
+            })?;
+            Ok((document, index, print, target.shared.lock().document))
+        },
+    )??;
     if document != current {
-        return Err(ToolError::new(ErrorCode::Stale, "The page navigated since that snapshot; take a new browser_snapshot"));
+        return Err(ToolError::new(
+            ErrorCode::Stale,
+            "The page navigated since that snapshot; take a new browser_snapshot",
+        ));
     }
     let found = evaluate(host, grant, id, locate_script(index, true), cancel)?;
-    let role = found.get("role").and_then(Value::as_str).unwrap_or_default();
-    let name = found.get("name").and_then(Value::as_str).unwrap_or_default();
+    let role = found
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let name = found
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if found.is_null() || fingerprint(role, name) != print {
-        return Err(ToolError::new(ErrorCode::Stale, "The page changed and that element is gone or different; take a new browser_snapshot"));
+        return Err(ToolError::new(
+            ErrorCode::Stale,
+            "The page changed and that element is gone or different; take a new browser_snapshot",
+        ));
     }
     // Let the scroll repaint before pointing at the new position.
     std::thread::sleep(Duration::from_millis(60));
     let found = evaluate(host, grant, id, locate_script(index, false), cancel)?;
-    Ok((found["x"].as_f64().unwrap_or(0.0), found["y"].as_f64().unwrap_or(0.0)))
+    Ok((
+        found["x"].as_f64().unwrap_or(0.0),
+        found["y"].as_f64().unwrap_or(0.0),
+    ))
 }
 
-fn wait_loaded(host: &Host, grant: &ClientGrant, id: &str, after_document: u64, timeout: Duration, cancel: &AtomicBool) -> ToolResult {
+fn wait_loaded(
+    host: &Host,
+    grant: &ClientGrant,
+    id: &str,
+    after_document: u64,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> ToolResult {
     let g = grant.clone();
     let t = id.to_owned();
-    let shared = on_ui(&host.handle, move |s, _| s.agent_browser(&g, &t).map(|i| s.browsers.targets[i].shared.clone()))??;
+    let shared = on_ui(&host.handle, move |s, _| {
+        s.agent_browser(&g, &t)
+            .map(|i| s.browsers.targets[i].shared.clone())
+    })??;
     let deadline = Instant::now() + timeout;
     let started = Instant::now();
     loop {
@@ -364,25 +521,47 @@ fn wait_loaded(host: &Host, grant: &ClientGrant, id: &str, after_document: u64, 
             if page.closed {
                 return Err(closed(id));
             }
-            let navigated = page.document > after_document || started.elapsed() > Duration::from_millis(1500);
+            let navigated =
+                page.document > after_document || started.elapsed() > Duration::from_millis(1500);
             if navigated && !page.loading && page.frame.is_some() {
-                return Ok(json!({"url": page.url, "title": page.title, "error": page.error, "blocked": page.blocked, "document_revision": page.document}));
+                return Ok(
+                    json!({"url": page.url, "title": page.title, "error": page.error, "blocked": page.blocked, "document_revision": page.document}),
+                );
             }
-            if page.blocked.is_some() && !page.loading && started.elapsed() > Duration::from_millis(300) && page.document <= after_document {
-                return Err(ToolError::new(ErrorCode::Unsupported, page.blocked.clone().unwrap_or_default()));
+            if page.blocked.is_some()
+                && !page.loading
+                && started.elapsed() > Duration::from_millis(300)
+                && page.document <= after_document
+            {
+                return Err(ToolError::new(
+                    ErrorCode::Unsupported,
+                    page.blocked.clone().unwrap_or_default(),
+                ));
             }
         }
         if cancel.load(Ordering::Relaxed) {
-            return Err(ToolError::new(ErrorCode::Cancelled, "The wait was cancelled; the page keeps loading"));
+            return Err(ToolError::new(
+                ErrorCode::Cancelled,
+                "The wait was cancelled; the page keeps loading",
+            ));
         }
         if Instant::now() > deadline {
-            return Err(ToolError::new(ErrorCode::Timeout, "The page did not finish loading in time"));
+            return Err(ToolError::new(
+                ErrorCode::Timeout,
+                "The page did not finish loading in time",
+            ));
         }
         std::thread::sleep(Duration::from_millis(20));
     }
 }
 
-pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn run(
+    host: &Host,
+    grant: &ClientGrant,
+    name: &str,
+    args: &Value,
+    cancel: &AtomicBool,
+) -> ToolResult {
     let id = || arg_str(args, "browser").map(str::to_owned);
     let g = grant.clone();
     match name {
@@ -395,7 +574,10 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
         }),
         "browser_open" => {
             let url = match arg_opt_str(args, "url")? {
-                Some(url) => Some(address::normalize(url).map_err(|e| ToolError::new(ErrorCode::Unsupported, e))?),
+                Some(url) => Some(
+                    address::normalize(url)
+                        .map_err(|e| ToolError::new(ErrorCode::Unsupported, e))?,
+                ),
                 None => None,
             };
             let width = arg_u64(args, "width", 1280)?.clamp(200, 3840) as u32;
@@ -413,14 +595,28 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
                 }
                 Ok(target)
             })??;
-            let loaded = if url.is_some() { Some(wait_loaded(host, grant, &target, 0, Duration::from_secs(20), cancel)?) } else { None };
+            let loaded = if url.is_some() {
+                Some(wait_loaded(
+                    host,
+                    grant,
+                    &target,
+                    0,
+                    Duration::from_secs(20),
+                    cancel,
+                )?)
+            } else {
+                None
+            };
             let t = target.clone();
-            let status = on_ui(&host.handle, move |s, _| s.browser_index(&t).map(|i| s.browser_status_json(i)))?;
+            let status = on_ui(&host.handle, move |s, _| {
+                s.browser_index(&t).map(|i| s.browser_status_json(i))
+            })?;
             Ok(json!({"browser": target, "status": status, "loaded": loaded}))
         }
         "browser_navigate" => {
             let target = id()?;
-            let url = address::normalize(arg_str(args, "url")?).map_err(|e| ToolError::new(ErrorCode::Unsupported, e))?;
+            let url = address::normalize(arg_str(args, "url")?)
+                .map_err(|e| ToolError::new(ErrorCode::Unsupported, e))?;
             let t = target.clone();
             let u = url.clone();
             let before = on_ui(&host.handle, move |s, _| -> Result<u64, ToolError> {
@@ -432,7 +628,10 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
                 Ok(document)
             })??;
             super::schedule_pump(0);
-            let (job, job_cancel) = host.shared.hub.start_job("browser_navigate", &grant.id, Some(&target));
+            let (job, job_cancel) =
+                host.shared
+                    .hub
+                    .start_job("browser_navigate", &grant.id, Some(&target));
             if !arg_bool(args, "wait", true)? {
                 let host_shared = host.shared.clone();
                 let handle = host.handle.clone();
@@ -441,16 +640,37 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
                 let root = host.root.clone();
                 let instance = host.instance.clone();
                 std::thread::spawn(move || {
-                    let h = Host { handle, shared: host_shared.clone(), root, instance };
-                    let result = wait_loaded(&h, &grant, &target, before, Duration::from_secs(60), &job_cancel);
+                    let h = Host {
+                        handle,
+                        shared: host_shared.clone(),
+                        root,
+                        instance,
+                    };
+                    let result = wait_loaded(
+                        &h,
+                        &grant,
+                        &target,
+                        before,
+                        Duration::from_secs(60),
+                        &job_cancel,
+                    );
                     finish_job(&host_shared, &job_id, result);
                 });
                 return Ok(json!({"browser": id()?, "url": url, "job": job}));
             }
-            let result = wait_loaded(host, grant, &target, before, Duration::from_secs(30), cancel);
+            let result = wait_loaded(
+                host,
+                grant,
+                &target,
+                before,
+                Duration::from_secs(30),
+                cancel,
+            );
             finish_job(&host.shared, &job, result.clone());
             if let Ok(value) = &result {
-                host.shared.hub.emit("navigation", Some(&target), value.clone());
+                host.shared
+                    .hub
+                    .emit("navigation", Some(&target), value.clone());
             }
             result.map(|mut v| {
                 v["job"] = json!(job);
@@ -471,27 +691,40 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
                         t.browser.reload()
                     }
                     "stop" => t.browser.stop_load(),
-                    _ => return Err(ToolError::invalid("`action` must be back, forward, reload or stop")),
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "`action` must be back, forward, reload or stop",
+                        ));
+                    }
                 }
                 Ok(json!({"browser": target, "action": action}))
             })?
         }
         "browser_status" => {
             let target = id()?;
-            on_ui(&host.handle, move |s, _| s.agent_browser(&g, &target).map(|i| s.browser_status_json(i)))?
+            on_ui(&host.handle, move |s, _| {
+                s.agent_browser(&g, &target)
+                    .map(|i| s.browser_status_json(i))
+            })?
         }
         "browser_snapshot" => {
             let target = id()?;
             let max = arg_u64(args, "max_elements", 200)?.clamp(1, 1000) as usize;
             let t = target.clone();
-            let document = on_ui(&host.handle, move |s, _| s.agent_browser(&g, &t).map(|i| s.browsers.targets[i].shared.lock().document))??;
+            let document = on_ui(&host.handle, move |s, _| {
+                s.agent_browser(&g, &t)
+                    .map(|i| s.browsers.targets[i].shared.lock().document)
+            })??;
             let mut snapshot = evaluate(host, grant, &target, snapshot_script(max), cancel)?;
             let mut refs = Vec::new();
             if let Some(elements) = snapshot.get_mut("elements").and_then(Value::as_array_mut) {
                 for element in elements {
                     let index = element["index"].as_u64().unwrap_or(0) as usize;
                     let reference = format!("e{document}-{index}");
-                    let print = fingerprint(element["role"].as_str().unwrap_or_default(), element["name"].as_str().unwrap_or_default());
+                    let print = fingerprint(
+                        element["role"].as_str().unwrap_or_default(),
+                        element["name"].as_str().unwrap_or_default(),
+                    );
                     refs.push((reference.clone(), (document, index, print)));
                     element["ref"] = json!(reference);
                 }
@@ -514,7 +747,12 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             let target = id()?;
             let (x, y) = match arg_opt_str(args, "ref")? {
                 Some(reference) => locate(host, grant, &target, reference, cancel)?,
-                None => (arg_f64(args, "x")?.ok_or_else(|| ToolError::invalid("Give ref, or x and y"))?, arg_f64(args, "y")?.ok_or_else(|| ToolError::invalid("Give ref, or x and y"))?),
+                None => (
+                    arg_f64(args, "x")?
+                        .ok_or_else(|| ToolError::invalid("Give ref, or x and y"))?,
+                    arg_f64(args, "y")?
+                        .ok_or_else(|| ToolError::invalid("Give ref, or x and y"))?,
+                ),
             };
             let count = arg_u64(args, "count", 1)?.clamp(1, 3);
             let mut pointer_args = json!({"target": target, "action": if count >= 2 { "double_click" } else { "click" }, "x": x, "y": y, "steps": 8, "button": arg_opt_str(args, "button")?.unwrap_or("left")});
@@ -530,9 +768,19 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             let target = id()?;
             if let Some(reference) = arg_opt_str(args, "ref")? {
                 let (x, y) = locate(host, grant, &target, reference, cancel)?;
-                crate::desktop::automation::input::pointer(host, grant, &json!({"target": target, "action": "click", "x": x, "y": y, "steps": 6}), cancel)?;
+                crate::desktop::automation::input::pointer(
+                    host,
+                    grant,
+                    &json!({"target": target, "action": "click", "x": x, "y": y, "steps": 6}),
+                    cancel,
+                )?;
             }
-            crate::desktop::automation::input::type_text(host, grant, &json!({"target": target, "text": arg_str(args, "text")?, "delay_ms": arg_u64(args, "delay_ms", 0)?}), cancel)
+            crate::desktop::automation::input::type_text(
+                host,
+                grant,
+                &json!({"target": target, "text": arg_str(args, "text")?, "delay_ms": arg_u64(args, "delay_ms", 0)?}),
+                cancel,
+            )
         }
         "browser_press" => {
             let target = id()?;
@@ -541,7 +789,11 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
                 .and_then(Value::as_array)
                 .ok_or_else(|| ToolError::invalid("`keys` must be an array"))?
                 .iter()
-                .map(|k| k.as_str().map(str::to_owned).ok_or_else(|| ToolError::invalid("Each key must be a string")))
+                .map(|k| {
+                    k.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| ToolError::invalid("Each key must be a string"))
+                })
                 .collect::<Result<_, _>>()?;
             for key in &keys {
                 let chord = crate::automation::keys::parse(key)?;
@@ -559,10 +811,15 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             let target = id()?;
             if let Some(reference) = arg_opt_str(args, "ref")? {
                 let (x, y) = locate(host, grant, &target, reference, cancel)?;
-                return Ok(json!({"browser": target, "scrolled_into_view": true, "center": {"x": x, "y": y}}));
+                return Ok(
+                    json!({"browser": target, "scrolled_into_view": true, "center": {"x": x, "y": y}}),
+                );
             }
             let t = target.clone();
-            let (w, h) = on_ui(&host.handle, move |s, _| s.agent_browser(&g, &t).map(|i| s.browsers.targets[i].shared.lock().view))??;
+            let (w, h) = on_ui(&host.handle, move |s, _| {
+                s.agent_browser(&g, &t)
+                    .map(|i| s.browsers.targets[i].shared.lock().view)
+            })??;
             let x = arg_f64(args, "x")?.unwrap_or(f64::from(w) / 2.0);
             let y = arg_f64(args, "y")?.unwrap_or(f64::from(h) / 2.0);
             crate::desktop::automation::input::pointer(
@@ -580,33 +837,47 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             let selector = arg_opt_str(args, "selector")?.map(str::to_owned);
             let loaded = arg_bool(args, "loaded", false)?;
             if url.is_none() && text.is_none() && selector.is_none() && !loaded {
-                return Err(ToolError::invalid("Name a condition: url_contains, text, selector or loaded"));
+                return Err(ToolError::invalid(
+                    "Name a condition: url_contains, text, selector or loaded",
+                ));
             }
             let deadline = Instant::now() + timeout;
             loop {
                 let t = target.clone();
                 let g = grant.clone();
-                let (page_url, loading) = on_ui(&host.handle, move |s, _| s.agent_browser(&g, &t).map(|i| {
-                    let p = s.browsers.targets[i].shared.lock();
-                    (p.url.clone(), p.loading)
-                }))??;
-                let mut ok = (!loaded || !loading) && url.as_ref().is_none_or(|u| page_url.contains(u.as_str()));
+                let (page_url, loading) = on_ui(&host.handle, move |s, _| {
+                    s.agent_browser(&g, &t).map(|i| {
+                        let p = s.browsers.targets[i].shared.lock();
+                        (p.url.clone(), p.loading)
+                    })
+                })??;
+                let mut ok = (!loaded || !loading)
+                    && url.as_ref().is_none_or(|u| page_url.contains(u.as_str()));
                 if ok && (text.is_some() || selector.is_some()) {
                     let check = format!(
                         "(() => {{ const t = {}; const s = {}; if (t !== null && !(document.body && document.body.innerText.includes(t))) return false; if (s !== null && !document.querySelector(s)) return false; return true; }})()",
                         serde_json::to_string(&text).unwrap_or("null".into()),
                         serde_json::to_string(&selector).unwrap_or("null".into())
                     );
-                    ok = evaluate(host, grant, &target, check, cancel).map(|v| v == json!(true)).unwrap_or(false);
+                    ok = evaluate(host, grant, &target, check, cancel)
+                        .map(|v| v == json!(true))
+                        .unwrap_or(false);
                 }
                 if ok {
                     return Ok(json!({"browser": target, "url": page_url, "matched": true}));
                 }
                 if cancel.load(Ordering::Relaxed) {
-                    return Err(ToolError::new(ErrorCode::Cancelled, "The wait was cancelled"));
+                    return Err(ToolError::new(
+                        ErrorCode::Cancelled,
+                        "The wait was cancelled",
+                    ));
                 }
                 if Instant::now() > deadline {
-                    return Err(ToolError::new(ErrorCode::Timeout, "The condition did not happen before timeout_ms").with_data(json!({"url": page_url})));
+                    return Err(ToolError::new(
+                        ErrorCode::Timeout,
+                        "The condition did not happen before timeout_ms",
+                    )
+                    .with_data(json!({"url": page_url})));
                 }
                 std::thread::sleep(Duration::from_millis(150));
             }
@@ -633,29 +904,49 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             on_ui(&host.handle, move |s, _| -> ToolResult {
                 let i = s.agent_browser(&g, &target)?;
                 if let Some(existing) = &s.browsers.targets[i].recording {
-                    return Err(ToolError::new(ErrorCode::Conflict, format!("Browser {target} is already recording ({})", existing.id)));
+                    return Err(ToolError::new(
+                        ErrorCode::Conflict,
+                        format!("Browser {target} is already recording ({})", existing.id),
+                    ));
                 }
-                let (artifact, path) = crate::desktop::capture::artifact_path(&artifacts, "browser", "avi")?;
+                let (artifact, path) =
+                    crate::desktop::capture::artifact_path(&artifacts, "browser", "avi")?;
                 let id = format!("rec_{}", &artifact[4..]);
                 let wake: Arc<dyn Fn() + Send + Sync> = match s.handle.clone() {
                     Some(h) => Arc::new(move || h.wake()),
                     None => s.wake.clone(),
                 };
-                let recording = record::Recording::start(id.clone(), target.clone(), path.clone(), limits, wake);
+                let recording = record::Recording::start(
+                    id.clone(),
+                    target.clone(),
+                    path.clone(),
+                    limits,
+                    wake,
+                );
                 let t = &mut s.browsers.targets[i];
                 {
                     let mut page = t.shared.lock();
                     page.feed = Some(recording.feed.clone());
                     if let Some(frame) = page.frame.clone() {
-                        *recording.feed.latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(frame);
+                        *recording
+                            .feed
+                            .latest
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner()) = Some(frame);
                     }
                 }
                 if let Some(host) = t.host() {
                     host.invalidate(PaintElementType::VIEW);
                 }
                 t.recording = Some(recording);
-                s.emit("recording", Some(&id), json!({"state": "recording", "browser": target}));
-                Ok(json!({"recording": id, "browser": target, "path": path, "format": "avi (Motion JPEG)", "fps": limits.fps, "max_seconds": limits.max_seconds, "max_width": limits.max_width}))
+                s.emit(
+                    "recording",
+                    Some(&id),
+                    json!({"state": "recording", "browser": target}),
+                );
+                Ok(
+                    json!({"recording": id, "browser": target, "path": path, "format": "avi (Motion JPEG)", "fps": limits.fps, "max_seconds": limits.max_seconds, "max_width": limits.max_width}),
+                )
             })?
         }
         "recording_status" | "recording_stop" => {
@@ -666,46 +957,72 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
             loop {
                 let r = recording.clone();
                 let g2 = g.clone();
-                let status = on_ui(&host.handle, move |s, _| -> Result<Option<record::Status>, ToolError> {
-                    for t in &mut s.browsers.targets {
-                        if t.recording.as_ref().is_some_and(|x| x.id == r) {
-                            if t.client.as_deref() != Some(g2.id.as_str()) {
-                                return Err(ToolError::new(ErrorCode::ScopeDenied, "That recording belongs to another client"));
+                let status = on_ui(
+                    &host.handle,
+                    move |s, _| -> Result<Option<record::Status>, ToolError> {
+                        for t in &mut s.browsers.targets {
+                            if t.recording.as_ref().is_some_and(|x| x.id == r) {
+                                if t.client.as_deref() != Some(g2.id.as_str()) {
+                                    return Err(ToolError::new(
+                                        ErrorCode::ScopeDenied,
+                                        "That recording belongs to another client",
+                                    ));
+                                }
+                                if stop && !stopped {
+                                    t.shared.lock().feed = None;
+                                    let mut rec = t.recording.take().expect("present");
+                                    rec.stop("stopped by the client", false);
+                                    s.browsers.finalizing.push(rec);
+                                    return Ok(None);
+                                }
+                                return Ok(Some(t.recording.as_ref().expect("present").status()));
                             }
-                            if stop && !stopped {
-                                t.shared.lock().feed = None;
-                                let mut rec = t.recording.take().expect("present");
-                                rec.stop("stopped by the client", false);
-                                s.browsers.finalizing.push(rec);
-                                return Ok(None);
-                            }
-                            return Ok(Some(t.recording.as_ref().expect("present").status()));
                         }
-                    }
-                    if let Some(rec) = s.browsers.finalizing.iter().find(|x| x.id == r) {
-                        return Ok(if stop { None } else { Some(rec.status()) });
-                    }
-                    s.browser_after_pump();
-                    s.browsers
-                        .finished_recordings
-                        .iter()
-                        .rev()
-                        .find(|x| x.id == r)
-                        .cloned()
-                        .map(Some)
-                        .ok_or_else(|| ToolError::new(ErrorCode::UnknownTarget, format!("No recording {r}")))
-                })??;
+                        if let Some(rec) = s.browsers.finalizing.iter().find(|x| x.id == r) {
+                            return Ok(if stop { None } else { Some(rec.status()) });
+                        }
+                        s.browser_after_pump();
+                        s.browsers
+                            .finished_recordings
+                            .iter()
+                            .rev()
+                            .find(|x| x.id == r)
+                            .cloned()
+                            .map(Some)
+                            .ok_or_else(|| {
+                                ToolError::new(
+                                    ErrorCode::UnknownTarget,
+                                    format!("No recording {r}"),
+                                )
+                            })
+                    },
+                )??;
                 stopped |= stop;
                 match status {
-                    Some(status) if !stop || !matches!(status.state, record::RecordingState::Recording | record::RecordingState::Finalizing) => {
+                    Some(status)
+                        if !stop
+                            || !matches!(
+                                status.state,
+                                record::RecordingState::Recording
+                                    | record::RecordingState::Finalizing
+                            ) =>
+                    {
                         let mut value = json!(status);
-                        value["artifact"] = json!(status.path.as_ref().map(|_| format!("art_{}", &recording[4..])));
+                        value["artifact"] = json!(
+                            status
+                                .path
+                                .as_ref()
+                                .map(|_| format!("art_{}", &recording[4..]))
+                        );
                         return Ok(value);
                     }
                     _ => {}
                 }
                 if Instant::now() > deadline {
-                    return Err(ToolError::new(ErrorCode::Timeout, "The recording did not finalize in time"));
+                    return Err(ToolError::new(
+                        ErrorCode::Timeout,
+                        "The recording did not finalize in time",
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -717,8 +1034,14 @@ pub(crate) fn run(host: &Host, grant: &ClientGrant, name: &str, args: &Value, ca
 fn finish_job(shared: &crate::desktop::automation::Shared, id: &str, result: ToolResult) {
     use crate::automation::events::JobState;
     match result {
-        Ok(v) => shared.hub.update_job(id, JobState::Completed, Some(v), None),
-        Err(e) if e.code == ErrorCode::Cancelled => shared.hub.update_job(id, JobState::Cancelled, None, Some(e)),
+        Ok(v) => shared
+            .hub
+            .update_job(id, JobState::Completed, Some(v), None),
+        Err(e) if e.code == ErrorCode::Cancelled => {
+            shared
+                .hub
+                .update_job(id, JobState::Cancelled, None, Some(e))
+        }
         Err(e) => shared.hub.update_job(id, JobState::Failed, None, Some(e)),
     }
 }
@@ -735,15 +1058,24 @@ pub(crate) fn screenshot(host: &Host, grant: &ClientGrant, args: &Value) -> Tool
         let page = s.browsers.targets[i].shared.lock();
         Ok((page.frame.clone(), page.cursor, page.view))
     })??;
-    let frame = frame.ok_or_else(|| ToolError::new(ErrorCode::Unsupported, "The page has not painted yet"))?;
+    let frame = frame
+        .ok_or_else(|| ToolError::new(ErrorCode::Unsupported, "The page has not painted yet"))?;
     let mut rgba = Vec::with_capacity(frame.bgra.len());
     for p in frame.bgra.chunks_exact(4) {
         rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
     }
     if cursor && let Some((x, y)) = pointer {
-        draw_cursor_rgb(&mut rgba, frame.width, frame.height, x * frame.scale, y * frame.scale, 4);
+        draw_cursor_rgb(
+            &mut rgba,
+            frame.width,
+            frame.height,
+            x * frame.scale,
+            y * frame.scale,
+            4,
+        );
     }
-    let (artifact, path) = crate::desktop::capture::artifact_path(&artifacts(&host.root), "browser", "png")?;
+    let (artifact, path) =
+        crate::desktop::capture::artifact_path(&artifacts(&host.root), "browser", "png")?;
     crate::desktop::capture::write_png(&path, frame.width, frame.height, &rgba)?;
     Ok(json!({
         "artifact": artifact,

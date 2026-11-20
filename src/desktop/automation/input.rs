@@ -42,7 +42,11 @@ pub(crate) fn terminal_bytes(chord: &Chord, application_cursor: bool) -> Option<
     }
     let key = match &chord.key {
         KeyName::Char(c) => {
-            let c = if m.shift && !m.ctrl { c.to_uppercase().next().unwrap_or(*c) } else { *c };
+            let c = if m.shift && !m.ctrl {
+                c.to_uppercase().next().unwrap_or(*c)
+            } else {
+                *c
+            };
             rune::Key::Text(c.to_string())
         }
         KeyName::Space => rune::Key::Text(" ".into()),
@@ -75,13 +79,23 @@ fn merge(a: Modifiers, b: Modifiers) -> Modifiers {
 }
 
 fn set_modifier(mods: &mut Modifiers, key: &str, down: bool) -> bool {
-    let Some(set) = keys::modifier(key) else { return false };
+    let Some(set) = keys::modifier(key) else {
+        return false;
+    };
     let mut probe = Modifiers::default();
     set(&mut probe);
-    if probe.shift { mods.shift = down; }
-    if probe.ctrl { mods.ctrl = down; }
-    if probe.alt { mods.alt = down; }
-    if probe.meta { mods.meta = down; }
+    if probe.shift {
+        mods.shift = down;
+    }
+    if probe.ctrl {
+        mods.ctrl = down;
+    }
+    if probe.alt {
+        mods.alt = down;
+    }
+    if probe.meta {
+        mods.meta = down;
+    }
     true
 }
 
@@ -93,24 +107,40 @@ pub(crate) fn terminal_frame(rows: u16, cols: u16) -> u64 {
 
 impl State {
     fn input_entry(&mut self, client: &str, target: &str) -> &mut VirtualInput {
-        self.automation.inputs.entry((client.to_owned(), target.to_owned())).or_default()
+        self.automation
+            .inputs
+            .entry((client.to_owned(), target.to_owned()))
+            .or_default()
     }
 
     /// Drop a client's held keys and buttons on a target, telling the
     /// target they were released so nothing stays stuck.
     pub(crate) fn release_virtual_input(&mut self, client: &str, target: &str, reason: &str) {
-        let Some(input) = self.automation.inputs.remove(&(client.to_owned(), target.to_owned())) else {
+        let Some(input) = self
+            .automation
+            .inputs
+            .remove(&(client.to_owned(), target.to_owned()))
+        else {
             return;
         };
         if target.starts_with("term_")
             && !input.buttons.is_empty()
-            && let Some(session) = self.sessions.iter().find(|s| self.terminal_target(s) == target)
+            && let Some(session) = self
+                .sessions
+                .iter()
+                .find(|s| self.terminal_target(s) == target)
             && let Some((x, y)) = input.pointer
         {
             for button in &input.buttons {
                 let button = parse_button(button).unwrap_or(mouse::Button::Left);
                 if let Some(bytes) = session.with_screen(|screen| {
-                    mouse::encode(screen, mouse::Action::Release(button), y as u16, x as u16, Default::default())
+                    mouse::encode(
+                        screen,
+                        mouse::Action::Release(button),
+                        y as u16,
+                        x as u16,
+                        Default::default(),
+                    )
                 }) {
                     let _ = session.send(bytes);
                 }
@@ -121,7 +151,11 @@ impl State {
             self.browser_release_input(target, &input);
         }
         self.automation.shared.bump(target);
-        self.emit("input_ownership", Some(target), json!({"released": true, "client": client, "reason": reason}));
+        self.emit(
+            "input_ownership",
+            Some(target),
+            json!({"released": true, "client": client, "reason": reason}),
+        );
     }
 
     pub(crate) fn auto_input_state(&mut self, grant: &ClientGrant, args: &Value) -> ToolResult {
@@ -148,7 +182,10 @@ impl State {
         if target.starts_with("brw_") {
             return self.browser_frame(grant, target);
         }
-        Err(ToolError::new(ErrorCode::Unsupported, format!("{target} can't take virtual input")))
+        Err(ToolError::new(
+            ErrorCode::Unsupported,
+            format!("{target} can't take virtual input"),
+        ))
     }
 
     pub(crate) fn auto_input_release(&mut self, grant: &ClientGrant, args: &Value) -> ToolResult {
@@ -187,8 +224,12 @@ impl State {
             }
             let index = self.find_terminal(grant, &target)?;
             let cursor = self.sessions[index].with_screen(vt100::Screen::application_cursor);
-            let bytes = terminal_bytes(&chord, cursor)
-                .ok_or_else(|| ToolError::new(ErrorCode::Unsupported, format!("{key} has no terminal encoding")))?;
+            let bytes = terminal_bytes(&chord, cursor).ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::Unsupported,
+                    format!("{key} has no terminal encoding"),
+                )
+            })?;
             self.sessions[index]
                 .send(bytes)
                 .map_err(|e| ToolError::new(ErrorCode::ClosedTarget, format!("{e:#}")))?;
@@ -198,13 +239,25 @@ impl State {
         if target.starts_with("brw_") {
             return self.browser_key(&target, &chord, action);
         }
-        Err(ToolError::new(ErrorCode::Unsupported, "This target takes no key input"))
+        Err(ToolError::new(
+            ErrorCode::Unsupported,
+            "This target takes no key input",
+        ))
     }
 
     /// Send one typed character to a target.
-    pub(crate) fn agent_char(&mut self, grant: &ClientGrant, target: &str, c: char, epoch: u64) -> Result<(), ToolError> {
+    pub(crate) fn agent_char(
+        &mut self,
+        grant: &ClientGrant,
+        target: &str,
+        c: char,
+        epoch: u64,
+    ) -> Result<(), ToolError> {
         if self.automation.shared.epoch(target) != epoch {
-            return Err(ToolError::new(ErrorCode::Cancelled, "Typing stopped: the owner took over, paused, or the target changed"));
+            return Err(ToolError::new(
+                ErrorCode::Cancelled,
+                "Typing stopped: the owner took over, paused, or the target changed",
+            ));
         }
         self.agent_input(&grant.id, target)?;
         if target.starts_with("term_") {
@@ -221,25 +274,48 @@ impl State {
         if target.starts_with("brw_") {
             return self.browser_char(grant, target, c);
         }
-        Err(ToolError::new(ErrorCode::Unsupported, "This target takes no text input"))
+        Err(ToolError::new(
+            ErrorCode::Unsupported,
+            "This target takes no text input",
+        ))
     }
 
     /// One pointer event on a terminal, in zero-based cells.
-    fn terminal_pointer(&mut self, grant: &ClientGrant, target: &str, action: mouse::Action, x: f64, y: f64) -> Result<bool, ToolError> {
+    fn terminal_pointer(
+        &mut self,
+        grant: &ClientGrant,
+        target: &str,
+        action: mouse::Action,
+        x: f64,
+        y: f64,
+    ) -> Result<bool, ToolError> {
         let index = self.find_terminal(grant, target)?;
         let (rows, cols) = self.sessions[index].size();
         if x < 0.0 || y < 0.0 || x >= f64::from(cols) || y >= f64::from(rows) {
-            return Err(ToolError::invalid(format!("Cell ({x}, {y}) is outside the {cols}x{rows} terminal")));
+            return Err(ToolError::invalid(format!(
+                "Cell ({x}, {y}) is outside the {cols}x{rows} terminal"
+            )));
         }
         let session = &self.sessions[index];
         let mods = {
-            let m = self.automation.inputs.get(&(grant.id.clone(), target.to_owned())).map(|i| i.modifiers).unwrap_or_default();
-            mouse::Modifiers { shift: m.shift, alt: m.alt, ctrl: m.ctrl }
+            let m = self
+                .automation
+                .inputs
+                .get(&(grant.id.clone(), target.to_owned()))
+                .map(|i| i.modifiers)
+                .unwrap_or_default();
+            mouse::Modifiers {
+                shift: m.shift,
+                alt: m.alt,
+                ctrl: m.ctrl,
+            }
         };
         let bytes = session.with_screen(|screen| {
             if screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None {
                 mouse::encode(screen, action, y as u16, x as u16, mods)
-            } else if screen.alternate_screen() && matches!(action, mouse::Action::WheelUp | mouse::Action::WheelDown) {
+            } else if screen.alternate_screen()
+                && matches!(action, mouse::Action::WheelUp | mouse::Action::WheelDown)
+            {
                 Some(mouse::wheel_arrow(screen, action == mouse::Action::WheelUp).to_vec())
             } else {
                 None
@@ -247,7 +323,9 @@ impl State {
         });
         match bytes {
             Some(bytes) => {
-                session.send(bytes).map_err(|e| ToolError::new(ErrorCode::ClosedTarget, format!("{e:#}")))?;
+                session
+                    .send(bytes)
+                    .map_err(|e| ToolError::new(ErrorCode::ClosedTarget, format!("{e:#}")))?;
                 Ok(true)
             }
             // Mouse modes report only some motion; anything else here means
@@ -261,9 +339,18 @@ impl State {
     }
 
     /// One step of a pointer gesture on any target.
-    pub(crate) fn agent_pointer_step(&mut self, grant: &ClientGrant, target: &str, step: &PointerStep, epoch: u64) -> Result<(), ToolError> {
+    pub(crate) fn agent_pointer_step(
+        &mut self,
+        grant: &ClientGrant,
+        target: &str,
+        step: &PointerStep,
+        epoch: u64,
+    ) -> Result<(), ToolError> {
         if self.automation.shared.epoch(target) != epoch {
-            return Err(ToolError::new(ErrorCode::Cancelled, "The gesture stopped: the owner took over, paused, or the target changed"));
+            return Err(ToolError::new(
+                ErrorCode::Cancelled,
+                "The gesture stopped: the owner took over, paused, or the target changed",
+            ));
         }
         self.agent_input(&grant.id, target)?;
         let (x, y) = (step.x, step.y);
@@ -283,7 +370,12 @@ impl State {
         }
         if target.starts_with("term_") {
             let button = parse_button(&step.button).unwrap_or(mouse::Button::Left);
-            let held = self.automation.inputs.get(&(grant.id.clone(), target.to_owned())).and_then(|i| i.buttons.first().cloned()).and_then(|b| parse_button(&b));
+            let held = self
+                .automation
+                .inputs
+                .get(&(grant.id.clone(), target.to_owned()))
+                .and_then(|i| i.buttons.first().cloned())
+                .and_then(|b| parse_button(&b));
             let action = match step.kind {
                 StepKind::Move => mouse::Action::Motion(held),
                 StepKind::Down => mouse::Action::Press(button),
@@ -298,7 +390,10 @@ impl State {
         if target.starts_with("brw_") {
             return self.browser_pointer(grant, target, step);
         }
-        Err(ToolError::new(ErrorCode::Unsupported, "This target takes no pointer input"))
+        Err(ToolError::new(
+            ErrorCode::Unsupported,
+            "This target takes no pointer input",
+        ))
     }
 }
 
@@ -330,18 +425,27 @@ pub(crate) struct PointerStep {
 
 /// Type text one character at a time, stopping at once on takeover, pause,
 /// revocation, cancellation or closure.
-pub(crate) fn type_text(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn type_text(
+    host: &Host,
+    grant: &ClientGrant,
+    args: &Value,
+    cancel: &AtomicBool,
+) -> ToolResult {
     let target = arg_str(args, "target")?.to_owned();
     let text = arg_str(args, "text")?.to_owned();
     if text.len() > 16_384 {
-        return Err(ToolError::new(ErrorCode::Limit, "Text is limited to 16 KiB per call"));
+        return Err(ToolError::new(
+            ErrorCode::Limit,
+            "Text is limited to 16 KiB per call",
+        ));
     }
     let delay = Duration::from_millis(arg_u64(args, "delay_ms", 0)?.min(1000));
     let epoch = host.shared.epoch(&target);
     let mut typed = 0;
     for c in text.chars() {
         if cancel.load(Ordering::Relaxed) {
-            return Err(ToolError::new(ErrorCode::Cancelled, "Typing was cancelled").with_data(json!({"typed": typed})));
+            return Err(ToolError::new(ErrorCode::Cancelled, "Typing was cancelled")
+                .with_data(json!({"typed": typed})));
         }
         let g = grant.clone();
         let t = target.clone();
@@ -357,7 +461,12 @@ pub(crate) fn type_text(host: &Host, grant: &ClientGrant, args: &Value, cancel: 
 
 /// Build a gesture's steps, then deliver them in order with the pointer
 /// visibly progressing between points.
-pub(crate) fn pointer(host: &Host, grant: &ClientGrant, args: &Value, cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn pointer(
+    host: &Host,
+    grant: &ClientGrant,
+    args: &Value,
+    cancel: &AtomicBool,
+) -> ToolResult {
     let target = arg_str(args, "target")?.to_owned();
     let action = arg_str(args, "action")?;
     let button = arg_opt_str(args, "button")?.unwrap_or("left").to_owned();
@@ -366,30 +475,53 @@ pub(crate) fn pointer(host: &Host, grant: &ClientGrant, args: &Value, cancel: &A
     }
     let g = grant.clone();
     let t = target.clone();
-    let (frame, last) = on_ui(&host.handle, move |s, _| -> Result<(u64, Option<(f64, f64)>), ToolError> {
-        let frame = s.target_frame(&g, &t)?;
-        Ok((frame, s.automation.inputs.get(&(g.id.clone(), t.clone())).and_then(|i| i.pointer)))
-    })??;
+    let (frame, last) = on_ui(
+        &host.handle,
+        move |s, _| -> Result<(u64, Option<(f64, f64)>), ToolError> {
+            let frame = s.target_frame(&g, &t)?;
+            Ok((
+                frame,
+                s.automation
+                    .inputs
+                    .get(&(g.id.clone(), t.clone()))
+                    .and_then(|i| i.pointer),
+            ))
+        },
+    )??;
     if let Some(expected) = args.get("frame_revision").and_then(Value::as_u64)
         && expected != frame
     {
-        return Err(ToolError::new(ErrorCode::Stale, "The target was resized, rescaled or changed since that frame; observe it again").with_data(json!({"frame_revision": frame})));
+        return Err(ToolError::new(
+            ErrorCode::Stale,
+            "The target was resized, rescaled or changed since that frame; observe it again",
+        )
+        .with_data(json!({"frame_revision": frame})));
     }
     let x = arg_f64(args, "x")?;
     let y = arg_f64(args, "y")?;
     let at = match (x, y) {
         (Some(x), Some(y)) => (x, y),
-        (None, None) => last.ok_or_else(|| ToolError::invalid("Give x and y; the pointer has no position yet"))?,
+        (None, None) => {
+            last.ok_or_else(|| ToolError::invalid("Give x and y; the pointer has no position yet"))?
+        }
         _ => return Err(ToolError::invalid("Give both x and y")),
     };
     let steps_count = arg_u64(args, "steps", 1)?.clamp(1, 200) as usize;
     let path = |from: (f64, f64), to: (f64, f64), n: usize| -> Vec<(f64, f64)> {
-        (1..=n).map(|i| {
-            let t = i as f64 / n as f64;
-            (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
-        }).collect()
+        (1..=n)
+            .map(|i| {
+                let t = i as f64 / n as f64;
+                (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
+            })
+            .collect()
     };
-    let step = |kind: StepKind, (x, y): (f64, f64), count: u32| PointerStep { kind, x, y, button: button.clone(), click_count: count };
+    let step = |kind: StepKind, (x, y): (f64, f64), count: u32| PointerStep {
+        kind,
+        x,
+        y,
+        button: button.clone(),
+        click_count: count,
+    };
     let mut steps = Vec::new();
     let approach = |steps: &mut Vec<PointerStep>, to: (f64, f64)| {
         let from = last.unwrap_or(to);
@@ -437,19 +569,31 @@ pub(crate) fn pointer(host: &Host, grant: &ClientGrant, args: &Value, cancel: &A
         if cancel.load(Ordering::Relaxed) {
             // Never leave a button held by a cancelled gesture.
             let g2 = grant.clone();
-            let _ = on_ui(&host.handle, move |s, _| s.release_virtual_input(&g2.id, &t, "cancelled"));
-            return Err(ToolError::new(ErrorCode::Cancelled, "The gesture was cancelled; held buttons were released").with_data(json!({"steps_done": done})));
+            let _ = on_ui(&host.handle, move |s, _| {
+                s.release_virtual_input(&g2.id, &t, "cancelled")
+            });
+            return Err(ToolError::new(
+                ErrorCode::Cancelled,
+                "The gesture was cancelled; held buttons were released",
+            )
+            .with_data(json!({"steps_done": done})));
         }
-        let result = on_ui(&host.handle, move |s, _| s.agent_pointer_step(&g, &t, &step, epoch))?;
+        let result = on_ui(&host.handle, move |s, _| {
+            s.agent_pointer_step(&g, &t, &step, epoch)
+        })?;
         if let Err(error) = result {
             let g2 = grant.clone();
             let t2 = target.clone();
-            let _ = on_ui(&host.handle, move |s, _| s.release_virtual_input(&g2.id, &t2, "gesture_failed"));
+            let _ = on_ui(&host.handle, move |s, _| {
+                s.release_virtual_input(&g2.id, &t2, "gesture_failed")
+            });
             return Err(error.with_data(json!({"steps_done": done})));
         }
         if total > 1 {
             std::thread::sleep(Duration::from_millis(8));
         }
     }
-    Ok(json!({"target": target, "action": action, "at": {"x": at.0, "y": at.1}, "steps": total, "frame_revision": frame}))
+    Ok(
+        json!({"target": target, "action": action, "at": {"x": at.0, "y": at.1}, "steps": total, "frame_revision": frame}),
+    )
 }

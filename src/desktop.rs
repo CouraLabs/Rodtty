@@ -15,11 +15,11 @@ mod accessibility;
 mod actions;
 mod appearance;
 pub(crate) mod automation;
+mod autosave;
 #[cfg(feature = "browser")]
 pub(crate) mod browser;
 mod capture;
 mod codex;
-mod autosave;
 mod fonts;
 mod motion;
 mod search;

@@ -9,9 +9,17 @@ pub(crate) fn available() -> bool {
     false
 }
 
-pub(crate) fn run(_host: &automation::Host, _grant: &ClientGrant, name: &str, _args: &Value, _cancel: &AtomicBool) -> ToolResult {
+pub(crate) fn run(
+    _host: &automation::Host,
+    _grant: &ClientGrant,
+    name: &str,
+    _args: &Value,
+    _cancel: &AtomicBool,
+) -> ToolResult {
     Err(ToolError::new(
         ErrorCode::Unavailable,
-        format!("{name}: the structured Codex adapter is not available; launch Codex in a terminal with terminal_launch"),
+        format!(
+            "{name}: the structured Codex adapter is not available; launch Codex in a terminal with terminal_launch"
+        ),
     ))
 }

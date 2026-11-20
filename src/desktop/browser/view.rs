@@ -10,9 +10,13 @@ pub(crate) static GLOBE: rune::Icon = rune::Icon {
 
 /// The top-bar icon, placed right after Search and before File Explorer.
 pub(crate) fn open_browser_button(s: &State, a: &Appearance) -> El {
-    icon_button(a, "open-browser", &GLOBE, s.shortcut_help("open-browser", "Open Browser"), |s, tx| {
-        s.dispatch(AppAction::OpenBrowser, tx)
-    })
+    icon_button(
+        a,
+        "open-browser",
+        &GLOBE,
+        s.shortcut_help("open-browser", "Open Browser"),
+        |s, tx| s.dispatch(AppAction::OpenBrowser, tx),
+    )
     .label("Open Browser")
     .toggle_state(a, s.browsers.view_open)
 }
@@ -37,21 +41,43 @@ impl State {
         }
         self.browsers.view_open = true;
         if self.shown_browser().is_none() {
-            let owner = self.browsers.targets.iter().find(|t| t.client.is_none()).map(|t| t.id.clone());
+            let owner = self
+                .browsers
+                .targets
+                .iter()
+                .find(|t| t.client.is_none())
+                .map(|t| t.id.clone());
             match owner {
                 Some(id) => self.browsers.shown = Some(id),
                 None => {
-                    let (w, h) = self.browsers.view_size.map_or((960, 640), |(w, h)| (w as u32, h as u32));
-                    let scale = if self.browsers.view_scale > 0.0 { self.browsers.view_scale } else { 2.0 };
+                    let (w, h) = self
+                        .browsers
+                        .view_size
+                        .map_or((960, 640), |(w, h)| (w as u32, h as u32));
+                    let scale = if self.browsers.view_scale > 0.0 {
+                        self.browsers.view_scale
+                    } else {
+                        2.0
+                    };
                     match self.create_browser(None, None, (w.max(200), h.max(200)), scale) {
                         Ok(id) => self.browsers.shown = Some(id),
-                        Err(error) => self.browsers.status = Some(format!("{error}. The terminal and editor are unaffected.")),
+                        Err(error) => {
+                            self.browsers.status =
+                                Some(format!("{error}. The terminal and editor are unaffected."))
+                        }
                     }
                 }
             }
         }
-        let url = self.shown_browser().map(|t| t.shared.lock().url.clone()).unwrap_or_default();
-        self.browsers.address = Some(TextEdit::new(if url == "about:blank" { String::new() } else { url }));
+        let url = self
+            .shown_browser()
+            .map(|t| t.shared.lock().url.clone())
+            .unwrap_or_default();
+        self.browsers.address = Some(TextEdit::new(if url == "about:blank" {
+            String::new()
+        } else {
+            url
+        }));
         self.browsers.page_focus = false;
         self.workspace.set_terminal_focus(false);
         tx.focus("browser-address", true);
@@ -62,7 +88,11 @@ impl State {
         self.browsers.view_open = false;
         self.browsers.page_focus = false;
         if let Some(id) = self.browsers.shown.take()
-            && self.browsers.targets.iter().any(|t| t.id == id && t.client.is_none())
+            && self
+                .browsers
+                .targets
+                .iter()
+                .any(|t| t.id == id && t.client.is_none())
         {
             self.close_browser_target(&id);
         }
@@ -71,7 +101,12 @@ impl State {
     }
 
     pub(crate) fn browser_go(&mut self) {
-        let input = self.browsers.address.as_ref().map(|a| a.text.clone()).unwrap_or_default();
+        let input = self
+            .browsers
+            .address
+            .as_ref()
+            .map(|a| a.text.clone())
+            .unwrap_or_default();
         match address::normalize(&input) {
             Ok(url) => {
                 if let Some(target) = self.shown_browser() {
@@ -97,7 +132,9 @@ impl State {
             return false;
         }
         self.owner_browser_input();
-        let Some(target) = self.shown_browser() else { return false };
+        let Some(target) = self.shown_browser() else {
+            return false;
+        };
         let name = match &event.key {
             Key::Text(t) => t.clone(),
             Key::Command(c) => c.to_string(),
@@ -127,10 +164,17 @@ impl State {
             }
             return true;
         }
-        let Some(key) = crate::automation::keys::key_name(&name) else { return false };
+        let Some(key) = crate::automation::keys::key_name(&name) else {
+            return false;
+        };
         let chord = crate::automation::keys::Chord {
             key,
-            mods: crate::automation::keys::Modifiers { shift: event.mods.shift, ctrl: event.mods.ctrl, alt: event.mods.alt, meta: event.mods.logo || (cfg!(target_os = "macos") && event.mods.cmd) },
+            mods: crate::automation::keys::Modifiers {
+                shift: event.mods.shift,
+                ctrl: event.mods.ctrl,
+                alt: event.mods.alt,
+                meta: event.mods.logo || (cfg!(target_os = "macos") && event.mods.cmd),
+            },
         };
         for e in key_events(&chord, true, true) {
             target.key(e);
@@ -154,7 +198,14 @@ impl State {
     }
 }
 
-fn toolbar_button(a: &Appearance, key: &'static str, glyph: &'static rune::Icon, label: &'static str, enabled: bool, action: impl Fn(&mut State, &mut Tx) + 'static) -> El {
+fn toolbar_button(
+    a: &Appearance,
+    key: &'static str,
+    glyph: &'static rune::Icon,
+    label: &'static str,
+    enabled: bool,
+    action: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
     icon_button(a, key, glyph, label, move |s, tx| {
         if enabled {
             action(s, tx)
@@ -168,10 +219,20 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
     let target = s.shown_browser();
     let page = target.map(|t| {
         let p = t.shared.lock();
-        (p.url.clone(), p.loading, p.can_back, p.can_forward, p.error.clone(), p.crashed.clone(), p.blocked.clone(), t.recording.is_some())
+        (
+            p.url.clone(),
+            p.loading,
+            p.can_back,
+            p.can_forward,
+            p.error.clone(),
+            p.crashed.clone(),
+            p.blocked.clone(),
+            t.recording.is_some(),
+        )
     });
     let (_, loading, back, forward, error, crashed, blocked, recording) =
-        page.clone().unwrap_or((String::new(), false, false, false, None, None, None, false));
+        page.clone()
+            .unwrap_or((String::new(), false, false, false, None, None, None, false));
     let mut bar = row()
         .key("browser-toolbar")
         .w_full()
@@ -180,23 +241,57 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
         .gap(4.0)
         .center_y()
         .fill(a.panel())
-        .child(toolbar_button(a, "browser-back", &rune_kit::glyphs::ARROW_LEFT, "Back", back, |s, _| {
-            if let Some(t) = s.shown_browser() { t.browser.go_back(); }
-        }))
-        .child(toolbar_button(a, "browser-forward", &rune_kit::glyphs::ARROW_RIGHT, "Forward", forward, |s, _| {
-            if let Some(t) = s.shown_browser() { t.browser.go_forward(); }
-        }))
-        .child(if loading {
-            toolbar_button(a, "browser-stop", &rune_kit::glyphs::CLOSE, "Stop", true, |s, _| {
-                if let Some(t) = s.shown_browser() { t.browser.stop_load(); }
-            })
-        } else {
-            toolbar_button(a, "browser-reload", &rune_kit::glyphs::REFRESH, "Reload", target.is_some(), |s, _| {
+        .child(toolbar_button(
+            a,
+            "browser-back",
+            &rune_kit::glyphs::ARROW_LEFT,
+            "Back",
+            back,
+            |s, _| {
                 if let Some(t) = s.shown_browser() {
-                    t.shared.lock().crashed = None;
-                    t.browser.reload();
+                    t.browser.go_back();
                 }
-            })
+            },
+        ))
+        .child(toolbar_button(
+            a,
+            "browser-forward",
+            &rune_kit::glyphs::ARROW_RIGHT,
+            "Forward",
+            forward,
+            |s, _| {
+                if let Some(t) = s.shown_browser() {
+                    t.browser.go_forward();
+                }
+            },
+        ))
+        .child(if loading {
+            toolbar_button(
+                a,
+                "browser-stop",
+                &rune_kit::glyphs::CLOSE,
+                "Stop",
+                true,
+                |s, _| {
+                    if let Some(t) = s.shown_browser() {
+                        t.browser.stop_load();
+                    }
+                },
+            )
+        } else {
+            toolbar_button(
+                a,
+                "browser-reload",
+                &rune_kit::glyphs::REFRESH,
+                "Reload",
+                target.is_some(),
+                |s, _| {
+                    if let Some(t) = s.shown_browser() {
+                        t.shared.lock().crashed = None;
+                        t.browser.reload();
+                    }
+                },
+            )
         });
     if let Some(address) = &s.browsers.address {
         bar = bar.child(
@@ -215,7 +310,9 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
                 .radius(6.0)
                 .fill(a.bg())
                 .border(1.0, a.hover_bg())
-                .on_edit(|s: &mut State| s.browsers.address.get_or_insert_with(|| TextEdit::new("")))
+                .on_edit(|s: &mut State| {
+                    s.browsers.address.get_or_insert_with(|| TextEdit::new(""))
+                })
                 .on_input_key(|s: &mut State, event, _| {
                     s.browsers.page_focus = false;
                     if event.key == Key::Enter {
@@ -234,17 +331,57 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
                 .key("browser-recording")
                 .gap(4.0)
                 .center_y()
-                .child(text("● REC").key("browser-recording-label").font(ui_label()).color(a.danger()))
-                .child(toolbar_button(a, "browser-recording-stop", &rune_kit::glyphs::CLOSE, "Stop recording", true, |s, _| s.stop_shown_recording())),
+                .child(
+                    text("● REC")
+                        .key("browser-recording-label")
+                        .font(ui_label())
+                        .color(a.danger()),
+                )
+                .child(toolbar_button(
+                    a,
+                    "browser-recording-stop",
+                    &rune_kit::glyphs::CLOSE,
+                    "Stop recording",
+                    true,
+                    |s, _| s.stop_shown_recording(),
+                )),
         );
     }
-    bar = bar.child(icon_button(a, "browser-close", &rune_kit::glyphs::CLOSE, "Close Browser", |s, tx| s.close_browser_view(tx)).label("Close Browser"));
+    bar = bar.child(
+        icon_button(
+            a,
+            "browser-close",
+            &rune_kit::glyphs::CLOSE,
+            "Close Browser",
+            |s, tx| s.close_browser_view(tx),
+        )
+        .label("Close Browser"),
+    );
     let notice = s.browsers.status.clone().or(crashed).or(error).or(blocked);
-    let mut pane = col().key("browser-pane").w_full().h_full().min_h(0.0).min_w(0.0).child(bar);
+    let mut pane = col()
+        .key("browser-pane")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .min_w(0.0)
+        .child(bar);
     if let Some(notice) = notice {
         pane = pane.child(
-            row().key("browser-notice").w_full().px(10.0).py(4.0).fill(a.warning_bg())
-                .child(text(notice).key("browser-notice-text").font(ui_label()).color(a.ink()).truncate().min_w(0.0).shrink()),
+            row()
+                .key("browser-notice")
+                .w_full()
+                .px(10.0)
+                .py(4.0)
+                .fill(a.warning_bg())
+                .child(
+                    text(notice)
+                        .key("browser-notice-text")
+                        .font(ui_label())
+                        .color(a.ink())
+                        .truncate()
+                        .min_w(0.0)
+                        .shrink(),
+                ),
         );
     }
     let content = match target {
@@ -255,11 +392,20 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
             .grow(1.0)
             .w_full()
             .min_h(0.0)
-            .fill(rune::Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
+            .fill(rune::Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            })
             .native_surface(&target.shared.surface, rune::SurfaceFit::Fill)
             .on_layout(|s: &mut State, r| {
                 s.browsers.view_size = Some((r[2], r[3]));
-                let scale = s.window.as_ref().and_then(|w| w.with_winit_window(|w| w.scale_factor() as f32).ok()).unwrap_or(2.0);
+                let scale = s
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.with_winit_window(|w| w.scale_factor() as f32).ok())
+                    .unwrap_or(2.0);
                 s.browsers.view_scale = scale;
                 if let Some(t) = s.shown_browser() {
                     t.resize(r[2].max(1.0) as u32, r[3].max(1.0) as u32, scale);
@@ -278,13 +424,28 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
                 if let Some(t) = s.shown_browser() {
                     match d.phase {
                         Phase::Down => {
-                            t.mouse_button(d.x, d.y, MouseButtonType::LEFT, false, d.clicks as i32, MOD_LEFT);
+                            t.mouse_button(
+                                d.x,
+                                d.y,
+                                MouseButtonType::LEFT,
+                                false,
+                                d.clicks as i32,
+                                MOD_LEFT,
+                            );
                         }
                         Phase::Move => t.mouse_move(d.x, d.y, MOD_LEFT),
-                        _ => t.mouse_button(d.x, d.y, MouseButtonType::LEFT, true, d.clicks as i32, 0),
+                        _ => t.mouse_button(
+                            d.x,
+                            d.y,
+                            MouseButtonType::LEFT,
+                            true,
+                            d.clicks as i32,
+                            0,
+                        ),
                     }
                 }
-                s.browsers.owner_button = matches!(d.phase, Phase::Down | Phase::Move).then_some(MouseButtonType::LEFT);
+                s.browsers.owner_button =
+                    matches!(d.phase, Phase::Down | Phase::Move).then_some(MouseButtonType::LEFT);
             })
             .on_wheel(|s: &mut State, e, _| {
                 s.owner_browser_input();
@@ -298,14 +459,25 @@ pub(crate) fn browser_pane(s: &State, a: &Appearance) -> El {
             .grow(1.0)
             .w_full()
             .center()
-            .child(text(s.browsers.status.clone().unwrap_or_else(|| "The browser is starting…".into())).font(ui_label()).color(a.muted())),
+            .child(
+                text(
+                    s.browsers
+                        .status
+                        .clone()
+                        .unwrap_or_else(|| "The browser is starting…".into()),
+                )
+                .font(ui_label())
+                .color(a.muted()),
+            ),
     };
     pane.child(content)
 }
 
 impl State {
     pub(crate) fn stop_shown_recording(&mut self) {
-        let Some(id) = self.browsers.shown.clone() else { return };
+        let Some(id) = self.browsers.shown.clone() else {
+            return;
+        };
         if let Some(index) = self.browser_index(&id)
             && let Some(mut recording) = self.browsers.targets[index].recording.take()
         {

@@ -54,10 +54,20 @@ pub(crate) struct Shared {
 
 impl Shared {
     pub fn epoch(&self, target: &str) -> u64 {
-        *self.epochs.lock().unwrap_or_else(|e| e.into_inner()).get(target).unwrap_or(&0)
+        *self
+            .epochs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(target)
+            .unwrap_or(&0)
     }
     pub fn bump(&self, target: &str) {
-        *self.epochs.lock().unwrap_or_else(|e| e.into_inner()).entry(target.to_owned()).or_default() += 1;
+        *self
+            .epochs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(target.to_owned())
+            .or_default() += 1;
     }
 }
 
@@ -107,7 +117,12 @@ impl Default for Automation {
 /// Features this build and instance offer, for capability discovery.
 pub(crate) fn features() -> Vec<String> {
     #[allow(unused_mut)]
-    let mut features = vec!["terminal".to_owned(), "workspaces".to_owned(), "editor".to_owned(), "git".to_owned()];
+    let mut features = vec![
+        "terminal".to_owned(),
+        "workspaces".to_owned(),
+        "editor".to_owned(),
+        "git".to_owned(),
+    ];
     #[cfg(feature = "browser")]
     if crate::desktop::browser::available() {
         features.push("browser".into());
@@ -128,9 +143,12 @@ pub(crate) fn on_ui<R: Send + 'static>(
     handle.update(move |state, tx| {
         let _ = sender.send(f(state, tx));
     });
-    receiver
-        .recv_timeout(Duration::from_secs(15))
-        .map_err(|_| ToolError::new(ErrorCode::Timeout, "Rodtty's UI thread didn't answer in time"))
+    receiver.recv_timeout(Duration::from_secs(15)).map_err(|_| {
+        ToolError::new(
+            ErrorCode::Timeout,
+            "Rodtty's UI thread didn't answer in time",
+        )
+    })
 }
 
 /// The channel handler: authorizes each call against the owner's grants,
@@ -146,10 +164,12 @@ impl Host {
     fn grant(&self, client: &str) -> Result<ClientGrant, ToolError> {
         let grants = Grants::load(&self.root)
             .map_err(|e| ToolError::new(ErrorCode::Internal, format!("{e:#}")))?;
-        grants
-            .get(client)
-            .cloned()
-            .ok_or_else(|| ToolError::new(ErrorCode::Revoked, "This client is no longer known; reconnect to request approval"))
+        grants.get(client).cloned().ok_or_else(|| {
+            ToolError::new(
+                ErrorCode::Revoked,
+                "This client is no longer known; reconnect to request approval",
+            )
+        })
     }
 }
 
@@ -163,7 +183,11 @@ impl Handler for Host {
             grants
                 .save(&self.root)
                 .map_err(|e| ToolError::new(ErrorCode::Internal, format!("{e:#}")))?;
-            self.shared.hub.emit("client", Some(&grant.id), json!({"status": "pending", "name": grant.name}));
+            self.shared.hub.emit(
+                "client",
+                Some(&grant.id),
+                json!({"status": "pending", "name": grant.name}),
+            );
             self.handle.update(|s, _| s.automation_refresh_grants(true));
         }
         Ok(json!({
@@ -178,7 +202,10 @@ impl Handler for Host {
 
     fn call(&self, client: &str, name: &str, args: Value, cancel: Arc<AtomicBool>) -> ToolResult {
         let Some(tool) = tools::find(name) else {
-            return Err(ToolError::new(ErrorCode::UnknownTool, format!("No tool named {name}")));
+            return Err(ToolError::new(
+                ErrorCode::UnknownTool,
+                format!("No tool named {name}"),
+            ));
         };
         let grant = self.grant(client)?;
         if let Some(feature) = tool.feature
@@ -201,17 +228,25 @@ impl Handler for Host {
                 fingerprint.as_object_mut().map(|o| o.remove("request_id"));
                 let key = format!("{client}/{name}/{id}");
                 match self.shared.hub.begin(&key, &fingerprint.to_string())? {
-                    Begin::Done(result) => return result.map(|mut v| {
-                        if let Some(o) = v.as_object_mut() {
-                            o.insert("replayed".into(), json!(true));
-                        }
-                        v
-                    }),
+                    Begin::Done(result) => {
+                        return result.map(|mut v| {
+                            if let Some(o) = v.as_object_mut() {
+                                o.insert("replayed".into(), json!(true));
+                            }
+                            v
+                        });
+                    }
                     Begin::New => Some(key),
                 }
             }
-            Some(Value::String(_)) if tool.mutating => return Err(ToolError::invalid("`request_id` must be 1 to 200 characters")),
-            Some(_) if tool.mutating => return Err(ToolError::invalid("`request_id` must be a string")),
+            Some(Value::String(_)) if tool.mutating => {
+                return Err(ToolError::invalid(
+                    "`request_id` must be 1 to 200 characters",
+                ));
+            }
+            Some(_) if tool.mutating => {
+                return Err(ToolError::invalid("`request_id` must be a string"));
+            }
             _ => None,
         };
         let result = self.run(&grant, name, args, cancel);
@@ -223,12 +258,19 @@ impl Handler for Host {
 
     fn disconnected(&self, client: &str) {
         let client = client.to_owned();
-        self.handle.update(move |s, _| s.automation_release_client(&client, "disconnected"));
+        self.handle
+            .update(move |s, _| s.automation_release_client(&client, "disconnected"));
     }
 }
 
 impl Host {
-    fn run(&self, grant: &ClientGrant, name: &str, args: Value, cancel: Arc<AtomicBool>) -> ToolResult {
+    fn run(
+        &self,
+        grant: &ClientGrant,
+        name: &str,
+        args: Value,
+        cancel: Arc<AtomicBool>,
+    ) -> ToolResult {
         let g = grant.clone();
         macro_rules! ui {
             (|$s:ident, $tx:ident| $body:expr) => {{
@@ -275,7 +317,10 @@ impl Host {
             "terminal_list" => ui!(|s, tx| s.auto_terminal_list(&g)),
             "terminal_create" => ui!(|s, tx| s.auto_terminal_create(&g, &args)),
             "terminal_launch" => terminal::launch(self, grant, &args),
-            "terminal_split" => Err(ToolError::new(ErrorCode::Unavailable, "Split terminals are not available in this build")),
+            "terminal_split" => Err(ToolError::new(
+                ErrorCode::Unavailable,
+                "Split terminals are not available in this build",
+            )),
             "terminal_screen" => ui!(|s, tx| s.auto_terminal_screen(&g, &args)),
             "terminal_read" => ui!(|s, tx| s.auto_terminal_read(&g, &args)),
             "terminal_wait" => terminal::wait(self, grant, &args, &cancel),
@@ -290,19 +335,28 @@ impl Host {
             "input_release_all" => ui!(|s, tx| s.auto_input_release(&g, &args)),
             "events_read" => {
                 let cursor = match args.get("cursor") {
-                    Some(Value::Number(n)) => n.as_u64().ok_or_else(|| ToolError::invalid("`cursor` must be a non-negative integer"))?,
+                    Some(Value::Number(n)) => n.as_u64().ok_or_else(|| {
+                        ToolError::invalid("`cursor` must be a non-negative integer")
+                    })?,
                     _ => self.shared.hub.cursor(),
                 };
                 let max = crate::automation::arg_u64(&args, "max", 100)?.clamp(1, 500) as usize;
                 let wait = crate::automation::arg_u64(&args, "wait_ms", 0)?.min(60_000);
-                let mut read = self.shared.hub.read(cursor, max, Duration::from_millis(wait), &cancel);
+                let mut read =
+                    self.shared
+                        .hub
+                        .read(cursor, max, Duration::from_millis(wait), &cancel);
                 // Events about targets outside this client's workspaces stay hidden.
                 let visible = ui!(|s, tx| s.automation_visible_targets(&g));
                 if let Some(events) = read.get_mut("events").and_then(Value::as_array_mut) {
                     events.retain(|e| match e.get("target").and_then(Value::as_str) {
-                        Some(t) if t.starts_with("term_") || t.starts_with("brw_") => visible.contains(t),
+                        Some(t) if t.starts_with("term_") || t.starts_with("brw_") => {
+                            visible.contains(t)
+                        }
                         Some(t) if t.starts_with("cl_") => t == grant.id,
-                        Some(t) if t.starts_with("job_") => self.shared.hub.job(t).is_some_and(|j| j.client == grant.id),
+                        Some(t) if t.starts_with("job_") => {
+                            self.shared.hub.job(t).is_some_and(|j| j.client == grant.id)
+                        }
                         _ => true,
                     });
                 }
@@ -316,9 +370,15 @@ impl Host {
                 let id = crate::automation::arg_str(&args, "job")?;
                 self.own_job(grant, id)?;
                 let wait = crate::automation::arg_u64(&args, "timeout_ms", 30_000)?.min(600_000);
-                let job = self.shared.hub.wait_job(id, Duration::from_millis(wait), &cancel);
+                let job = self
+                    .shared
+                    .hub
+                    .wait_job(id, Duration::from_millis(wait), &cancel);
                 if cancel.load(Ordering::Relaxed) {
-                    return Err(ToolError::new(ErrorCode::Cancelled, "The wait was cancelled; the job continues"));
+                    return Err(ToolError::new(
+                        ErrorCode::Cancelled,
+                        "The wait was cancelled; the job continues",
+                    ));
                 }
                 Ok(json!(job))
             }
@@ -341,17 +401,31 @@ impl Host {
             name if name.starts_with("browser_") || name.starts_with("recording_") => {
                 crate::desktop::browser::automation::run(self, grant, name, &args, &cancel)
             }
-            name if name.starts_with("codex_") => crate::desktop::codex::run(self, grant, name, &args, &cancel),
-            _ => Err(ToolError::new(ErrorCode::Unavailable, format!("{name} is not available in this build"))),
+            name if name.starts_with("codex_") => {
+                crate::desktop::codex::run(self, grant, name, &args, &cancel)
+            }
+            _ => Err(ToolError::new(
+                ErrorCode::Unavailable,
+                format!("{name} is not available in this build"),
+            )),
         }
     }
 
-    fn own_job(&self, grant: &ClientGrant, id: &str) -> Result<crate::automation::events::Job, ToolError> {
+    fn own_job(
+        &self,
+        grant: &ClientGrant,
+        id: &str,
+    ) -> Result<crate::automation::events::Job, ToolError> {
         self.shared
             .hub
             .job(id)
             .filter(|j| j.client == grant.id)
-            .ok_or_else(|| ToolError::new(ErrorCode::UnknownTarget, format!("No job {id} for this client")))
+            .ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::UnknownTarget,
+                    format!("No job {id} for this client"),
+                )
+            })
     }
 
     fn capture(&self, grant: &ClientGrant, args: &Value) -> ToolResult {
@@ -359,7 +433,9 @@ impl Host {
         let artifacts = self.root.join("artifacts");
         if target.starts_with("term_") {
             let g = grant.clone();
-            let screen = on_ui(&self.handle, move |s, _| s.auto_terminal_capture(&g, &target))??;
+            let screen = on_ui(&self.handle, move |s, _| {
+                s.auto_terminal_capture(&g, &target)
+            })??;
             return crate::desktop::capture::terminal_png(&artifacts, screen);
         }
         #[cfg(feature = "browser")]
@@ -370,7 +446,10 @@ impl Host {
             grant.check(Some(Scope::Capture), None)?;
             return crate::desktop::capture::window_png(self, &artifacts);
         }
-        Err(ToolError::new(ErrorCode::UnknownTarget, format!("No capture target {target}")))
+        Err(ToolError::new(
+            ErrorCode::UnknownTarget,
+            format!("No capture target {target}"),
+        ))
     }
 }
 
@@ -378,7 +457,9 @@ impl State {
     /// Start listening for automation clients. Called once the app handle
     /// exists, for the owner instance only.
     pub(crate) fn start_automation(&mut self) {
-        let Some(handle) = self.handle.clone() else { return };
+        let Some(handle) = self.handle.clone() else {
+            return;
+        };
         let host = Arc::new(Host {
             handle,
             shared: self.automation.shared.clone(),
@@ -422,7 +503,11 @@ impl State {
 
     /// The active workspace: the one containing the explorer's folder.
     pub(crate) fn active_workspace(&self) -> (String, PathBuf) {
-        let folder = self.workspace.directory.clone().unwrap_or_else(|| self.directory.clone());
+        let folder = self
+            .workspace
+            .directory
+            .clone()
+            .unwrap_or_else(|| self.directory.clone());
         self.workspace_of(&folder)
     }
 
@@ -432,7 +517,11 @@ impl State {
             return owner.clone();
         }
         let (workspace, root) = self.workspace_of(&self.sessions[index].initial_cwd.clone());
-        let owner = SessionOwner { workspace, root, client: None };
+        let owner = SessionOwner {
+            workspace,
+            root,
+            client: None,
+        };
         self.automation.owners.insert(id, owner.clone());
         owner
     }
@@ -465,14 +554,21 @@ impl State {
         Ok(json!({"workspaces": rows}))
     }
 
-    fn auto_workspace_switch(&mut self, grant: &ClientGrant, args: &Value, tx: &mut Tx) -> ToolResult {
+    fn auto_workspace_switch(
+        &mut self,
+        grant: &ClientGrant,
+        args: &Value,
+        tx: &mut Tx,
+    ) -> ToolResult {
         let id = crate::automation::arg_str(args, "workspace")?;
         grant.check(None, Some(id))?;
         let registry = crate::workspaces::Registry::load(&self.root).unwrap_or_default();
-        let workspace = registry
-            .get(id)
-            .cloned()
-            .ok_or_else(|| ToolError::new(ErrorCode::UnknownTarget, "No registered workspace with that ID"))?;
+        let workspace = registry.get(id).cloned().ok_or_else(|| {
+            ToolError::new(
+                ErrorCode::UnknownTarget,
+                "No registered workspace with that ID",
+            )
+        })?;
         self.switch_workspace(&workspace.id, tx)
             .map_err(|e| ToolError::new(ErrorCode::Conflict, e))?;
         Ok(json!({"workspace": workspace.id, "root": workspace.root}))
@@ -490,7 +586,10 @@ impl State {
         };
         // The owner's automation controls stay with the owner.
         if id.starts_with("automation-") || id == "quit" {
-            return Err(ToolError::new(ErrorCode::ScopeDenied, "That action is reserved for the owner"));
+            return Err(ToolError::new(
+                ErrorCode::ScopeDenied,
+                "That action is reserved for the owner",
+            ));
         }
         let command = self
             .commands
@@ -515,14 +614,30 @@ impl State {
         }
         self.automation.grants_seen = modified;
         let grants = Grants::load(&self.root).unwrap_or_default();
-        self.automation.pending = grants.clients.iter().filter(|c| c.status == Status::Pending).cloned().collect();
-        self.automation.active_clients = grants.clients.iter().filter(|c| c.status == Status::Approved).count();
+        self.automation.pending = grants
+            .clients
+            .iter()
+            .filter(|c| c.status == Status::Pending)
+            .cloned()
+            .collect();
+        self.automation.active_clients = grants
+            .clients
+            .iter()
+            .filter(|c| c.status == Status::Approved)
+            .count();
         for client in &grants.clients {
-            let before = self.automation.statuses.insert(client.id.clone(), client.status);
+            let before = self
+                .automation
+                .statuses
+                .insert(client.id.clone(), client.status);
             if before.is_some_and(|b| b != client.status) {
                 self.emit("client", Some(&client.id), json!({"status": client.status}));
                 if matches!(client.status, Status::Paused | Status::Revoked) {
-                    let reason = if client.status == Status::Paused { "paused" } else { "revoked" };
+                    let reason = if client.status == Status::Paused {
+                        "paused"
+                    } else {
+                        "revoked"
+                    };
                     self.automation_release_client(&client.id, reason);
                 }
             }
@@ -542,7 +657,12 @@ impl State {
     }
 
     /// Show `path`'s diff once its editor tab exists.
-    pub(crate) fn show_diff(&mut self, path: PathBuf, comparison: crate::git::Comparison, tx: &mut Tx) {
+    pub(crate) fn show_diff(
+        &mut self,
+        path: PathBuf,
+        comparison: crate::git::Comparison,
+        tx: &mut Tx,
+    ) {
         self.open_file(path.clone());
         self.pending_diff = Some((path, comparison));
         self.apply_pending_diff(tx);
@@ -552,7 +672,12 @@ impl State {
         let Some((path, comparison)) = self.pending_diff.clone() else {
             return false;
         };
-        let Some(index) = self.workspace.tabs.iter().position(|t| t.document.path == path) else {
+        let Some(index) = self
+            .workspace
+            .tabs
+            .iter()
+            .position(|t| t.document.path == path)
+        else {
             return false;
         };
         self.pending_diff = None;
@@ -604,7 +729,11 @@ impl State {
         self.automation.takeovers.insert(target.to_owned());
         self.release_virtual_input(&client, target, "owner_takeover");
         self.automation.shared.bump(target);
-        self.emit("input_ownership", Some(target), json!({"owner": "human", "client": client, "reason": "owner_takeover"}));
+        self.emit(
+            "input_ownership",
+            Some(target),
+            json!({"owner": "human", "client": client, "reason": "owner_takeover"}),
+        );
         self.message = "You took over a target an agent was using. Automation: Return Target to Agent resumes it.".into();
     }
 
@@ -623,7 +752,11 @@ impl State {
                 self.release_virtual_input(&client, &target, "owner_takeover");
             }
             self.automation.shared.bump(&target);
-            self.emit("input_ownership", Some(&target), json!({"owner": "human", "reason": "owner_takeover"}));
+            self.emit(
+                "input_ownership",
+                Some(&target),
+                json!({"owner": "human", "reason": "owner_takeover"}),
+            );
             self.message = "Agent input to this terminal is paused until you return it.".into();
         }
     }
@@ -635,7 +768,11 @@ impl State {
         };
         for target in &targets {
             self.automation.takeovers.remove(target);
-            self.emit("input_ownership", Some(target), json!({"owner": "agent", "reason": "owner_returned"}));
+            self.emit(
+                "input_ownership",
+                Some(target),
+                json!({"owner": "agent", "reason": "owner_returned"}),
+            );
         }
         self.message = if targets.is_empty() {
             "No target is taken over.".into()
@@ -648,7 +785,12 @@ impl State {
     /// the active workspace.
     pub(crate) fn automation_approve_pending(&mut self) {
         let mut grants = Grants::load(&self.root).unwrap_or_default();
-        let Some(pending) = grants.clients.iter().find(|c| c.status == Status::Pending).cloned() else {
+        let Some(pending) = grants
+            .clients
+            .iter()
+            .find(|c| c.status == Status::Pending)
+            .cloned()
+        else {
             self.message = "No automation client is waiting for approval.".into();
             return;
         };
@@ -663,7 +805,12 @@ impl State {
 
     pub(crate) fn automation_set_all(&mut self, from: &[Status], to: Status) {
         let mut grants = Grants::load(&self.root).unwrap_or_default();
-        let ids: Vec<String> = grants.clients.iter().filter(|c| from.contains(&c.status)).map(|c| c.id.clone()).collect();
+        let ids: Vec<String> = grants
+            .clients
+            .iter()
+            .filter(|c| from.contains(&c.status))
+            .map(|c| c.id.clone())
+            .collect();
         for id in &ids {
             let _ = grants.set_status(id, to);
         }
@@ -681,7 +828,10 @@ impl State {
         match (self.automation.pending.first(), recording, agents) {
             (_, Some(recording), _) => Some(recording),
             (Some(pending), _, _) => Some(format!("Automation: {} wants access", pending.name)),
-            (None, None, true) => Some(format!("Agent active on {} target(s)", self.automation.agent_focus.len())),
+            (None, None, true) => Some(format!(
+                "Agent active on {} target(s)",
+                self.automation.agent_focus.len()
+            )),
             _ => None,
         }
     }
@@ -695,10 +845,14 @@ impl State {
     /// workspace being left and show the project's folder. Terminal sessions
     /// and unsaved buffers stay alive; they belong to their workspaces.
     pub(crate) fn switch_workspace(&mut self, id: &str, _tx: &mut Tx) -> Result<(), String> {
-        let mut registry = crate::workspaces::Registry::load(&self.root).map_err(|e| format!("{e:#}"))?;
+        let mut registry =
+            crate::workspaces::Registry::load(&self.root).map_err(|e| format!("{e:#}"))?;
         let target = registry.get(id).cloned().ok_or("No such workspace")?;
         if !target.root.is_dir() {
-            return Err(format!("The project folder {} is missing", target.root.display()));
+            return Err(format!(
+                "The project folder {} is missing",
+                target.root.display()
+            ));
         }
         let (current, _) = self.active_workspace();
         if current == target.id {
@@ -711,7 +865,11 @@ impl State {
         registry.save(&self.root).map_err(|e| format!("{e:#}"))?;
         let _ = crate::workspaces::save_selection(&self.root, Some(&target.id));
         self.navigate(target.root.clone());
-        self.emit("workspace", Some(&target.id), json!({"state": "active", "root": target.root}));
+        self.emit(
+            "workspace",
+            Some(&target.id),
+            json!({"state": "active", "root": target.root}),
+        );
         self.message = format!("Switched to {}.", registry.label(&target.id));
         Ok(())
     }
@@ -738,10 +896,15 @@ pub(crate) fn cli(root: &Path, args: &[String]) -> anyhow::Result<()> {
                     "--scopes" => {
                         scopes = value
                             .split(',')
-                            .map(|s| Scope::parse(s.trim()).ok_or_else(|| anyhow::anyhow!("unknown scope {s}")))
+                            .map(|s| {
+                                Scope::parse(s.trim())
+                                    .ok_or_else(|| anyhow::anyhow!("unknown scope {s}"))
+                            })
                             .collect::<anyhow::Result<_>>()?
                     }
-                    "--workspace" if value == "all" => workspaces.push(crate::automation::grants::ALL_WORKSPACES.to_owned()),
+                    "--workspace" if value == "all" => {
+                        workspaces.push(crate::automation::grants::ALL_WORKSPACES.to_owned())
+                    }
                     "--workspace" if value.starts_with("ws_") => workspaces.push(value.clone()),
                     "--workspace" => {
                         let mut registry = crate::workspaces::Registry::load(root)?;
@@ -753,13 +916,24 @@ pub(crate) fn cli(root: &Path, args: &[String]) -> anyhow::Result<()> {
                 }
             }
             if workspaces.is_empty() {
-                anyhow::bail!("name at least one --workspace (a project folder, a workspace ID, or all)");
+                anyhow::bail!(
+                    "name at least one --workspace (a project folder, a workspace ID, or all)"
+                );
             }
             grants.approve(client, &scopes, &workspaces)?;
         }
-        Some("pause") => grants.set_status(args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?, Status::Paused)?,
-        Some("resume") => grants.set_status(args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?, Status::Approved)?,
-        Some("revoke") => grants.set_status(args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?, Status::Revoked)?,
+        Some("pause") => grants.set_status(
+            args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?,
+            Status::Paused,
+        )?,
+        Some("resume") => grants.set_status(
+            args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?,
+            Status::Approved,
+        )?,
+        Some("revoke") => grants.set_status(
+            args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?,
+            Status::Revoked,
+        )?,
         Some("forget") => {
             grants.forget(args.get(1).ok_or_else(|| anyhow::anyhow!(usage))?);
         }
@@ -773,8 +947,16 @@ pub(crate) fn cli(root: &Path, args: &[String]) -> anyhow::Result<()> {
 #[allow(dead_code)]
 fn job_finished(shared: &Shared, id: &str, result: ToolResult) {
     match result {
-        Ok(value) => shared.hub.update_job(id, JobState::Completed, Some(value), None),
-        Err(error) if error.code == ErrorCode::Cancelled => shared.hub.update_job(id, JobState::Cancelled, None, Some(error)),
-        Err(error) => shared.hub.update_job(id, JobState::Failed, None, Some(error)),
+        Ok(value) => shared
+            .hub
+            .update_job(id, JobState::Completed, Some(value), None),
+        Err(error) if error.code == ErrorCode::Cancelled => {
+            shared
+                .hub
+                .update_job(id, JobState::Cancelled, None, Some(error))
+        }
+        Err(error) => shared
+            .hub
+            .update_job(id, JobState::Failed, None, Some(error)),
     }
 }

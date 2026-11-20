@@ -99,7 +99,9 @@ pub fn token() -> String {
         .map_or(0, |d| d.as_nanos() as u64);
     let mut x = nanos
         ^ (u64::from(std::process::id()) << 32)
-        ^ COUNTER.fetch_add(1, Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        ^ COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
     // splitmix64 finalizer
     x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);

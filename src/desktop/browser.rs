@@ -17,8 +17,8 @@
 //! Chromium's sandbox and certificate checks stay on.
 use super::*;
 use cef::{
-    BrowserSettings, CefString, ImplBrowser, ImplBrowserHost, ImplFrame, ImplRequest, WindowInfo, args::Args,
-    rc::Rc as _, *,
+    BrowserSettings, CefString, ImplBrowser, ImplBrowserHost, ImplFrame, ImplRequest, WindowInfo,
+    args::Args, rc::Rc as _, *,
 };
 // Rodtty's names win over the CEF glob import.
 use super::{Appearance, El, Key, KeyEvent, Phase, State, TextEdit, Tx};
@@ -131,11 +131,18 @@ fn start_pump_thread(handle: rune::AppHandle<State>) {
         .spawn(move || {
             let mut next = PUMP.lock().unwrap_or_else(|e| e.into_inner());
             loop {
-                let tick = if ACTIVE.load(Ordering::Relaxed) { Duration::from_millis(16) } else { Duration::from_secs(1) };
+                let tick = if ACTIVE.load(Ordering::Relaxed) {
+                    Duration::from_millis(16)
+                } else {
+                    Duration::from_secs(1)
+                };
                 let due = next.unwrap_or_else(|| Instant::now() + tick);
                 let now = Instant::now();
                 if due > now {
-                    next = PUMP_SIGNAL.wait_timeout(next, due - now).unwrap_or_else(|e| e.into_inner()).0;
+                    next = PUMP_SIGNAL
+                        .wait_timeout(next, due - now)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
                     if next.is_some_and(|n| n > Instant::now()) {
                         continue;
                     }
@@ -154,7 +161,8 @@ fn runtime_location() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("no executable folder")?;
     #[cfg(target_os = "macos")]
-    let path = dir.join("../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
+    let path =
+        dir.join("../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
     #[cfg(target_os = "windows")]
     let path = dir.join("libcef.dll");
     #[cfg(target_os = "linux")]
@@ -181,7 +189,14 @@ fn helper_path() -> Result<PathBuf, String> {
     let helper = dir.join("rodtty-browser-helper.exe");
     #[cfg(target_os = "linux")]
     let helper = dir.join("rodtty-browser-helper");
-    if helper.exists() { Ok(helper) } else { Err(format!("The browser helper is missing: {}", helper.display())) }
+    if helper.exists() {
+        Ok(helper)
+    } else {
+        Err(format!(
+            "The browser helper is missing: {}",
+            helper.display()
+        ))
+    }
 }
 
 wrap_browser_process_handler! {
@@ -227,7 +242,8 @@ impl State {
             #[cfg(target_os = "macos")]
             {
                 use std::os::unix::ffi::OsStrExt;
-                let name = std::ffi::CString::new(library.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+                let name = std::ffi::CString::new(library.as_os_str().as_bytes())
+                    .map_err(|e| e.to_string())?;
                 if load_library(Some(unsafe { &*name.as_ptr() })) != 1 {
                     return Err("Could not load the browser runtime".into());
                 }
@@ -235,7 +251,10 @@ impl State {
             #[cfg(not(target_os = "macos"))]
             let _ = library;
             let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
-            let cache = self.root.join("browser").join(format!("profile-{}", std::process::id()));
+            let cache = self
+                .root
+                .join("browser")
+                .join(format!("profile-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&cache);
             std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
             let settings = Settings {
@@ -253,7 +272,13 @@ impl State {
             };
             let args = Args::new();
             let mut app = BrowserApp::new();
-            if initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) != 1 {
+            if initialize(
+                Some(args.as_main_args()),
+                Some(&settings),
+                Some(&mut app),
+                std::ptr::null_mut(),
+            ) != 1
+            {
                 return Err("The browser runtime failed to start".into());
             }
             Ok(())
@@ -296,7 +321,13 @@ impl State {
             }
         }
         let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline && self.browsers.targets.iter().any(|t| !t.shared.lock().closed) {
+        while Instant::now() < deadline
+            && self
+                .browsers
+                .targets
+                .iter()
+                .any(|t| !t.shared.lock().closed)
+        {
             do_message_loop_work();
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -306,7 +337,11 @@ impl State {
         }
         shutdown();
         RUNTIME.with_borrow_mut(|r| *r = Runtime::NotStarted);
-        let _ = std::fs::remove_dir_all(self.root.join("browser").join(format!("profile-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(
+            self.root
+                .join("browser")
+                .join(format!("profile-{}", std::process::id())),
+        );
     }
 }
 
@@ -591,28 +626,62 @@ impl BrowserTarget {
         self.next_message += 1;
         let id = self.next_message;
         let message = serde_json::json!({"id": id, "method": method, "params": params}).to_string();
-        let sent = self.host()?.send_dev_tools_message(Some(message.as_bytes()));
+        let sent = self
+            .host()?
+            .send_dev_tools_message(Some(message.as_bytes()));
         (sent == 1).then_some(id)
     }
 
     pub(crate) fn mouse_move(&self, x: f32, y: f32, modifiers: u32) {
         if let Some(host) = self.host() {
-            host.send_mouse_move_event(Some(&MouseEvent { x: x as i32, y: y as i32, modifiers }), 0);
+            host.send_mouse_move_event(
+                Some(&MouseEvent {
+                    x: x as i32,
+                    y: y as i32,
+                    modifiers,
+                }),
+                0,
+            );
         }
     }
 
-    pub(crate) fn mouse_button(&self, x: f32, y: f32, button: MouseButtonType, up: bool, count: i32, modifiers: u32) {
+    pub(crate) fn mouse_button(
+        &self,
+        x: f32,
+        y: f32,
+        button: MouseButtonType,
+        up: bool,
+        count: i32,
+        modifiers: u32,
+    ) {
         if let Some(host) = self.host() {
             if !up {
                 host.set_focus(1);
             }
-            host.send_mouse_click_event(Some(&MouseEvent { x: x as i32, y: y as i32, modifiers }), button, up as i32, count.max(1));
+            host.send_mouse_click_event(
+                Some(&MouseEvent {
+                    x: x as i32,
+                    y: y as i32,
+                    modifiers,
+                }),
+                button,
+                up as i32,
+                count.max(1),
+            );
         }
     }
 
     pub(crate) fn wheel(&self, x: f32, y: f32, dx: f32, dy: f32, modifiers: u32) {
         if let Some(host) = self.host() {
-            host.send_mouse_wheel_event(Some(&MouseEvent { x: x as i32, y: y as i32, modifiers }), dx as i32, dy as i32);
+            host.send_mouse_wheel_event(
+                Some(&MouseEvent {
+                    x: x as i32,
+                    y: y as i32,
+                    modifiers,
+                }),
+                dx as i32,
+                dy as i32,
+            );
         }
     }
 
@@ -625,7 +694,9 @@ impl BrowserTarget {
 }
 
 /// Key codes for a named key: (Windows virtual key, macOS virtual key, character).
-pub(crate) fn key_codes(key: &crate::automation::keys::KeyName) -> Option<(i32, i32, Option<char>)> {
+pub(crate) fn key_codes(
+    key: &crate::automation::keys::KeyName,
+) -> Option<(i32, i32, Option<char>)> {
     use crate::automation::keys::KeyName::*;
     Some(match key {
         Enter => (0x0D, 0x24, Some('\r')),
@@ -643,25 +714,54 @@ pub(crate) fn key_codes(key: &crate::automation::keys::KeyName) -> Option<(i32, 
         PageUp => (0x21, 0x74, None),
         PageDown => (0x22, 0x79, None),
         Insert => (0x2D, 0x72, None),
-        Function(n) => (0x6F + i32::from(*n), [0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F].get(usize::from(*n) - 1).copied().unwrap_or(0), None),
+        Function(n) => (
+            0x6F + i32::from(*n),
+            [
+                0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F,
+            ]
+            .get(usize::from(*n) - 1)
+            .copied()
+            .unwrap_or(0),
+            None,
+        ),
         Char(c) => {
             let lower = c.to_ascii_lowercase();
-            let mac = "asdfhgzxcv\0bqweryt123465=97-80]ou[ip\0lj'k;\\,/nm.".find(lower).map_or(-1, |i| i as i32);
-            let vk = if lower.is_ascii_alphanumeric() { lower.to_ascii_uppercase() as i32 } else { 0 };
+            let mac = "asdfhgzxcv\0bqweryt123465=97-80]ou[ip\0lj'k;\\,/nm."
+                .find(lower)
+                .map_or(-1, |i| i as i32);
+            let vk = if lower.is_ascii_alphanumeric() {
+                lower.to_ascii_uppercase() as i32
+            } else {
+                0
+            };
             (vk, mac, Some(*c))
         }
     })
 }
 
 /// Key events for one chord: key down, the typed character, key up.
-pub(crate) fn key_events(chord: &crate::automation::keys::Chord, down: bool, up: bool) -> Vec<cef::KeyEvent> {
+pub(crate) fn key_events(
+    chord: &crate::automation::keys::Chord,
+    down: bool,
+    up: bool,
+) -> Vec<cef::KeyEvent> {
     let m = chord.mods;
     let mut modifiers = 0;
-    if m.shift { modifiers |= MOD_SHIFT; }
-    if m.ctrl { modifiers |= MOD_CONTROL; }
-    if m.alt { modifiers |= MOD_ALT; }
-    if m.meta { modifiers |= MOD_COMMAND; }
-    let Some((vk, native, character)) = key_codes(&chord.key) else { return Vec::new() };
+    if m.shift {
+        modifiers |= MOD_SHIFT;
+    }
+    if m.ctrl {
+        modifiers |= MOD_CONTROL;
+    }
+    if m.alt {
+        modifiers |= MOD_ALT;
+    }
+    if m.meta {
+        modifiers |= MOD_COMMAND;
+    }
+    let Some((vk, native, character)) = key_codes(&chord.key) else {
+        return Vec::new();
+    };
     let unicode = |c: char| -> u16 {
         let mut buf = [0u16; 2];
         c.encode_utf16(&mut buf);
@@ -677,7 +777,13 @@ pub(crate) fn key_events(chord: &crate::automation::keys::Chord, down: bool, up:
     let mut events = Vec::new();
     let shortcut = m.ctrl || m.meta;
     if down {
-        let character = character.map(|c| if m.shift { c.to_uppercase().next().unwrap_or(c) } else { c });
+        let character = character.map(|c| {
+            if m.shift {
+                c.to_uppercase().next().unwrap_or(c)
+            } else {
+                c
+            }
+        });
         events.push(cef::KeyEvent {
             type_: KeyEventType::RAWKEYDOWN,
             character: character.map_or(0, unicode),
@@ -697,7 +803,10 @@ pub(crate) fn key_events(chord: &crate::automation::keys::Chord, down: bool, up:
         }
     }
     if up {
-        events.push(cef::KeyEvent { type_: KeyEventType::KEYUP, ..base });
+        events.push(cef::KeyEvent {
+            type_: KeyEventType::KEYUP,
+            ..base
+        });
     }
     events
 }
@@ -718,16 +827,32 @@ pub(crate) fn char_events(c: char) -> Vec<cef::KeyEvent> {
 }
 
 /// Draw the virtual pointer (an outlined arrow) into RGB pixels.
-pub(crate) fn draw_cursor_rgb(rgb: &mut [u8], width: u32, height: u32, x: f32, y: f32, channels: usize) {
+pub(crate) fn draw_cursor_rgb(
+    rgb: &mut [u8],
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+    channels: usize,
+) {
     let size = 18i32;
     for dy in 0..size {
         for dx in 0..=dy / 2 + 1 {
             let (px, py) = (x as i32 + dx, y as i32 + dy);
-            if px < 0 || py < 0 || px as u32 >= width || py as u32 >= height || dy > size - 4 && dx > 2 {
+            if px < 0
+                || py < 0
+                || px as u32 >= width
+                || py as u32 >= height
+                || dy > size - 4 && dx > 2
+            {
                 continue;
             }
             let edge = dx == 0 || dx == dy / 2 + 1 || dy == size - 1;
-            let color = if edge { [255, 255, 255] } else { [220, 30, 120] };
+            let color = if edge {
+                [255, 255, 255]
+            } else {
+                [220, 30, 120]
+            };
             let i = (py as usize * width as usize + px as usize) * channels;
             rgb[i..i + 3].copy_from_slice(&color);
         }
@@ -737,25 +862,47 @@ pub(crate) fn draw_cursor_rgb(rgb: &mut [u8], width: u32, height: u32, x: f32, y
 impl State {
     /// Create a browser target. `client` is the automation client that owns
     /// it, or `None` for the owner's Browser view.
-    pub(crate) fn create_browser(&mut self, client: Option<String>, url: Option<&str>, size: (u32, u32), scale: f32) -> Result<String, String> {
+    pub(crate) fn create_browser(
+        &mut self,
+        client: Option<String>,
+        url: Option<&str>,
+        size: (u32, u32),
+        scale: f32,
+    ) -> Result<String, String> {
         self.ensure_browser_runtime()?;
-        let id = format!("brw_{}_{}", self.automation.instance, crate::automation::token()[..8].to_owned());
+        let id = format!(
+            "brw_{}_{}",
+            self.automation.instance,
+            crate::automation::token()[..8].to_owned()
+        );
         let handle = self.handle.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = match handle {
             Some(handle) => Arc::new(move || handle.wake()),
             None => self.wake.clone(),
         };
         let shared = Shared {
-            page: Arc::new(Mutex::new(Page { view: size, scale, url: url.unwrap_or("about:blank").to_owned(), ..Default::default() })),
+            page: Arc::new(Mutex::new(Page {
+                view: size,
+                scale,
+                url: url.unwrap_or("about:blank").to_owned(),
+                ..Default::default()
+            })),
             surface: rune::NativeSurface::new(),
             wake,
         };
-        let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
-        let settings = BrowserSettings { windowless_frame_rate: 30, ..Default::default() };
+        let window_info = WindowInfo {
+            windowless_rendering_enabled: 1,
+            ..Default::default()
+        };
+        let settings = BrowserSettings {
+            windowless_frame_rate: 30,
+            ..Default::default()
+        };
         let mut client_handler = PageClient::new(shared.clone());
         // A dedicated in-memory context per target keeps agent browsing and
         // the owner's browsing apart.
-        let mut context = request_context_create_context(Some(&RequestContextSettings::default()), None);
+        let mut context =
+            request_context_create_context(Some(&RequestContextSettings::default()), None);
         let browser = browser_host_create_browser_sync(
             Some(&window_info),
             Some(&mut client_handler),
@@ -766,7 +913,9 @@ impl State {
         )
         .ok_or("The browser could not be created")?;
         let mut observer = DevTools::new(shared.clone());
-        let registration = browser.host().and_then(|h| h.add_dev_tools_message_observer(Some(&mut observer)));
+        let registration = browser
+            .host()
+            .and_then(|h| h.add_dev_tools_message_observer(Some(&mut observer)));
         self.browsers.targets.push(BrowserTarget {
             id: id.clone(),
             client,
@@ -780,7 +929,11 @@ impl State {
         });
         ACTIVE.store(true, Ordering::Relaxed);
         schedule_pump(0);
-        self.emit("browser", Some(&id), serde_json::json!({"state": "created"}));
+        self.emit(
+            "browser",
+            Some(&id),
+            serde_json::json!({"state": "created"}),
+        );
         Ok(id)
     }
 
@@ -812,21 +965,34 @@ impl State {
     fn browser_after_pump(&mut self) -> bool {
         let mut changed = false;
         for target in &mut self.browsers.targets {
-            if target.recording.as_ref().is_some_and(record::Recording::finished)
+            if target
+                .recording
+                .as_ref()
+                .is_some_and(record::Recording::finished)
                 && let Some(recording) = target.recording.take()
             {
                 target.shared.lock().feed = None;
                 let status = recording.status();
-                self.automation.shared.hub.emit("recording", Some(&recording.id), serde_json::json!(status));
+                self.automation.shared.hub.emit(
+                    "recording",
+                    Some(&recording.id),
+                    serde_json::json!(status),
+                );
                 self.browsers.finished_recordings.push(status);
                 changed = true;
             }
         }
-        let (done, pending): (Vec<_>, Vec<_>) = std::mem::take(&mut self.browsers.finalizing).into_iter().partition(record::Recording::finished);
+        let (done, pending): (Vec<_>, Vec<_>) = std::mem::take(&mut self.browsers.finalizing)
+            .into_iter()
+            .partition(record::Recording::finished);
         self.browsers.finalizing = pending;
         for recording in done {
             let status = recording.status();
-            self.automation.shared.hub.emit("recording", Some(&recording.id), serde_json::json!(status));
+            self.automation.shared.hub.emit(
+                "recording",
+                Some(&recording.id),
+                serde_json::json!(status),
+            );
             self.browsers.finished_recordings.push(status);
             changed = true;
         }
@@ -835,11 +1001,19 @@ impl State {
 
     #[cfg(feature = "browser")]
     pub(crate) fn recording_indicator(&self) -> Option<String> {
-        let recording = self.browsers.targets.iter().filter(|t| t.recording.is_some()).count();
+        let recording = self
+            .browsers
+            .targets
+            .iter()
+            .filter(|t| t.recording.is_some())
+            .count();
         (recording > 0).then(|| format!("● Recording browser ({recording})"))
     }
 
-    pub(crate) fn browser_targets_for(&self, grant: &crate::automation::grants::ClientGrant) -> Vec<String> {
+    pub(crate) fn browser_targets_for(
+        &self,
+        grant: &crate::automation::grants::ClientGrant,
+    ) -> Vec<String> {
         self.browsers
             .targets
             .iter()

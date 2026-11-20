@@ -126,7 +126,10 @@ impl ClientGrant {
         {
             return Err(ToolError::new(
                 ErrorCode::ScopeDenied,
-                format!("This client's grant doesn't include the `{}` scope", scope.key()),
+                format!(
+                    "This client's grant doesn't include the `{}` scope",
+                    scope.key()
+                ),
             ));
         }
         if let Some(workspace) = workspace
@@ -248,14 +251,21 @@ mod tests {
         );
         assert!(!grants.request("codex").1, "one request per client");
         grants
-            .approve(&pending.id, &[Scope::Read, Scope::Terminal], &["ws_a".into()])
+            .approve(
+                &pending.id,
+                &[Scope::Read, Scope::Terminal],
+                &["ws_a".into()],
+            )
             .unwrap();
         grants.save(home.path()).unwrap();
         let grants = Grants::load(home.path()).unwrap();
         let grant = grants.get(&pending.id).unwrap();
         assert!(grant.check(Some(Scope::Terminal), Some("ws_a")).is_ok());
         assert_eq!(
-            grant.check(Some(Scope::Read), Some("ws_b")).unwrap_err().code,
+            grant
+                .check(Some(Scope::Read), Some("ws_b"))
+                .unwrap_err()
+                .code,
             ErrorCode::WorkspaceDenied
         );
         assert_eq!(
@@ -265,7 +275,12 @@ mod tests {
         let mut grants = grants;
         grants.set_status(&pending.id, Status::Revoked).unwrap();
         assert_eq!(
-            grants.get(&pending.id).unwrap().check(None, None).unwrap_err().code,
+            grants
+                .get(&pending.id)
+                .unwrap()
+                .check(None, None)
+                .unwrap_err()
+                .code,
             ErrorCode::Revoked
         );
         #[cfg(unix)]

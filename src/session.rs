@@ -449,7 +449,9 @@ impl Session {
         let end = command.output_end.unwrap_or_else(|| state.output.end());
         let max = usize::try_from(end.saturating_sub(command.output_start)).unwrap_or(usize::MAX);
         let (from, bytes, _) = state.output.read(command.output_start, max);
-        let bytes = &bytes[..bytes.len().min(usize::try_from(end - from.min(end)).unwrap_or(0))];
+        let bytes = &bytes[..bytes
+            .len()
+            .min(usize::try_from(end - from.min(end)).unwrap_or(0))];
         Some((crate::ansi::strip(bytes), from == command.output_start))
     }
 
