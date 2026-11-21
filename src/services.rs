@@ -7,9 +7,7 @@
 //! session's shell; anything unverifiable is reported as unknown, never
 //! guessed. Nothing is terminated or forwarded.
 use serde::Serialize;
-use std::{
-    collections::BTreeMap, path::Path, process::Command, sync::atomic::AtomicBool, time::Duration,
-};
+use std::{collections::BTreeMap, sync::atomic::AtomicBool, time::Duration};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Listener {
@@ -120,7 +118,7 @@ pub fn list(cancel: &AtomicBool) -> Result<Vec<Listener>, String> {
             cancel,
         )
         .or_else(|e| {
-            if Path::new("/usr/sbin/lsof").exists() {
+            if std::path::Path::new("/usr/sbin/lsof").exists() {
                 crate::environment::probe(
                     "/usr/sbin/lsof",
                     &["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"],
@@ -140,7 +138,7 @@ pub fn list(cancel: &AtomicBool) -> Result<Vec<Listener>, String> {
 pub fn parents() -> Option<BTreeMap<u32, u32>> {
     #[cfg(unix)]
     {
-        let out = Command::new("ps")
+        let out = std::process::Command::new("ps")
             .args(["-axo", "pid=,ppid="])
             .output()
             .ok()?;
