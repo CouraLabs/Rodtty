@@ -49,7 +49,6 @@ pub(crate) struct Frame {
     pub height: u32,
     pub bgra: Vec<u8>,
     pub scale: f32,
-    pub at: Instant,
 }
 
 /// What the browser's handlers report, shared with the UI and automation.
@@ -384,7 +383,7 @@ wrap_render_handler! {
             let bgra = unsafe { std::slice::from_raw_parts(buffer, (w * h * 4) as usize) }.to_vec();
             let mut page = self.shared.lock();
             page.frames += 1;
-            let frame = Arc::new(Frame { id: page.frames, width: w, height: h, bgra, scale: page.scale.max(1.0), at: Instant::now() });
+            let frame = Arc::new(Frame { id: page.frames, width: w, height: h, bgra, scale: page.scale.max(1.0) });
             let _ = self.shared.surface.push_bytes(
                 rune::native_surface::ByteFrame {
                     width: w,
@@ -560,7 +559,6 @@ pub(crate) struct BrowserTarget {
     pub next_message: i32,
     /// Element references from the last snapshot: (document, index, fingerprint).
     pub refs: HashMap<String, (u64, usize, String)>,
-    pub focused: bool,
 }
 
 #[derive(Default)]
@@ -925,7 +923,6 @@ impl State {
             recording: None,
             next_message: 0,
             refs: HashMap::new(),
-            focused: false,
         });
         ACTIVE.store(true, Ordering::Relaxed);
         schedule_pump(0);

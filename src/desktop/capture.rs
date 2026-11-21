@@ -140,7 +140,7 @@ pub(crate) fn render_terminal(shot: &TerminalShot, scale: f32) -> (u32, u32, Vec
     let height = u32::from(rows) * line + 2 * pad;
     let mut pixels = vec![0u8; (width * height * 4) as usize];
     let bg = shot.palette.background;
-    for p in pixels.chunks_exact_mut(4) {
+    for p in pixels.as_chunks_mut::<4>().0 {
         p.copy_from_slice(&[bg[0], bg[1], bg[2], 255]);
     }
     let fill = |pixels: &mut [u8], x0: u32, y0: u32, w: u32, h: u32, c: [u8; 3]| {
@@ -299,12 +299,18 @@ mod tests {
             "{w1}x{h1} vs {w2}x{h2}"
         );
         assert!(
-            pixels.chunks_exact(4).any(|p| p[0] > 150 && p[1] < 60),
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|p| p[0] > 150 && p[1] < 60),
             "red text drawn"
         );
         assert!(
             pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|p| p[0] > 200 && p[1] > 200 && p[2] > 200),
             "white text drawn"
         );

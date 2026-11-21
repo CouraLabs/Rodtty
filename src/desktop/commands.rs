@@ -5,7 +5,7 @@
 //! the command's text.
 use super::*;
 use crate::session::{CommandOutcome, CommandRecord};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Notifications remembered per process, so one command notifies once.
 const NOTIFIED: usize = 256;
@@ -252,6 +252,7 @@ fn notify(title: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn record(id: u64, prompt: &str) -> CommandRecord {
         CommandRecord {

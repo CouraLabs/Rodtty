@@ -535,8 +535,10 @@ mod tests {
         assert_eq!(f.total, 1);
         // A flood: each poll reads a bounded slice and stays quick.
         let mut l = log(&[], 1 << 20);
-        let mut f = LogFilter::default();
-        f.query = TextEdit::new("req=9");
+        let mut f = LogFilter {
+            query: TextEdit::new("req=9"),
+            ..Default::default()
+        };
         for i in 0..200_000 {
             l.push(format!("2024-01-01T00:00:00Z INFO req={i} handled\n").as_bytes());
         }

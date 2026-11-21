@@ -1240,7 +1240,7 @@ fn passthrough_sends_app_shortcuts_to_the_terminal_until_its_exit_binding() {
     rt.update(|s, tx| s.dispatch(AppAction::TogglePassthrough, tx));
     assert!(rt.state.passthrough.is_some());
     // Ctrl+B would be a Rodtty shortcut; here Ctrl+B, Ctrl+P and Ctrl+W go to the app.
-    let ctrl = |c: char| rune::Mods {
+    let ctrl = |_: char| rune::Mods {
         ctrl: true,
         cmd: !cfg!(target_os = "macos"),
         ..Default::default()

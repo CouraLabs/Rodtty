@@ -372,10 +372,7 @@ mod tests {
             dotnet_matches("8.0.110", "latestPatch", &sdks),
             Some((false, None))
         );
-        assert_eq!(
-            dotnet_matches("8.0.110", "latestFeature", &sdks).unwrap().0,
-            true
-        );
+        assert!(dotnet_matches("8.0.110", "latestFeature", &sdks).unwrap().0);
         assert_eq!(dotnet_matches("8.0.110", "sideways", &sdks), None);
     }
 

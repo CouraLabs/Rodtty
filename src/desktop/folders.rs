@@ -104,6 +104,14 @@ impl State {
 }
 
 #[cfg(test)]
+impl State {
+    fn dispatch_folder_clear(&mut self) {
+        self.folder_history.clear();
+        self.refresh_folder_commands();
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -155,13 +163,5 @@ mod tests {
         );
         state.dispatch_folder_clear();
         assert!(state.folder_history.is_empty());
-    }
-}
-
-#[cfg(test)]
-impl State {
-    fn dispatch_folder_clear(&mut self) {
-        self.folder_history.clear();
-        self.refresh_folder_commands();
     }
 }

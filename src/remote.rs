@@ -99,14 +99,9 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// One-time pairing codes and the devices they create.
+#[derive(Default)]
 pub struct Pairing {
     code: Option<(String, u64)>,
-}
-
-impl Default for Pairing {
-    fn default() -> Self {
-        Self { code: None }
-    }
 }
 
 impl Pairing {

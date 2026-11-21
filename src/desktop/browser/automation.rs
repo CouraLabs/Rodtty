@@ -1061,7 +1061,7 @@ pub(crate) fn screenshot(host: &Host, grant: &ClientGrant, args: &Value) -> Tool
     let frame = frame
         .ok_or_else(|| ToolError::new(ErrorCode::Unsupported, "The page has not painted yet"))?;
     let mut rgba = Vec::with_capacity(frame.bgra.len());
-    for p in frame.bgra.chunks_exact(4) {
+    for p in frame.bgra.as_chunks::<4>().0 {
         rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
     }
     if cursor && let Some((x, y)) = pointer {

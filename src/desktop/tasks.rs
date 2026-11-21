@@ -118,7 +118,6 @@ impl State {
             id,
             automation::SessionOwner {
                 workspace: workspace.to_owned(),
-                root: root.to_owned(),
                 client: client.map(str::to_owned),
             },
         );

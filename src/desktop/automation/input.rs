@@ -411,7 +411,12 @@ pub(crate) enum StepKind {
     Move,
     Down,
     Up,
-    Wheel { dx: f64, dy: f64 },
+    Wheel {
+        // Read by the embedded browser, which scrolls on both axes.
+        #[cfg_attr(not(feature = "browser"), allow(dead_code))]
+        dx: f64,
+        dy: f64,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -420,6 +425,8 @@ pub(crate) struct PointerStep {
     pub x: f64,
     pub y: f64,
     pub button: String,
+    // Read by the embedded browser for double and triple clicks.
+    #[cfg_attr(not(feature = "browser"), allow(dead_code))]
     pub click_count: u32,
 }
 

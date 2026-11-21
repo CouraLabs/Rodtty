@@ -160,10 +160,10 @@ fn connection(
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
-    if let Some(secret) = secret {
-        if !read_line(&mut reader, &mut line)? || line.trim_ascii() != secret.as_bytes() {
-            return Ok(());
-        }
+    if let Some(secret) = secret
+        && (!read_line(&mut reader, &mut line)? || line.trim_ascii() != secret.as_bytes())
+    {
+        return Ok(());
     }
     let mut client: Option<String> = None;
     let in_flight: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Default::default();

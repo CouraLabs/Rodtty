@@ -1005,7 +1005,7 @@ fn agent_status_follows_its_own_session_rejects_bad_reports_expires_and_leaves_c
             .contents()
             .lines()
             .filter_map(|l| l.strip_prefix("TOKEN="))
-            .last()
+            .next_back()
             .unwrap()
             .to_owned()
     };

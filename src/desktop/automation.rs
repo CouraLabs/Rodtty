@@ -39,7 +39,6 @@ pub(crate) use terminal::quote as terminal_quote;
 #[derive(Clone, Debug)]
 pub(crate) struct SessionOwner {
     pub workspace: String,
-    pub root: PathBuf,
     /// The client that created it, or `None` for the owner's own sessions.
     pub client: Option<String>,
 }
@@ -539,10 +538,9 @@ impl State {
         if let Some(owner) = self.automation.owners.get(&id) {
             return owner.clone();
         }
-        let (workspace, root) = self.workspace_of(&self.sessions[index].initial_cwd.clone());
+        let (workspace, _) = self.workspace_of(&self.sessions[index].initial_cwd.clone());
         let owner = SessionOwner {
             workspace,
-            root,
             client: None,
         };
         self.automation.owners.insert(id, owner.clone());
@@ -1187,10 +1185,6 @@ impl State {
             handle.update(move |s, _| s.message = summary);
         });
     }
-}
-
-fn name_owned(_args: &Value, name: &str) -> String {
-    name.to_owned()
 }
 
 impl State {

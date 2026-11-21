@@ -151,7 +151,7 @@ impl State {
         };
         // The directory decides the workspace: a cwd outside the named one
         // must itself be authorized.
-        let (cwd_workspace, cwd_root) = {
+        let (cwd_workspace, _) = {
             use crate::paths::Canonical as _;
             let canonical = cwd
                 .canonical()
@@ -186,7 +186,6 @@ impl State {
             id,
             SessionOwner {
                 workspace: cwd_workspace,
-                root: cwd_root,
                 client: Some(grant.id.clone()),
             },
         );

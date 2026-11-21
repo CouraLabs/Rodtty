@@ -146,12 +146,9 @@ pub(crate) fn run(
             let (job_id, turn_id, thread_id) = (job.clone(), turn.clone(), thread.clone());
             std::thread::spawn(move || {
                 let mut announced = false;
-                loop {
-                    let Some(state) =
-                        server.wait_turn(&turn_id, Duration::from_secs(3600), &job_cancel)
-                    else {
-                        break;
-                    };
+                while let Some(state) =
+                    server.wait_turn(&turn_id, Duration::from_secs(3600), &job_cancel)
+                {
                     match state.status.as_str() {
                         "waitingForApproval" => {
                             if !announced {

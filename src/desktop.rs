@@ -14,10 +14,10 @@ use std::{path::PathBuf, sync::Arc};
 mod accessibility;
 mod actions;
 mod appearance;
-pub(crate) mod automation;
+mod automation;
 mod autosave;
 #[cfg(feature = "browser")]
-pub(crate) mod browser;
+mod browser;
 mod capture;
 mod changes;
 mod codex;
