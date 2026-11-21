@@ -6,6 +6,8 @@ The release workflow publishes the section whose heading matches the tagged vers
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
 ### Added
 
 - Split terminals: two independent sessions per tab, side by side or stacked, with a divider, focus switching and saved layouts.
@@ -53,6 +55,7 @@ First public release. Windows and macOS native runtime checks are still pending;
 - Native accessibility support and reduced-motion-aware transitions.
 - Installers: a universal macOS app, Windows MSI installers for x64 and ARM64, and Linux archives for x86_64 and ARM64, distributed through GitHub Releases, Homebrew, and winget.
 
-[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/CouraLabs/Rodtty/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/CouraLabs/Rodtty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/CouraLabs/Rodtty/releases/tag/v0.1.0
