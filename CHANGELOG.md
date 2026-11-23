@@ -6,6 +6,33 @@ The release workflow publishes the section whose heading matches the tagged vers
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-23
+
+### Security
+
+- `app_action` runs only actions that change what the window shows. An automation client could previously enable remote access and receive a pairing code, paste the clipboard, toggle settings, or start file operations. `app_action` also no longer returns a footer message the action didn't write.
+- `events_read` no longer sends workspace switches, other clients' Codex approval summaries, or recording statuses to clients that weren't granted them.
+- The remote access page shows session titles and folders as text. A terminal title could previously inject HTML into the page.
+
+### Fixed
+
+- `events_read` shows a terminal's events after it closes, including its `closed` event.
+- `rodtty mcp` sends `notifications/tools/list_changed` when Rodtty starts after the client first listed tools.
+- `terminal_screen`, `terminal_wait` with `screen_contains`, and terminal screenshots read the live screen while the owner is scrolled back.
+- `terminal_wait` with `idle` completes on a freshly started shell.
+- An agent's `terminal_close` no longer replaces a prompt the owner is answering.
+- `terminal_launch` quotes arguments containing `=` or `%`.
+- Codex threads report and interrupt their newest turn. Turns were ordered by ID as text, so `turn-9` came after `turn-10`.
+- Jumping from a Filter Output result finds indented lines and lines with tabs.
+- Characters whose UTF-8 encoding contains byte 0x9B, such as "ś" and "些", are no longer dropped from excerpts, run comparisons and command output.
+- A corrupt draft file no longer crashes draft recovery.
+- The environment check no longer times out on a program that prints more than 64 KiB.
+- `rodtty open` rejects pipes and devices with exit status 4 instead of stalling the file worker.
+- A non-ASCII line in `lsof` output no longer crashes the services list.
+- Folders outside a Git repository no longer show a Git error when Git's messages are in another language.
+- Pairing a device no longer replaces a paired-devices file that can't be read.
+- The tab preview scenes render when the temporary folder is behind a symlink, such as macOS `/var`.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added
@@ -55,7 +82,8 @@ First public release. Windows and macOS native runtime checks are still pending;
 - Native accessibility support and reduced-motion-aware transitions.
 - Installers: a universal macOS app, Windows MSI installers for x64 and ARM64, and Linux archives for x86_64 and ARM64, distributed through GitHub Releases, Homebrew, and winget.
 
-[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/CouraLabs/Rodtty/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/CouraLabs/Rodtty/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/CouraLabs/Rodtty/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/CouraLabs/Rodtty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/CouraLabs/Rodtty/releases/tag/v0.1.0
