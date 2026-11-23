@@ -24,7 +24,7 @@ Opens a file in the running Rodtty (starting Rodtty if needed) at a line and col
 Relative paths resolve from the current directory. Use --path for file names that end in :<number>.
 
 Exit status: 0 opened, 2 invalid arguments, 3 missing file, 4 not an openable text file
-(a folder, or over the editor's 2 MiB limit), 5 Rodtty could not be reached or started.";
+(a folder, a pipe or device, or over the editor's 2 MiB limit), 5 Rodtty could not be reached or started.";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OpenRequest {
@@ -158,6 +158,12 @@ pub fn parse(args: &[String], cwd: &Path) -> Result<OpenRequest, OpenError> {
             message: format!("{} is a folder; open a file", path.display()),
         });
     }
+    if !metadata.is_file() {
+        return Err(OpenError {
+            status: EXIT_UNSUPPORTED,
+            message: format!("{} is not a regular file", path.display()),
+        });
+    }
     if metadata.len() > crate::files::MAX_FILE_BYTES {
         return Err(OpenError {
             status: EXIT_UNSUPPORTED,
@@ -224,6 +230,57 @@ mod tests {
             EXIT_INVALID
         );
         assert_eq!(parse(&args(&[]), cwd).err().unwrap().status, EXIT_INVALID);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_or_device_is_not_an_openable_text_file() {
+        let dir = crate::test_support::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        assert_eq!(
+            parse(&args(&["pipe"]), dir.path()).err().unwrap().status,
+            EXIT_UNSUPPORTED
+        );
+        assert_eq!(
+            parse(&args(&["/dev/null"]), dir.path())
+                .err()
+                .unwrap()
+                .status,
+            EXIT_UNSUPPORTED
+        );
+    }
+
+    #[test]
+    fn conflicting_or_malformed_options_are_invalid() {
+        let dir = crate::test_support::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(cwd.join("a.rs"), "x").unwrap();
+        for list in [
+            &["a.rs", "b.rs"][..],
+            &["--path", "a.rs", "a.rs"],
+            &["--path"],
+            &["a.rs", "--line"],
+            &["a.rs", "--line", "x"],
+            &["a.rs", "--line", "-1"],
+            &["a.rs", "--bogus"],
+            &["--path", ""],
+            &["a.rs:0"],
+        ] {
+            assert_eq!(
+                parse(&args(list), cwd).err().map(|e| e.status),
+                Some(EXIT_INVALID),
+                "{list:?}"
+            );
+        }
+        let help = parse(&args(&["--help"]), cwd).err().unwrap();
+        assert_eq!(help.status, 0);
+        let r = parse(&args(&["a.rs:3", "--line", "9"]), cwd).ok().unwrap();
+        assert_eq!(r.line, Some(9), "an explicit --line wins");
     }
 
     #[test]

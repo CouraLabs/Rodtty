@@ -303,13 +303,21 @@ impl State {
         let Some(session) = self.sessions.iter().find(|s| s.id() == id) else {
             return;
         };
+        // The screen trims leading blanks, drops trailing ones and draws tabs
+        // as spaces, so compare lines by their words.
+        let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let wanted = words(line);
         let found = session.with_screen_mut(|screen| {
             // Only a whole-line match: a longer line containing it is another.
-            let whole: Vec<_> = terminal::search::find_lines(screen, line, usize::MAX)
+            let first = wanted.split(' ').next().unwrap_or_default();
+            let whole: Vec<_> = terminal::search::find_lines(screen, first, usize::MAX)
                 .into_iter()
-                .filter(|m| m.at.start.col == 0 && m.text == line)
+                .filter(|m| words(&m.text) == wanted)
                 .map(|m| m.at)
                 .collect();
+            // One match per line, even when its first word appears twice.
+            let mut whole = whole;
+            whole.dedup_by_key(|m| m.start.line);
             let m = whole.iter().rev().nth(after).copied()?;
             terminal::search::reveal(screen, m);
             Some(())

@@ -111,6 +111,9 @@ fn command(directory: &Path) -> Command {
         .arg(directory)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
+        // English messages, which `inspect` matches; paths stay in the
+        // owner's encoding because only the message language changes.
+        .env("LANGUAGE", "C")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE");

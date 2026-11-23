@@ -28,7 +28,7 @@ pub fn strip(bytes: &[u8]) -> String {
                 out.push(byte);
                 Mode::Text
             }
-            (Mode::Text, 0x9b) => Mode::Csi,
+            // 0x9B is not treated as a C1 CSI: in UTF-8 it is a continuation byte.
             (Mode::Text, b) if b < 0x20 || b == 0x7f => Mode::Text,
             (Mode::Text, b) => {
                 out.push(b);
@@ -67,5 +67,29 @@ mod tests {
     #[test]
     fn lone_carriage_returns_become_newlines() {
         assert_eq!(strip(b"a\rb\r\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn utf8_continuation_byte_9b_is_text_not_a_csi_introducer() {
+        // "ś" is C5 9B, "些" is E4 BA 9B and "🛠" is F0 9F 9B A0.
+        for text in ["ściana ok", "ě", "些 done", "🛠 build"] {
+            assert_eq!(strip(text.as_bytes()), text);
+        }
+        assert_eq!(strip("\x1b[1mść\x1b[0m".as_bytes()), "ść");
+    }
+
+    #[test]
+    fn unterminated_sequences_drop_only_the_sequence() {
+        assert_eq!(strip(b"ok\x1b"), "ok");
+        assert_eq!(strip(b"ok\x1b[31"), "ok");
+        assert_eq!(strip(b"ok\x1b]0;title"), "ok");
+        assert_eq!(strip(b"a\x1b]0;t\x1b\\b"), "ab");
+        assert_eq!(strip(b""), "");
+    }
+
+    #[test]
+    fn other_controls_are_dropped_and_invalid_utf8_is_replaced() {
+        assert_eq!(strip(b"a\x07b\x08c\x7fd"), "abcd");
+        assert_eq!(strip(b"\xffx"), "\u{fffd}x");
     }
 }

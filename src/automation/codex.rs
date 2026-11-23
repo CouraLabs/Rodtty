@@ -36,6 +36,10 @@ pub struct TurnState {
     pub items: Vec<String>,
     pub error: Option<String>,
     pub approval: Option<Approval>,
+    /// When this turn was first seen, in arrival order. Turn IDs are opaque
+    /// (UUIDs, or `turn-N`), so they can't order turns themselves.
+    #[serde(skip)]
+    pub seen: u64,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -51,6 +55,7 @@ pub struct Approval {
 struct Inner {
     replies: HashMap<u64, Result<Value, String>>,
     turns: HashMap<String, TurnState>,
+    next_seen: u64,
     exited: bool,
     log: Vec<String>,
 }
@@ -164,11 +169,14 @@ impl AppServer {
                                 .or_else(|| params.pointer("/turn/id").and_then(Value::as_str))
                                 .map(str::to_owned);
                             if let Some(turn_id) = turn_id {
+                                state.next_seen += 1;
+                                let seen = state.next_seen;
                                 let turn =
                                     state.turns.entry(turn_id.clone()).or_insert_with(|| {
                                         TurnState {
                                             id: turn_id,
                                             status: "inProgress".into(),
+                                            seen,
                                             ..Default::default()
                                         }
                                     });
@@ -348,9 +356,12 @@ impl AppServer {
             .to_owned();
         let (lock, signal) = &*self.inner;
         let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+        state.next_seen += 1;
+        let seen = state.next_seen;
         state.turns.entry(id.clone()).or_insert_with(|| TurnState {
             id: id.clone(),
             status: "inProgress".into(),
+            seen,
             ..Default::default()
         });
         drop(state);
@@ -379,7 +390,7 @@ impl AppServer {
 
     pub fn latest_turn(&self) -> Option<TurnState> {
         let state = self.inner.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.turns.values().max_by(|a, b| a.id.cmp(&b.id)).cloned()
+        state.turns.values().max_by_key(|t| t.seen).cloned()
     }
 
     /// Wait until the turn finishes, needs an approval, or `timeout` passes.
@@ -509,5 +520,23 @@ mod tests {
             .unwrap();
         assert_eq!(failed.status, "failed");
         assert_eq!(failed.error.as_deref(), Some("fixture failure"));
+    }
+
+    #[test]
+    fn the_latest_turn_is_the_newest_one_not_the_greatest_id() {
+        let dir = crate::test_support::tempdir().unwrap();
+        let server = AppServer::start(&fixture(), dir.path()).unwrap();
+        let thread = server.start_thread(dir.path(), None).unwrap();
+        let never = AtomicBool::new(false);
+        let mut last = String::new();
+        // The fixture names turns turn-1 … turn-10; as text, "turn-9" sorts last.
+        for n in 1..=10 {
+            last = server.start_turn(&thread, &format!("hello {n}")).unwrap();
+            server
+                .wait_turn(&last, Duration::from_secs(10), &never)
+                .unwrap();
+        }
+        assert_eq!(last, "turn-10");
+        assert_eq!(server.latest_turn().unwrap().id, last);
     }
 }

@@ -27,8 +27,9 @@ struct Link {
     name: Mutex<Option<String>>,
     client: Mutex<Option<Arc<Client>>>,
     hello: Mutex<Option<Value>>,
-    /// The feature list behind the last tools/list answer.
-    listed: Mutex<Option<Vec<String>>>,
+    /// The feature list behind the last tools/list answer: `None` before the
+    /// client asked, `Some(None)` when it was answered while disconnected.
+    listed: Mutex<Option<Option<Vec<String>>>>,
     initialized: AtomicBool,
     out: Mutex<std::io::Stdout>,
     calls: AtomicUsize,
@@ -117,8 +118,8 @@ impl Link {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        if listed.is_some() && listed != now {
-            *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = now;
+        if tools_changed(listed.as_ref(), now.as_ref()) {
+            *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = Some(now);
             self.send(&json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}));
         }
     }
@@ -130,7 +131,7 @@ impl Link {
         } else {
             None
         };
-        *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = features.clone();
+        *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = Some(features.clone());
         let tools: Vec<Value> = match &features {
             Some(features) => tools::available(features)
                 .map(tools::Tool::describe)
@@ -204,6 +205,12 @@ impl Link {
 }
 
 /// An MCP `CallToolResult`: structured content plus the same JSON as text.
+/// Whether the tools offered now differ from the last tools/list answer.
+/// Before the client's first tools/list there is nothing to change.
+fn tools_changed(listed: Option<&Option<Vec<String>>>, now: Option<&Vec<String>>) -> bool {
+    listed.is_some_and(|listed| listed.as_ref() != now)
+}
+
 pub fn tool_result(result: Result<Value, ToolError>) -> Value {
     let (value, error) = match result {
         Ok(value) => (value, false),
@@ -344,4 +351,25 @@ pub fn serve(root: PathBuf, client_name: Option<String>) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tools_change_when_rodtty_starts_after_a_disconnected_listing() {
+        let features = vec!["terminal".to_owned()];
+        // tools/list answered while Rodtty was not running, then it started.
+        assert!(tools_changed(Some(&None), Some(&features)));
+        // and when it stops again.
+        assert!(tools_changed(Some(&Some(features.clone())), None));
+        assert!(!tools_changed(
+            Some(&Some(features.clone())),
+            Some(&features)
+        ));
+        assert!(!tools_changed(Some(&None), None));
+        // Nothing to announce before the client first listed tools.
+        assert!(!tools_changed(None, Some(&features)));
+    }
 }

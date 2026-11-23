@@ -939,6 +939,7 @@ pub(crate) fn run(
                     host.invalidate(PaintElementType::VIEW);
                 }
                 t.recording = Some(recording);
+                s.automation.shared.set_target_client(&id, &g.id);
                 s.emit(
                     "recording",
                     Some(&id),

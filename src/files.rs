@@ -129,6 +129,10 @@ impl TextFile {
 }
 
 pub fn read_text(path: &Path) -> Result<TextFile> {
+    // Opening a FIFO blocks until a writer appears, which would stall the file worker.
+    if fs::metadata(path).is_ok_and(|m| !m.is_file()) {
+        bail!("{} is not a regular file", path.display());
+    }
     let file = fs::File::open(path).with_context(|| format!("Open {}", path.display()))?;
     if file.metadata()?.len() > MAX_FILE_BYTES {
         bail!("Files over 2 MiB are not supported by this editor yet.");

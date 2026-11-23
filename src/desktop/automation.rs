@@ -34,6 +34,60 @@ mod tests;
 pub(crate) use input::VirtualInput;
 pub(crate) use terminal::quote as terminal_quote;
 
+/// Whether `app_action` may run `action` for an agent. Only actions that
+/// change what the window shows are allowed: nothing that changes settings,
+/// files, the clipboard, remote or automation access, or that opens
+/// terminals or files outside the client's grant. New actions stay
+/// owner-only until they are listed here.
+fn agent_may_run(action: AppAction) -> bool {
+    matches!(
+        action,
+        AppAction::ToggleExplorer
+            | AppAction::ToggleTerminal
+            | AppAction::ShowTerminal
+            | AppAction::ToggleEditor
+            | AppAction::EditFile
+            | AppAction::Compare(_)
+            | AppAction::FindTerminal
+            | AppAction::FindEditor
+            | AppAction::ReplaceEditor
+            | AppAction::ExplorerFocus
+            | AppAction::ExplorerCollapseAll
+            | AppAction::RefreshExplorer
+            | AppAction::SearchFiles
+            | AppAction::ShowSearch
+            | AppAction::CloseSearch
+            | AppAction::ToggleChanges
+            | AppAction::PreviousCommand
+            | AppAction::NextCommand
+            | AppAction::FilterTerminal
+            | AppAction::FocusOtherPane
+    )
+}
+
+/// Whether `event` may reach `grant`'s client. Unknown target kinds stay
+/// hidden, so a new kind of event is private until a rule names it.
+fn event_visible(
+    shared: &Shared,
+    grant: &ClientGrant,
+    visible: &HashSet<String>,
+    event: &Value,
+) -> bool {
+    let Some(target) = event.get("target").and_then(Value::as_str) else {
+        return true;
+    };
+    let own = || shared.target_client(target).as_deref() == Some(grant.id.as_str());
+    match target.split('_').next() {
+        Some("term") => visible.contains(target),
+        Some("brw") => visible.contains(target) || own(),
+        Some("cdx" | "rec") => own(),
+        Some("cl") => target == grant.id,
+        Some("job") => shared.hub.job(target).is_some_and(|j| j.client == grant.id),
+        Some("ws") => grant.allows_workspace(target),
+        _ => false,
+    }
+}
+
 /// Who opened a session and which workspace it belongs to, fixed when
 /// automation first sees it.
 #[derive(Clone, Debug)]
@@ -50,9 +104,25 @@ pub(crate) struct Shared {
     /// pause, revocation, disconnect or closure. A typing sequence checks it
     /// between keys.
     epochs: Mutex<HashMap<String, u64>>,
+    /// The client that created each Codex thread, browser target and
+    /// recording, kept after they close so their last events stay theirs.
+    target_clients: Mutex<HashMap<String, String>>,
 }
 
 impl Shared {
+    pub fn set_target_client(&self, target: &str, client: &str) {
+        self.target_clients
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(target.to_owned(), client.to_owned());
+    }
+    fn target_client(&self, target: &str) -> Option<String> {
+        self.target_clients
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(target)
+            .cloned()
+    }
     pub fn epoch(&self, target: &str) -> u64 {
         *self
             .epochs
@@ -98,6 +168,7 @@ impl Default for Automation {
             shared: Arc::new(Shared {
                 hub: Hub::default(),
                 epochs: Default::default(),
+                target_clients: Default::default(),
             }),
             instance: crate::automation::token()[..8].to_owned(),
             server: None,
@@ -360,16 +431,7 @@ impl Host {
                 // Events about targets outside this client's workspaces stay hidden.
                 let visible = ui!(|s, tx| s.automation_visible_targets(&g));
                 if let Some(events) = read.get_mut("events").and_then(Value::as_array_mut) {
-                    events.retain(|e| match e.get("target").and_then(Value::as_str) {
-                        Some(t) if t.starts_with("term_") || t.starts_with("brw_") => {
-                            visible.contains(t)
-                        }
-                        Some(t) if t.starts_with("cl_") => t == grant.id,
-                        Some(t) if t.starts_with("job_") => {
-                            self.shared.hub.job(t).is_some_and(|j| j.client == grant.id)
-                        }
-                        _ => true,
-                    });
+                    events.retain(|e| event_visible(&self.shared, grant, &visible, e));
                 }
                 Ok(read)
             }
@@ -547,14 +609,21 @@ impl State {
         owner
     }
 
-    fn automation_visible_targets(&mut self, grant: &ClientGrant) -> HashSet<String> {
-        let mut visible = HashSet::new();
+    /// Terminals in the client's workspaces, including ones that have closed
+    /// (their owners stay recorded), and its own browser targets.
+    pub(crate) fn automation_visible_targets(&mut self, grant: &ClientGrant) -> HashSet<String> {
         for index in 0..self.sessions.len() {
-            let owner = self.session_owner(index);
-            if grant.allows_workspace(&owner.workspace) {
-                visible.insert(self.terminal_target(&self.sessions[index]));
-            }
+            self.session_owner(index);
         }
+        let instance = &self.automation.instance;
+        #[cfg_attr(not(feature = "browser"), allow(unused_mut))]
+        let mut visible: HashSet<String> = self
+            .automation
+            .owners
+            .iter()
+            .filter(|(_, owner)| grant.allows_workspace(&owner.workspace))
+            .map(|(id, _)| format!("term_{instance}_{id}"))
+            .collect();
         #[cfg(feature = "browser")]
         visible.extend(self.browser_targets_for(grant));
         visible
@@ -595,34 +664,37 @@ impl State {
         Ok(json!({"workspace": workspace.id, "root": workspace.root}))
     }
 
-    fn auto_app_action(&mut self, args: &Value, tx: &mut Tx) -> ToolResult {
+    pub(crate) fn auto_app_action(&mut self, args: &Value, tx: &mut Tx) -> ToolResult {
         let Some(id) = crate::automation::arg_opt_str(args, "command")? else {
             let commands: Vec<Value> = self
                 .commands
                 .iter()
-                .filter(|c| !c.id.starts_with("automation-") && !c.id.starts_with("codex-"))
+                .filter(|c| agent_may_run(c.action))
                 .map(|c| json!({"id": c.id, "title": c.title, "disabled": self.action_disabled(c.action)}))
                 .collect();
             return Ok(json!({"commands": commands}));
         };
-        // The owner's automation controls stay with the owner.
-        if id.starts_with("automation-") || id.starts_with("codex-") || id == "quit" {
-            return Err(ToolError::new(
-                ErrorCode::ScopeDenied,
-                "That action is reserved for the owner",
-            ));
-        }
         let command = self
             .commands
             .iter()
             .find(|c| c.id == id)
             .ok_or_else(|| ToolError::invalid(format!("No command {id}")))?;
         let action = command.action;
+        if !agent_may_run(action) {
+            return Err(ToolError::new(
+                ErrorCode::ScopeDenied,
+                "That action is reserved for the owner",
+            ));
+        }
         if let Some(reason) = self.action_disabled(action) {
             return Err(ToolError::new(ErrorCode::Conflict, reason));
         }
+        // Report only what this action said: an earlier footer message (a
+        // pairing code, another workspace's summary) is not the agent's.
+        let before = self.message.clone();
         self.dispatch(action, tx);
-        Ok(json!({"command": id, "message": self.message}))
+        let message = (self.message != before).then(|| self.message.clone());
+        Ok(json!({"command": id, "message": message}))
     }
 
     /// Re-read the grants file when it changed (or `force`): refresh the

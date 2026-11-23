@@ -67,10 +67,16 @@ impl Devices {
         root.join("remote-devices.json")
     }
     pub fn load(root: &Path) -> Self {
-        std::fs::read(Self::path(root))
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        Self::try_load(root).unwrap_or_default()
+    }
+    /// The paired devices, or an error when the file exists but can't be
+    /// read, so a save never replaces devices it couldn't see.
+    fn try_load(root: &Path) -> Result<Self> {
+        match std::fs::read(Self::path(root)) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e.into()),
+        }
     }
     pub fn save(&self, root: &Path) -> Result<()> {
         std::fs::create_dir_all(root)?;
@@ -82,6 +88,7 @@ impl Devices {
                 .set_permissions(std::fs::Permissions::from_mode(0o600))?;
         }
         file.write_all(&serde_json::to_vec_pretty(self)?)?;
+        file.as_file().sync_all()?;
         file.persist(Self::path(root))?;
         Ok(())
     }
@@ -135,7 +142,8 @@ impl Pairing {
             paired_at: now(),
             expires_at: now() + DEVICE_DAYS * 86_400,
         };
-        let mut devices = Devices::load(root);
+        let mut devices = Devices::try_load(root)
+            .map_err(|_| "the paired-devices file is unreadable; nothing was changed")?;
         devices.devices.push(device.clone());
         devices
             .save(root)
@@ -476,7 +484,7 @@ pre{margin:0;padding:8px;font:13px ui-monospace,monospace;white-space:pre-wrap;w
 const $=id=>document.getElementById(id);let token=localStorage.getItem("rodtty-token"),session=null,cursor=0,gen=0;
 const api=async(path,opts={})=>{const r=await fetch(path,{...opts,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})}});const j=await r.json().catch(()=>({}));if(r.status==401){localStorage.removeItem("rodtty-token");token=null;show();}if(!r.ok)throw new Error(j.error||r.status);return j};
 const say=t=>$("status").textContent=t;
-async function show(){$("pair").hidden=!!token;if(!token)return;try{const j=await api("/api/sessions");$("sessions").innerHTML=j.sessions.map(s=>`<option value="${s.id}">${s.title} — ${s.directory}</option>`).join("");say(j.sessions.length+" session(s)")}catch(e){say(e.message)}}
+async function show(){$("pair").hidden=!!token;if(!token)return;try{const j=await api("/api/sessions");$("sessions").replaceChildren(...j.sessions.map(s=>new Option(`${s.title} — ${s.directory}`,s.id)));say(j.sessions.length+" session(s)")}catch(e){say(e.message)}}
 $("pairbtn").onclick=async()=>{try{const j=await api("/api/pair",{method:"POST",body:JSON.stringify({code:$("code").value,name:navigator.userAgent.slice(0,60)})});token=j.token;localStorage.setItem("rodtty-token",token);show()}catch(e){say(e.message)}};
 const strip=s=>s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b./g,"").replace(/\r\n/g,"\n").replace(/\r/g,"");
 async function poll(g){while(g==gen){try{const j=await api(`/api/sessions/${session}/output?cursor=${cursor}`);if(j.ended){say("The session ended");return}if(j.truncated)$("out").textContent+="\n[earlier output is no longer retained]\n";$("out").textContent=( $("out").textContent+strip(atob(j.data)) ).slice(-200000);cursor=j.next;$("out").scrollTop=1e9}catch(e){say(e.message+" — reconnecting");await new Promise(r=>setTimeout(r,2000))}}}
@@ -527,5 +535,21 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn pairing_never_replaces_an_unreadable_devices_file() {
+        let root = crate::test_support::tempdir().unwrap();
+        let path = root.path().join("remote-devices.json");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let mut pairing = Pairing::default();
+        let code = pairing.new_code().unwrap();
+        assert!(pairing.redeem(root.path(), &code, "phone").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{ not json");
+    }
+
+    #[test]
+    fn the_page_never_inserts_session_titles_as_html() {
+        assert!(!PAGE.contains("innerHTML"));
     }
 }

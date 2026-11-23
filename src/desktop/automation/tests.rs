@@ -113,6 +113,118 @@ fn agent_text_and_keys_reach_only_the_named_pty_and_owner_takeover_stops_them() 
 }
 
 #[test]
+fn app_action_runs_only_view_actions_and_never_returns_an_earlier_message() {
+    let (_root, mut state) = state();
+    let confirm = state.config.behavior.confirm_multiline_paste;
+    for id in [
+        "remote-pair",
+        "remote-enable",
+        "paste-terminal",
+        "toggle-paste-confirmation",
+        "trash-file",
+        "remove-workspace",
+        "end-terminal",
+        "settings-json",
+        "automation-approve",
+        "codex-approve",
+        "quit",
+    ] {
+        let error = state
+            .auto_app_action(&json!({"command": id}), &mut Tx::default())
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ScopeDenied, "{id}");
+    }
+    assert!(state.remote.server.is_none(), "remote access stayed off");
+    assert_eq!(state.config.behavior.confirm_multiline_paste, confirm);
+    let listed = state
+        .auto_app_action(&json!({}), &mut Tx::default())
+        .unwrap();
+    let ids: Vec<&str> = listed["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"toggle-explorer"), "{ids:?}");
+    assert!(
+        !ids.iter()
+            .any(|id| id.starts_with("remote-") || *id == "paste-terminal"),
+        "{ids:?}"
+    );
+    // A footer message the owner saw earlier is not the agent's to read.
+    state.message = "Open http://host/ and enter ABC123".into();
+    let ran = state
+        .auto_app_action(&json!({"command": "toggle-explorer"}), &mut Tx::default())
+        .unwrap();
+    assert!(!ran.to_string().contains("ABC123"), "{ran}");
+}
+
+#[test]
+fn agent_reads_the_live_screen_while_the_owner_is_scrolled_back() {
+    let (root, mut state) = state();
+    let (workspace, _) = state.workspace_of(root.path());
+    let g = grant(&[workspace]);
+    let created = state
+        .auto_terminal_create(&g, &json!({"cwd": root.path()}))
+        .unwrap();
+    let id = created["id"].as_str().unwrap().to_owned();
+    wait(&state, 0, "rodtty:");
+    assert!(
+        terminal::shell_idle(state.sessions[0].state.lock().unwrap().parser.callbacks()),
+        "a fresh shell at its prompt is idle"
+    );
+    state.sessions[0]
+        .send(b"seq 1 300; echo LIVE_END\r".to_vec())
+        .unwrap();
+    wait(&state, 0, "\nLIVE_END");
+    state.sessions[0].scroll(200);
+    assert!(state.sessions[0].with_screen(vt100::Screen::scrollback) > 0);
+    let screen = state
+        .auto_terminal_screen(&g, &json!({"terminal": id}))
+        .unwrap();
+    let lines: Vec<&str> = screen["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap())
+        .collect();
+    assert!(lines.contains(&"LIVE_END"), "{lines:?}");
+    assert!(
+        state.sessions[0].with_screen(vt100::Screen::scrollback) > 0,
+        "the owner's scroll position is kept"
+    );
+}
+
+#[test]
+fn agent_close_never_replaces_a_prompt_the_owner_is_answering() {
+    let (root, mut state) = state();
+    let (workspace, _) = state.workspace_of(root.path());
+    let g = grant(&[workspace]);
+    let created = state
+        .auto_terminal_create(&g, &json!({"cwd": root.path()}))
+        .unwrap();
+    let id = created["id"].as_str().unwrap().to_owned();
+    wait(&state, 0, "rodtty:");
+    state.pending = Some(Pending::Quit);
+    let error = state
+        .auto_terminal_close(&g, &json!({"terminal": id}), &mut Tx::default())
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert!(matches!(state.pending, Some(Pending::Quit)));
+    assert_eq!(state.sessions.len(), 1);
+}
+
+#[test]
+fn launch_quoting_keeps_assignments_and_job_references_literal() {
+    assert_eq!(terminal::quote("A=1"), "'A=1'");
+    assert_eq!(terminal::quote("%1"), "'%1'");
+    assert_eq!(terminal::quote("it's"), r"'it'\''s'");
+    assert_eq!(terminal::quote(""), "''");
+    assert_eq!(terminal::quote("/usr/bin/node"), "/usr/bin/node");
+    assert_eq!(terminal::quote("--port=3000"), "'--port=3000'");
+}
+
+#[test]
 fn approval_for_one_workspace_does_not_expose_another() {
     let (root, mut state) = state();
     let other = crate::test_support::tempdir().unwrap();
@@ -520,6 +632,38 @@ fn filtering_a_live_session_lists_incoming_matches_jumps_and_restores_the_termin
             .contents()
             .contains(before.lines().last().unwrap())
     );
+}
+
+#[test]
+fn jumping_to_an_indented_or_tabbed_filtered_line_finds_it_in_scrollback() {
+    let (root, mut state) = state();
+    state.start_tab(root.path().into());
+    wait(&state, 0, "rodtty:");
+    state.sessions[0]
+        .send(
+            b"printf '    INDENTED here\\n\\tTABBED here  \\n'; seq 1 200; echo FILL_DONE\r"
+                .to_vec(),
+        )
+        .unwrap();
+    wait(&state, 0, "\nFILL_DONE");
+    for query in ["INDENTED", "TABBED"] {
+        state.open_log_filter(&mut Tx::default());
+        state.log_filter.query = TextEdit::new(query);
+        state.poll_log_filter();
+        let (line, after) = state
+            .log_filter
+            .shown
+            .iter()
+            .find(|(l, _)| l.contains(&format!("{query} here")))
+            .cloned()
+            .unwrap_or_else(|| panic!("{query}: {:?}", state.log_filter.shown));
+        state.message.clear();
+        state.jump_to_filtered_line(&line, after, &mut Tx::default());
+        assert!(state.message.is_empty(), "{query}: {}", state.message);
+        let shown = state.sessions[0].screen().contents();
+        assert!(shown.contains(&format!("{query} here")), "{query}: {shown}");
+        state.sessions[0].with_screen_mut(|s| s.set_scrollback(0));
+    }
 }
 
 #[test]

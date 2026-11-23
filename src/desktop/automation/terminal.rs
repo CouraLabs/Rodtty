@@ -212,10 +212,12 @@ impl State {
         let index = self.find_terminal(grant, arg_str(args, "terminal")?)?;
         let row = self.terminal_row(index);
         let session = &self.sessions[index];
-        let state = session.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = session.state.lock().unwrap_or_else(|e| e.into_inner());
+        // The live screen, not the part of the scrollback the owner is viewing.
+        let lines = live_rows(state.parser.screen_mut());
         let screen = state.parser.screen();
-        let (rows, cols) = screen.size();
-        let lines: Vec<String> = screen.rows(0, cols).collect();
+        let (rows, _) = screen.size();
+        let cols = screen.size().1;
         let (cursor_row, cursor_col) = screen.cursor_position();
         let retained = state.output.start();
         let commands: Vec<Value> = state
@@ -423,13 +425,15 @@ impl State {
             crate::config::TerminalClosePolicy::AlwaysConfirm => true,
             crate::config::TerminalClosePolicy::CloseImmediately => false,
         };
+        // Closing goes through the owner's prompt slot either way; never
+        // replace a prompt the owner is answering.
+        if self.pending.is_some() {
+            return Err(ToolError::new(
+                ErrorCode::Conflict,
+                "The owner is answering another prompt; try again later",
+            ));
+        }
         if confirm {
-            if self.pending.is_some() {
-                return Err(ToolError::new(
-                    ErrorCode::Conflict,
-                    "The owner is answering another prompt; try again later",
-                ));
-            }
             // The owner decides, in the same prompt the tab's close button opens.
             self.pending = Some(Pending::Tab(id));
             if let Some(handle) = &self.handle {
@@ -477,9 +481,12 @@ impl State {
     ) -> Result<crate::desktop::capture::TerminalShot, ToolError> {
         grant.check(Some(Scope::Capture), None)?;
         let index = self.find_terminal(grant, target)?;
+        // The live screen, not the part of the scrollback the owner is viewing.
+        let mut screen = self.sessions[index].screen();
+        screen.set_scrollback(0);
         Ok(crate::desktop::capture::TerminalShot {
             target: target.to_owned(),
-            screen: self.sessions[index].screen(),
+            screen,
             palette: crate::desktop::capture::Palette::from_state(self),
         })
     }
@@ -537,12 +544,38 @@ impl State {
     }
 }
 
+/// The live screen's rows, whatever part of the scrollback is in view.
+fn live_rows(screen: &mut vt100::Screen) -> Vec<String> {
+    let viewed = screen.scrollback();
+    screen.set_scrollback(0);
+    let cols = screen.size().1;
+    let rows = screen.rows(0, cols).collect();
+    screen.set_scrollback(viewed);
+    rows
+}
+
+/// The live screen's text, whatever part of the scrollback is in view.
+fn live_contents(screen: &mut vt100::Screen) -> String {
+    let viewed = screen.scrollback();
+    screen.set_scrollback(0);
+    let contents = screen.contents();
+    screen.set_scrollback(viewed);
+    contents
+}
+
+/// Whether the shell is at its prompt with nothing running: after its first
+/// prompt, with every command it reported finished.
+pub(crate) fn shell_idle(events: &crate::session::TerminalEvents) -> bool {
+    !events.command_running() && events.commands.back().is_none_or(|c| c.ended.is_some())
+}
+
 /// POSIX single quotes, as Brush reads them on every platform.
 pub(crate) fn quote(word: &str) -> String {
     if !word.is_empty()
         && word
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b))
+            // `=` would make a first word an assignment and `%` a job reference.
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:,+@".contains(&b))
     {
         return word.to_owned();
     }
@@ -554,12 +587,12 @@ fn poll(
     probe: &Probe,
     deadline: Instant,
     cancel: &AtomicBool,
-    mut done: impl FnMut(&TerminalState) -> Option<Value>,
+    mut done: impl FnMut(&mut TerminalState) -> Option<Value>,
 ) -> ToolResult {
     loop {
         {
-            let state = probe.state.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(value) = done(&state) {
+            let mut state = probe.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(value) = done(&mut state) {
                 return Ok(value);
             }
         }
@@ -637,7 +670,12 @@ pub(super) fn wait(
     let result = poll(&probe, Instant::now() + timeout, &either, |state| {
         let ended = state.exit.is_some();
         let (from, bytes, next) = state.output.read(start_cursor, usize::MAX);
-        let text = || crate::ansi::strip(&bytes);
+        let mut stripped = None;
+        let mut text = || {
+            stripped
+                .get_or_insert_with(|| crate::ansi::strip(&bytes))
+                .clone()
+        };
         let mut matched: Option<&str> = None;
         let mut found = None;
         if let Some(needle) = &contains
@@ -654,23 +692,14 @@ pub(super) fn wait(
         }
         if matched.is_none()
             && let Some(needle) = &screen_contains
-            && state.parser.screen().contents().contains(needle.as_str())
+            && live_contents(state.parser.screen_mut()).contains(needle.as_str())
         {
             matched = Some("screen_contains");
         }
         if matched.is_none() && changed_since.is_some_and(|r| state.generation > r) {
             matched = Some("screen_changed");
         }
-        if matched.is_none()
-            && idle
-            && !state.parser.callbacks().command_running()
-            && state
-                .parser
-                .callbacks()
-                .commands
-                .back()
-                .is_some_and(|c| c.ended.is_some())
-        {
+        if matched.is_none() && idle && shell_idle(state.parser.callbacks()) {
             matched = Some("idle");
         }
         if matched.is_none() && (exit || ended) && ended {

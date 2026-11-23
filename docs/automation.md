@@ -36,12 +36,12 @@ The first call from a new client creates a pending request; every tool except `r
 | `read` | Workspace, terminal, editor, Git and browser state; events and jobs |
 | `terminal` | Create, launch, type into, interrupt and close terminals; Codex App Server threads |
 | `input` | Virtual pointer and keyboard (`input_*`) |
-| `workspace` | Switch workspaces, show the window, run palette actions (`app_action`), show a diff |
+| `workspace` | Switch workspaces, show the window, run view-only palette actions (`app_action`), show a diff |
 | `editor` | Open, edit and save buffers |
 | `browser` | Create, navigate and operate the client's own browser targets |
 | `capture` | Screenshots and browser recordings |
 
-A grant also names workspaces. A target outside them is invisible to the client: terminals by the workspace they started in, files by their resolved path (symlinks included), browser targets by the client that created them. The owner's own Browser view is never an agent target. Palette actions under `automation-*`, `codex-*` and Quit are reserved for the owner.
+A grant also names workspaces. A target outside them is invisible to the client: terminals by the workspace they started in, files by their resolved path (symlinks included), browser targets by the client that created them. The owner's own Browser view is never an agent target. `app_action` runs only actions that change what the window shows (toggling panes, find, search, the changes view, command navigation, filters and pane focus); `app_action` without a command lists them. Every other palette action is reserved for the owner, including remote access and pairing, paste, file operations, settings toggles, workspace removal, `automation-*`, `codex-*` and Quit.
 
 ## Tools
 

@@ -57,6 +57,16 @@ pub fn probe(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
+    // Drain stdout while waiting: a child whose output outgrows the pipe
+    // buffer would otherwise block on write and never exit.
+    let reader = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut out = String::new();
+            let _ = stdout.read_to_string(&mut out);
+            out
+        })
+    });
     let mut waited = Duration::ZERO;
     let step = Duration::from_millis(50);
     loop {
@@ -74,11 +84,9 @@ pub fn probe(
             });
         }
     }
-    let mut out = String::new();
-    use std::io::Read;
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut out);
-    }
+    let out = reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
     Ok((executable, out))
 }
 
@@ -427,5 +435,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("did not answer"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_whose_output_exceeds_the_pipe_buffer_still_answers() {
+        let dir = crate::test_support::tempdir().unwrap();
+        let never = AtomicBool::new(false);
+        // About 590 KB, far past a 64 KiB pipe buffer.
+        let (_, out) = probe(
+            "seq",
+            &["1", "100000"],
+            dir.path(),
+            Duration::from_secs(10),
+            &never,
+        )
+        .unwrap();
+        assert_eq!(out.lines().count(), 100_000);
+        assert_eq!(out.lines().last(), Some("100000"));
+    }
+
+    #[test]
+    fn version_numbers_stop_at_the_first_non_numeric_part() {
+        assert_eq!(version_numbers(" v1.79.0\n"), [1, 79, 0]);
+        assert_eq!(version_numbers("1.80.0-nightly"), [1, 80, 0]);
+        assert_eq!(version_numbers("8.0.100+abc"), [8, 0, 100]);
+        assert!(version_numbers("stable").is_empty());
+        assert!(version_numbers("").is_empty());
+        assert_eq!(prefix_matches("20", "v19.9.9"), Some(false));
+        assert_eq!(prefix_matches("20.11.1", "v20.11"), Some(false));
+        assert_eq!(prefix_matches("", "v20"), None);
     }
 }

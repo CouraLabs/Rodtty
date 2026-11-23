@@ -24,7 +24,10 @@ pub(crate) fn tabs_preview(state: &mut State) {
         state.root.join("settings.json"),
         fixture.path().join("settings.json"),
     );
-    state.root = fixture.path().to_owned();
+    // The explorer reports resolved paths, so a symlinked TMPDIR (macOS
+    // `/var` → `/private/var`) must be resolved here too.
+    state.root = crate::paths::Canonical::canonical(fixture.path())
+        .unwrap_or_else(|_| fixture.path().to_owned());
     state.directory = state.root.clone();
     let explorer_root = state.root.join("Rodtty");
     for index in 0..7 {

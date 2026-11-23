@@ -873,6 +873,9 @@ impl State {
             self.automation.instance,
             crate::automation::token()[..8].to_owned()
         );
+        if let Some(client) = &client {
+            self.automation.shared.set_target_client(&id, client);
+        }
         let handle = self.handle.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = match handle {
             Some(handle) => Arc::new(move || handle.wake()),

@@ -84,7 +84,7 @@ fn decode(bytes: &[u8]) -> Result<Draft> {
         bail!("draft version {} is not supported", header.version);
     }
     let body = &bytes[newline + 1..];
-    if body.len() != header.saved_len + header.text_len {
+    if header.saved_len.checked_add(header.text_len) != Some(body.len()) {
         bail!("the draft is truncated");
     }
     let (saved, text) = body.split_at(header.saved_len);
@@ -237,5 +237,64 @@ mod tests {
             copy_path(&root.path().join("x.rs")),
             root.path().join("x (recovered).rs")
         );
+    }
+
+    fn header(saved_len: &str, text_len: &str) -> Vec<u8> {
+        format!(
+            "{{\"version\":1,\"path\":\"/x\",\"existed\":true,\"saved_at_ms\":0,\"saved_len\":{saved_len},\"text_len\":{text_len}}}\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn corrupt_draft_lengths_are_errors_not_panics() {
+        let mut overflowing = header(&u64::MAX.to_string(), "3");
+        overflowing.extend_from_slice(b"ab");
+        assert!(decode(&overflowing).is_err());
+        let mut short = header("1", "5");
+        short.extend_from_slice(b"abc");
+        assert!(decode(&short).is_err());
+        let mut long = header("0", "1");
+        long.extend_from_slice(b"abc");
+        assert!(decode(&long).is_err());
+        assert!(decode(b"no newline at all").is_err());
+        assert!(decode(b"not json\n").is_err());
+        let mut invalid_text = header("0", "1");
+        invalid_text.push(0xff);
+        assert!(decode(&invalid_text).is_err());
+        let mut future = header("0", "0");
+        future[11] = b'9';
+        assert!(decode(&future).is_err(), "unsupported version");
+    }
+
+    #[test]
+    fn a_draft_file_with_overflowing_lengths_is_reported_and_others_load() {
+        let root = crate::test_support::tempdir().unwrap();
+        let good = Draft {
+            path: root.path().join("a.txt"),
+            existed: false,
+            saved: Vec::new(),
+            text: "kept".into(),
+            saved_at_ms: 1,
+        };
+        write(root.path(), &good).unwrap();
+        let mut bad_bytes = header(&u64::MAX.to_string(), "3");
+        bad_bytes.extend_from_slice(b"ab");
+        std::fs::write(directory(root.path()).join("bad.draft"), bad_bytes).unwrap();
+        let (drafts, bad) = load(root.path());
+        assert_eq!(drafts, [good]);
+        assert_eq!(bad.len(), 1);
+    }
+
+    #[test]
+    fn encode_and_decode_round_trip_binary_saved_bytes() {
+        let draft = Draft {
+            path: PathBuf::from("/x\ny.txt"),
+            existed: true,
+            saved: vec![0, 0xff, b'\n', 0xfe],
+            text: "línea\n".into(),
+            saved_at_ms: 42,
+        };
+        assert_eq!(decode(&encode(&draft).unwrap()).unwrap(), draft);
     }
 }

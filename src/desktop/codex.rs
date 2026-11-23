@@ -112,6 +112,7 @@ pub(crate) fn run(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
+            host.shared.set_target_client(&id, &grant.id);
             with_threads(|t| {
                 t.insert(
                     id.clone(),
